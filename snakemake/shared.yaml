@@ -1,0 +1,10 @@
+data:
+  raw: "../data/raw"
+  processed: "../data/processed"
+  temp: "../data/temp"
+bin: "../bin"
+out:
+  root: "../results/output"
+  tests: "../results/tests"
+src: "../src"
+remote: "../data/remote"
