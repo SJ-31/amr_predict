@@ -1,0 +1,18 @@
+* BVBRC_genome_amr.csv
+*Relative Path:* =data/raw/BVBRC_genome_amr.csv=
+*Date Added:* <2025-09-04 Thu>
+*Source:* [[https://www.bv-brc.org/view/GenomeList/?and(keyword(e.),keyword(coli))#view_tab=amr&filter=false][BV-BRC AMR Phenotypes]]
+Complete catalog of BV-BRC's AMR Phenotype data (downloaded from the explorer without filters)
+Downloaded on `Date Added`, contains 352356 entries
+* BVBRC_genome.csv
+*Relative Path:* =data/raw/BVBRC_genome.csv=
+*Date Added:* <2025-09-04 Thu>
+*Source:* [[https://www.bv-brc.org/view/GenomeList/?and(keyword(e.),keyword(coli))#view_tab=genomes&filter=false][BV-BRC Genomes]]
+Complete catalog of genomes from BV-BRC (downloaded from the explorer without filters)
+Downloaded on `Date Added`, contains 22959 samples
+* asts.tsv
+*Absolute path:* =data/raw/asts.tsv=
+*Date added:* <2025-09-01 Mon>
+*Source:* [[https://www.ncbi.nlm.nih.gov/pathogens/ast][AST browser data]]
+The complete catalog of samples stored in NCBI's AST browser (downloaded without filters)
+Downloaded on `Date Added`, contains  466453 samples
