@@ -9,6 +9,7 @@ DATE = config.get("date")
 
 RAW = config["data"]["raw"]
 PROCESSED = config["data"]["processed"]
+TEMP = config["data"]["temp"]
 REMOTE = config["remote"] if not config["test"] else config["data"]["temp"]
 OUT = config["root"]["root"] if not config["test"] else config["out"]["tests"]
 BIN = config["bin"]
