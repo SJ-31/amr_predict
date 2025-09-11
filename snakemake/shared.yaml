@@ -1,3 +1,4 @@
+test: False
 data:
   raw: "../data/raw"
   processed: "../data/processed"

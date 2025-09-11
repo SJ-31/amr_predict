@@ -1,0 +1,5 @@
+# Map of filenames in the RAW directory to the name of column
+# containing the biosample accessions
+biosample_sheets:
+  asts.tsv: "#BioSample"
+  BVBRC_genome.csv: "BioSample Accession"
