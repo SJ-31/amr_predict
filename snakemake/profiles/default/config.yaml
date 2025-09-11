@@ -1,0 +1,6 @@
+rerun-triggers: mtime
+cores: 1
+keep-incomplete: True
+delete-all-output: False
+delete-temp-output: False
+rerun-incomplete: True
