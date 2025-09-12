@@ -9,3 +9,4 @@ out:
   tests: "../results/tests"
 src: "../src"
 remote: "../data/remote"
+cache: "../data/temp/cache"

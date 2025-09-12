@@ -2,25 +2,49 @@ suppressMessages({
   library(tidyverse)
   library(here)
   library(glue)
+  library(BiocFileCache)
   library(rentrez)
 })
 
 
 #' Map biosample accession `acc` to any available databases
 #'
-biosample_db_links <- function(acc) {
-  search_biosample <- entrez_search(db = "biosample", term = acc)
-
+biosample_db_links <- function(acc, cache) {
   result <- tibble(db = "BioSample", value = acc)
+  search_biosample <- lst <- xml <- NULL
 
-  if (length(search_biosample$ids) > 0) {
-    xml <- entrez_fetch(
-      db = "biosample",
-      id = search_biosample,
-      rettype = "xml",
-      retmode = "text"
+  cache_lookup <- bfcquery(cache, acc)
+  if (nrow(cache_lookup) > 0) {
+    lst <- readRDS(cache_lookup$rpath)
+  } else {
+    try(search_biosample <- entrez_search(db = "biosample", term = acc))
+  }
+
+  if (
+    is.null(lst) &&
+      !is.null(search_biosample) &&
+      length(search_biosample$ids) > 0
+  ) {
+    try(
+      {
+        xml <- entrez_fetch(
+          db = "biosample",
+          id = search_biosample,
+          rettype = "xml",
+          retmode = "text"
+        )
+      },
+      silent = TRUE
     )
+  }
+
+  if (!is.null(xml)) {
     lst <- xml2::as_list(xml2::as_xml_document(xml))
+    savepath <- bfcnew(cache, acc, ext = ".rds")
+    saveRDS(lst, file = savepath)
+  }
+
+  if (!is.null(lst)) {
     bsample_meta <- lapply(
       lst$BioSampleSet$BioSample$Ids,
       \(x) {
@@ -46,13 +70,21 @@ if (sys.nframe() == 0) {
   )
   parser <- add_option(
     parser,
+    c("-c", "--cache"),
+    type = "character",
+    help = "Path to cache",
+    default = ".rentrez"
+  )
+  parser <- add_option(
+    parser,
     c("-o", "--output"),
     type = "character",
     help = "Output tsv file"
   )
   args <- parse_args(parser)
   accs <- read_lines(args$input)
-  lapply(accs, biosample_db_links) |>
+  cache <- BiocFileCache(args$cache)
+  lapply(accs, \(x) biosample_db_links(x, cache = cache)) |>
     bind_rows() |>
     write_tsv(args$output)
 }

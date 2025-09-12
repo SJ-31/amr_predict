@@ -19,22 +19,25 @@ rule get_biosample_mapping:
         out=f"{TEMP}/biosample_mappings.tsv",
         # tmp=temp(f"{TEMP}/tmp_mappings.tsv"),
         acc=temp(f"{TEMP}/biosample_accs.txt"),
+    params:
+        cache=f"{config['cache']}/rentrez",
     run:
         import pandas as pd
 
-        dfs = []
-        together = {}
+        together = set()
         for sheet, col in config["biosample_sheets"].items():
             if ".tsv" in sheet:
                 df = pd.read_csv(f"{RAW}/{sheet}", sep="\t")
             else:
-                df = pd.read_csv(f"{RAW}/{sheet}", sep="\t")
+                df = pd.read_csv(f"{RAW}/{sheet}")
             accs = set([str(s) for s in set(df[col])])
             together |= accs
         with open(output.acc, "w") as f:
             f.write("\n".join(together))
 
-        shell(f"Rscript {SRC}/R/map_biosample.R -i {output.acc} -o {output.out}")
+        shell(
+            f"Rscript {SRC}/R/map_biosample.R -i {output.acc} -o {output.out} -c {params.cache}"
+        )
         # result = pd.read_csv(output.tmp, sep="\t")
         # source_df = (
         #     ast_df.loc[:, ["#BioSample"]]
