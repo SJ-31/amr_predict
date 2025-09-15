@@ -12,6 +12,7 @@ suppressMessages({
 biosample_db_links <- function(acc, cache) {
   result <- tibble(db = "BioSample", value = acc)
   search_biosample <- lst <- xml <- NULL
+  tried_fetch <- FALSE
 
   cache_lookup <- bfcquery(cache, acc)
   if (nrow(cache_lookup) > 0) {
@@ -27,6 +28,7 @@ biosample_db_links <- function(acc, cache) {
   ) {
     try(
       {
+        tried_fetch <- TRUE
         xml <- entrez_fetch(
           db = "biosample",
           id = search_biosample,
@@ -42,6 +44,9 @@ biosample_db_links <- function(acc, cache) {
     lst <- xml2::as_list(xml2::as_xml_document(xml))
     savepath <- bfcnew(cache, acc, ext = ".rds")
     saveRDS(lst, file = savepath)
+  } else if (tried_fetch) {
+    savepath <- bfcnew(cache, acc, ext = ".rds")
+    saveRDS(NULL, file = savepath)
   }
 
   if (!is.null(lst)) {
@@ -85,6 +90,7 @@ if (sys.nframe() == 0) {
   accs <- read_lines(args$input)
   cache <- BiocFileCache(args$cache)
   lapply(accs, \(x) biosample_db_links(x, cache = cache)) |>
+    unnest(BioSample) |>
     bind_rows() |>
     write_tsv(args$output)
 }
