@@ -1,3 +1,13 @@
+* jia_sample_mapping.tsv
+*Relative Path:* =data/meta/jia_sample_mapping.tsv=
+*Date Added:* <2025-09-22 Mon>
+*Source:* Custom
+TSV file mapping Jia sample Assembly accessions to their BioSample accessions. For renaming
+* jia_samples.tsv
+*Relative Path:* =data/meta/jia_samples.tsv=
+*Date Added:* <2025-09-22 Mon>
+*Source:* [[https://pmc.ncbi.nlm.nih.gov/articles/PMC11619347/#s2][Paper supplemental data]]
+Sample metadata from [[https://pmc.ncbi.nlm.nih.gov/articles/PMC11619347/#s5-2][Jia et al.]], extracted from the supplemental data word document
 * BVBRC_genome_amr.csv
 *Relative Path:* =data/raw/BVBRC_genome_amr.csv=
 *Date Added:* <2025-09-04 Thu>
