@@ -1,3 +1,5 @@
+
+
 configfile: "shared.yaml"
 configfile: "data_sources.yaml"
 
@@ -5,13 +7,38 @@ configfile: "data_sources.yaml"
 include: "shared.smk"
 
 
-ast_browser = f"{RAW}/asts.tsv"
-bvbrc_genome = f"{RAW}/BVBRC_genome.csv"
+assembly_outdir = f"{config["remote"]}/downloaded_assemblies"
+fastq_outdir = f"{config["remote"]}/fastq"
 
 
 rule all:
     input:
         f"{TEMP}/biosample_mappings.tsv",
+        f"{TEMP}/bioproject_samples.tsv",
+
+
+rule get_bioproject:
+    output:
+        f"{TEMP}/bioproject_samples.tsv",
+    run:
+        import pandas as pd
+
+        dfs = []
+        for f in config["bioproject_files"]:
+            cur = (
+                pd.read_csv(
+                    f"{META}/{f}",
+                    sep="\t",
+                    skiprows=1,
+                    header=0,
+                    names=("Level", "WGS", "BioSample", "Strain", "Taxonomy", "_"),
+                )
+                .drop("_", axis=1)
+                .reset_index(names="Assembly")  # Required due to weird file formatting
+            )
+            dfs.append(cur)
+        samples = pd.concat(dfs)
+        samples.to_csv(output[0], sep="\t", index=False)
 
 
 rule get_biosample_mapping:
@@ -19,6 +46,8 @@ rule get_biosample_mapping:
         out=f"{TEMP}/biosample_mappings.tsv",
         # tmp=temp(f"{TEMP}/tmp_mappings.tsv"),
         acc=temp(f"{TEMP}/biosample_accs.txt"),
+    input:
+        f"{TEMP}/bioproject_samples.tsv",
     params:
         cache=f"{config['cache']}/rentrez",
     run:
@@ -32,28 +61,19 @@ rule get_biosample_mapping:
                 df = pd.read_csv(f"{RAW}/{sheet}")
             accs = set([str(s) for s in set(df[col])])
             together |= accs
+        from_bioproject = pd.read_csv(input[0], sep="\t")
+        together |= set(from_bioproject["BioSample"])
         with open(output.acc, "w") as f:
             f.write("\n".join(together))
 
         shell(
             f"Rscript {SRC}/R/map_biosample.R -i {output.acc} -o {output.out} -c {params.cache}"
         )
-        # result = pd.read_csv(output.tmp, sep="\t")
-        # source_df = (
-        #     ast_df.loc[:, ["#BioSample"]]
-        #     .drop_duplicates()
-        #     .assign(A="AST_Browser")
-        #     .merge(
-        #         bvbrc_df.loc[:, ["BioSample Accession"]]
-        #         .drop_duplicates()
-        #         .assign(B="BVBRC"),
-        #         left_on="#BioSample",
-        #         right_on="BioSample Accession",
-        #     )
-        # )
-        # source_df.loc[:, "Source"] = source_df["A"].combine_first(source_df["B"])
-        # source_df = source_df.drop(["A", "B"], axis=1)
-        # result = result.merge(
-        #     source_df, left_on="#BioSample", right_on="BioSample", how="left"
-        # )
-        # result.to_csv(output.out, sep="\t")
+
+
+# rule get_raw:
+#     input:
+#         f"{TEMP}/biosample_mappings.tsv",
+#     output:
+#         scc,
+#     run:
