@@ -8,3 +8,5 @@
 
 # Other
 *.egg-info*
+*.snakemake*
+/.stfolder/
