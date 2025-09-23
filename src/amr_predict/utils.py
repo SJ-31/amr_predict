@@ -7,18 +7,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias
 
-import datasets as hd
 import numpy as np
 import polars as pl
 import torch
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
+from datasets import load_from_disk
 from datasets.arrow_dataset import Dataset
 from polars.exceptions import NoRowsReturnedError
 from torch import Tensor
 
 # from torch.utils.data import Dataset
-from transformers import AutoTokenizer, pipeline
+from transformers import AutoTokenizer
 
 SPLIT_METHODS: TypeAlias = Literal["bin", "bakta"]
 
@@ -284,9 +284,9 @@ class SeqDataset:
         tokenizer: AutoTokenizer | str | Path,
         max_length: int = 512,
     ) -> None:
+        self.dataset: Dataset = load_from_disk(path)
         self.tokenizer: AutoTokenizer = tokenizer
         self.max_length: int = max_length
-        pass
 
     @staticmethod
     def save_from_fastas(
@@ -298,6 +298,7 @@ class SeqDataset:
         split_method: SPLIT_METHODS = "bakta",
         annotations: Path | str | None = None,
         max_length: int = 512,
+        **kwargs,
     ) -> None:
         """Construct a dataset from fasta files and metadata,
         saving to a parquet dataset for future use
@@ -312,17 +313,28 @@ class SeqDataset:
         mcols : Sequence | None
             If None, all metadata columns will be included in the dataset object. Otherwise,
             only these specific columns
-
-        Returns
-        -------
-
-
-        Notes
-        -----
-
         """
-        ...
-        # dataset.save_to_disk(dataset_path=savepath)
+        if metadata:
+            metadata = metadata if isinstance(metadata, Path) else Path(metadata)
+            sep = "\t" if metadata.suffix == ".tsv" else ","
+            meta: pl.DataFrame | None = pl.read_csv(
+                metadata, separator=sep, infer_schema_length=None
+            ).unique(id_col)
+            if mcols is not None:
+                meta = meta.select(mcols)
+        else:
+            meta = None
+        spp = SeqPreprocessor(
+            seq_path=fastas,
+            meta=meta,
+            id_col=id_col,
+            split_method=split_method,
+            anno_path=annotations,
+            max_length=max_length,
+            **kwargs,
+        )
+        dataset = Dataset.from_generator(spp.gen)
+        dataset.save_to_disk(dataset_path=savepath)
 
     def _tokenize_fn(self, data):
         return self.tokenizer(
