@@ -1,12 +1,14 @@
 #!/usr/bin/env ipython
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias
 
 import datasets as hd
+import numpy as np
 import polars as pl
 import torch
 from Bio import SeqIO
@@ -19,6 +21,27 @@ from torch import Tensor
 from transformers import AutoTokenizer, pipeline
 
 SPLIT_METHODS: TypeAlias = Literal["bin", "bakta"]
+
+
+def add_intergenic(
+    record: SeqRecord,
+    df: pl.DataFrame,
+    start_col: str = "Start",
+    stop_col: str = "Stop",
+) -> pl.DataFrame:
+    final_intergenic = len(record) - max(df[stop_col])
+    df = df.with_columns(
+        downstream_intergenic=np.concat(
+            [df["Start"][1:] - df["Stop"][:-1], [final_intergenic]]
+        )
+    )
+    first_intergenic = min(df[start_col])
+    df = df.with_columns(
+        upstream_intergenic=np.concat(
+            [[first_intergenic], df["downstream_intergenic"][:-1]]
+        )
+    )
+    return df
 
 
 class SeqPreprocessor:
@@ -118,11 +141,14 @@ class SeqPreprocessor:
                 i += 1
         elif self.split_method == "bakta":
             filtered = anno.filter(pl.col("#Sequence Id") == record.id)
+            filtered = add_intergenic(record, filtered, "Start", "Stop")
             if not filtered.is_empty():
                 filtered = anno.loc[anno["#Sequence Id"] == record.id, :]
                 for i, row in enumerate(filtered.iter_rows(named=True)):
                     length = row["Stop"] - row["Start"]
-                    current = self._get_subsequence(record, row["Start"], row["Stop"])
+                    current = self._get_subsequence(
+                        record, row, start="Start", stop="Stop"
+                    )
                     vals.append(
                         self._sample_dict(
                             current,
@@ -138,15 +164,24 @@ class SeqPreprocessor:
                     )
         return vals
 
-    def _get_subsequence(self, record: SeqRecord, start: int, stop: int) -> SeqRecord:
+    def _get_subsequence(
+        self, record: SeqRecord, row: dict, start: str = "Start", stop: str = "Stop"
+    ) -> SeqRecord:
+        start_idx, stop_idx = row[start], row[stop]
+        downstream, upstream = (
+            row.get("downstream_intergenic", 0),
+            row.get("upstream_intergenic", 0),
+        )
+        downstream = math.floor(downstream * self.utr_percent)
+        upstream = math.floor(upstream * self.utr_percent)
         if not self.include_utrs[0] and not self.include_utrs[1]:
-            return record[start:stop]
+            return record[start_idx:stop_idx]
         elif self.include_utrs[0] and not self.include_utrs[1]:
-            ...
+            return record[start_idx + upstream : stop_idx]
         elif not self.include_utrs[0] and self.include_utrs[1]:
-            ...
+            return record[start_idx : stop_idx + downstream]
         else:
-            ...
+            return record[start_idx + upstream : stop_idx + downstream]
 
     def gen(self):
         """Return generator object, for use with Datasets.from_generator"""
