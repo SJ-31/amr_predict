@@ -10,3 +10,4 @@
 *.egg-info*
 *.snakemake*
 /.stfolder/
+/data/remote
