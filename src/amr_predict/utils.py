@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Literal, TypeAlias
 
 import datasets as hd
-import pandas as pd
+import polars as pl
 import torch
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from datasets.arrow_dataset import Dataset
+from polars.exceptions import NoRowsReturnedError
 from torch import Tensor
 
 # from torch.utils.data import Dataset
@@ -29,29 +30,50 @@ class SeqPreprocessor:
     def __init__(
         self,
         seq_path: Path,
-        meta_path: Path | str | None = None,
+        meta: None | pl.DataFrame = None,
         anno_path: Path | str | None = None,
         id_col: str = "sample",
-        split_rule: SPLIT_METHODS = "bin",
+        split_method: SPLIT_METHODS = "bin",
         max_length: int = 512,
+        include_utrs: tuple[bool, bool] = (False, False),
+        utr_percent: float = 0.5,
     ):
-        if split_rule != "bin" and anno_path is None:
+        """Initialize preprocesser
+
+        Parameters
+        ----------
+        param : argument
+
+        Returns
+        -------
+        split_method : str
+            Method to split sequences longer than `max_length`
+            Supported methods
+            - bin : Split the sequence at successive intervals equal to `max_length`
+            - bakta : Split sequence at
+        include_utrs : tuple[bool, bool]
+            For ORF-based splitting methods, whether to include the 5' and 3' UTRs into the
+                sequence, respectively
+        utr_percent : float
+            The percentage of intergenic region to be inlcuded as part of the UTR, measured
+            from the gene start (5' UTR) or end (3' UTR)
+            By default, takes half of the region from one gene, leaving the other half for the UTR of
+            the downstream/upstream
+
+        Notes
+        -----
+
+        """
+        if split_method != "bin" and anno_path is None:
             raise ValueError(
                 "`anno_path` file must be provided unless split_rule is `bin`!"
             )
-        self.split_method: SPLIT_METHODS = split_rule
+        self.split_method: SPLIT_METHODS = split_method
         self.annotations: Path = anno_path
         self.id_col: str = id_col
-        if meta_path:
-            meta_path = meta_path if isinstance(meta_path, Path) else Path(meta_path)
-            sep = "\t" if meta_path.suffix == ".tsv" else ","
-            self.meta: pd.DataFrame | None = pd.read_csv(
-                meta_path, sep=sep
-            ).drop_duplicates(id_col)
-            self.meta.index = self.meta[id_col]
-            self.meta = self.meta.drop(id_col, axis=1)
-        else:
-            self.meta = None
+        self.meta: pl.DataFrame | None = meta
+        self.include_utrs: tuple[bool, bool] = include_utrs
+        self.utr_percent: float = utr_percent
         accepted_suffixes = {".fasta", ".fna", ".fa"}
 
         self.fastas: list[Path] = [
@@ -59,6 +81,7 @@ class SeqPreprocessor:
         ]
 
     def _sample_dict(self, record, meta: dict | None, **kwargs):
+        """Boilerplate to create sequence entry for generator"""
         val = {
             "sample": id,
             "seqid": record.id,
@@ -74,8 +97,16 @@ class SeqPreprocessor:
         self,
         record: SeqRecord,
         meta: dict | None,
-        anno: pd.DataFrame | None = None,
+        anno: pl.DataFrame | None = None,
     ) -> list[dict]:
+        """Generate a list of sequence dicts from a single fasta record, splitting
+                    the sequence according to the chosen split method
+
+        Parameters
+        ----------
+        anno : pl.DataFrame
+            DataFrame containing sequence annotations.
+        """
         vals = []
         if self.split_method == "bin":
             acc, i = 0, 0
@@ -86,34 +117,54 @@ class SeqPreprocessor:
                 acc += self.max_length
                 i += 1
         elif self.split_method == "bakta":
-            filtered = anno.loc[anno["#Sequence Id"] == record.id, :]
-            for i, row in filtered.iterrows():
-                current = record[row["Start"] : row["Stop"]]
-                vals.append(
-                    self._sample_dict(
-                        current,
-                        meta,
-                        Strand=row["Strand"],
-                        Gene=row["Gene"],
-                        Product=row["Product"],
-                        Locus_tag=row["Locus Tag"],
-                        Type=row["Type"],
-                        index=i,
+            filtered = anno.filter(pl.col("#Sequence Id") == record.id)
+            if not filtered.is_empty():
+                filtered = anno.loc[anno["#Sequence Id"] == record.id, :]
+                for i, row in enumerate(filtered.iter_rows(named=True)):
+                    length = row["Stop"] - row["Start"]
+                    current = self._get_subsequence(record, row["Start"], row["Stop"])
+                    vals.append(
+                        self._sample_dict(
+                            current,
+                            meta,
+                            strand=row["Strand"],
+                            gene=row["Gene"],
+                            product=row["Product"],
+                            locus_tag=row["Locus Tag"],
+                            type=row["Type"],
+                            length=length,
+                            index=i,
+                        )
                     )
-                )
         return vals
 
+    def _get_subsequence(self, record: SeqRecord, start: int, stop: int) -> SeqRecord:
+        if not self.include_utrs[0] and not self.include_utrs[1]:
+            return record[start:stop]
+        elif self.include_utrs[0] and not self.include_utrs[1]:
+            ...
+        elif not self.include_utrs[0] and self.include_utrs[1]:
+            ...
+        else:
+            ...
+
     def gen(self):
+        """Return generator object, for use with Datasets.from_generator"""
         for fasta in self.fastas:
             id = fasta.stem
             if self.meta is not None:
                 try:
-                    meta = self.meta.loc[id].to_dict()
-                except KeyError:
+                    meta = self.meta.row(
+                        by_predicate=pl.col(self.id_col) == id, named=True
+                    )
+                except NoRowsReturnedError:
                     meta = {}
             if self.split_method == "bakta":
-                anno = pd.read_csv(
-                    self.annotations.joinpath(f"{id}_bakta.tsv"), sep="\t", skiprows=5
+                anno = pl.read_csv(
+                    self.annotations.joinpath(f"{id}_bakta.tsv"),
+                    separator="\t",
+                    skip_rows=5,
+                    infer_schema_length=None,
                 )
             else:
                 anno = None
@@ -209,7 +260,7 @@ class SeqDataset:
         metadata: Path | None = None,
         mcols: Sequence | None = None,
         id_col: str = "sample",
-        split_rule: str = "ORF",
+        split_method: SPLIT_METHODS = "bakta",
         annotations: Path | str | None = None,
         max_length: int = 512,
     ) -> None:
@@ -226,10 +277,6 @@ class SeqDataset:
         mcols : Sequence | None
             If None, all metadata columns will be included in the dataset object. Otherwise,
             only these specific columns
-        split_rule : str
-            Method to split sequences longer than `max_length`
-            Supported methods
-            - bin : Split the sequence at successive intervals equal to `max_length`
 
         Returns
         -------
@@ -261,49 +308,3 @@ class SeqDataset:
 # 2. Set up a function to tokenize the dataset
 # 3. Figure out what's up with the datacollator
 # 4. Extract the hidden state from seqLens output
-
-
-# class SeqDataset(Dataset):
-#     """Torch dataset with sequences as samples
-
-#     Parameters
-#     ----------
-#     metadata : DataFrame
-#         df containing sample information
-#     vars : tuple[str]
-#         columns of `metadata` to include in the Dataset object, in order
-#     tokenizer : Path | AutoTokenizer
-#         Tokenizer to process the sequence data or the path to a pretrained one
-#     dir : Path
-#         Directory containing sequence files in fasta format. The files must be named
-#         <id>.fasta or <id>.fa where <id> are elements of metadata['id_col']
-#     """
-
-#     @staticmethod  # TODO: best way of saving torch dataset to disk?
-#     def load() -> SeqDataset: ...
-
-#     def __init__(
-#         self,
-#         dir: Path,
-#         metadata: pd.DataFrame,
-#         vars: tuple[str],
-#         tokenizer: Preprocessor,
-#         id_col: str = "acc",
-#     ) -> None:
-#         super().__init__()
-#         self.saved_path: Path | None = None
-#         self.meta: pd.DataFrame = metadata
-#         self.X: Tensor
-
-#     def save(self, path: Path): ...
-
-#     def tokenize(self): ...
-
-#     @property
-#     def shape(self) -> tuple:
-#         return self.X.shape
-
-#     def __len__(self) -> int:
-#         return self.X.shape[0]
-
-#     # Might want to just tokenize at init
