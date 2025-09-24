@@ -25,16 +25,15 @@ elif smk.rule == "make_text_datasets":
     for name, kwargs in smk.params["preprocessing"].items():
         savepath = Path(f"{smk.params['outdir']}/{name}")
         if kwargs["split_method"] == "bakta":
-            anno = Path(CONFIG["bakta_dir"])
+            anno = Path(CONFIG["bakta"])
         else:
             anno = None
         SeqDataset.save_from_fastas(
-            fastas=smk.params["genomes"],
-            metadata=smk.input["meta"],
+            fastas=CONFIG["genomes"],
+            metadata=smk.input["meta"][0],
             savepath=savepath,
             id_col="sample",
             annotations=anno,
-            split_method=name,
             **kwargs,
         )
 # * Embed

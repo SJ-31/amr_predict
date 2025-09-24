@@ -214,6 +214,7 @@ class SeqPreprocessor:
         self.id_col: str = id_col
         self.meta: pl.DataFrame | None = meta
         self.include_utrs: tuple[bool, bool] = include_utrs
+        self.max_length: int = max_length
         self.utr_percent: float = utr_percent
         accepted_suffixes = {".fasta", ".fna", ".fa"}
 
@@ -259,9 +260,8 @@ class SeqPreprocessor:
                 i += 1
         elif self.split_method == "bakta":
             filtered = anno.filter(pl.col("#Sequence Id") == record.id)
-            filtered = add_intergenic(record, filtered, "Start", "Stop")
             if not filtered.is_empty():
-                filtered = anno.loc[anno["#Sequence Id"] == record.id, :]
+                filtered = add_intergenic(record, filtered, "Start", "Stop")
                 for i, row in enumerate(filtered.iter_rows(named=True)):
                     length = row["Stop"] - row["Start"]
                     current = self._get_subsequence(
@@ -290,8 +290,8 @@ class SeqPreprocessor:
             row.get("downstream_intergenic", 0),
             row.get("upstream_intergenic", 0),
         )
-        downstream = math.floor(downstream * self.utr_percent)
-        upstream = math.floor(upstream * self.utr_percent)
+        downstream = max(0, math.floor(downstream * self.utr_percent))
+        upstream = max(0, math.floor(upstream * self.utr_percent))
         if not self.include_utrs[0] and not self.include_utrs[1]:
             return record[start_idx:stop_idx]
         elif self.include_utrs[0] and not self.include_utrs[1]:
@@ -388,12 +388,10 @@ class SeqDataset:
     def __init__(
         self,
         path: str | Path,
-        tokenizer: AutoTokenizer | str | Path,
         embedder: SeqEmbedder,
         max_length: int = 512,
     ) -> None:
         self.dataset: Dataset = load_from_disk(path)
-        self.tokenizer: AutoTokenizer = tokenizer
         self.max_length: int = max_length
         self.embedder: SeqEmbedder = embedder
 
@@ -404,7 +402,7 @@ class SeqDataset:
 
     @staticmethod
     def save_from_fastas(
-        fastas: Path,
+        fastas: Path | str,
         savepath: Path,
         metadata: Path | None = None,
         mcols: Sequence | None = None,
@@ -439,7 +437,7 @@ class SeqDataset:
         else:
             meta = None
         spp = SeqPreprocessor(
-            seq_path=fastas,
+            seq_path=Path(fastas) if isinstance(fastas, str) else fastas,
             meta=meta,
             id_col=id_col,
             split_method=split_method,
@@ -452,8 +450,4 @@ class SeqDataset:
 
 
 # TODO:
-# 1. Find a way to format fasta files into a huggingface dataset, along with all their
-# annotation data. Probably use generator style DONE
-# 2. Set up a function to tokenize the dataset
 # 3. Figure out what's up with the datacollator
-# 4. Extract the hidden state from seqLens output
