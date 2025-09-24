@@ -66,7 +66,7 @@ class SeqEmbedder:
 
     def _seqlens_embed(
         self,
-        dataset: Dataset,
+        dset: Dataset,
         huggingface: str,
         text_key: str = "sequence",
         model_key: str = "omicseye/seqLens_4096_512_46M-Mp",
@@ -83,25 +83,27 @@ class SeqEmbedder:
             Method for pooling sequence hidden states. Current implementations
             are from the seqLens repository
         text_key : str
-            Column name of `dataset` containing the sequences
+            Column name of `dset` containing the sequences
         """
         os.environ["HF_HOME"] = huggingface
         device = "cuda" if torch.cuda.is_available() else "cpu"
         tokenizer = AutoTokenizer.from_pretrained(model_key)
         model = AutoModelForMaskedLM.from_pretrained(model_key)
+        model.to(device)
         model.config.output_hidden_states = True
         to_keep = {"_index", "label"}
-        dataset = dataset.add_column("_index", list(range(len(dataset))))
-        to_remove = [c for c in dataset.column_names if c not in to_keep]
-        tokenized = dataset.map(
-            lambda x: self._tokenize_fn(x, text_key=text_key, max_length=512),
+        dset = dset.add_column("_index", list(range(len(dset))))
+        to_remove = [c for c in dset.column_names if c not in to_keep]
+        tokenized = dset.map(
+            lambda x: self._tokenize(
+                x, tokenizer=tokenizer, text_key=text_key, max_length=512
+            ),
             batched=True,
             remove_columns=to_remove,
         )
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
         # TODO: is there any reason to change this from the default?
         loader = DataLoader(tokenized, batch_size=batch_size, collate_fn=data_collator)
-        hidden_size = []
 
         def gen():
             with torch.no_grad():
@@ -137,22 +139,20 @@ class SeqEmbedder:
                             ],
                             dim=1,
                         )
-                    if not hidden_size:
-                        hidden_size.append(embedding.shape[1])
                     yield {"embedding": embedding}
 
+        hidden_size = next(gen())["embedding"].shape[1]
         features = Features(
-            {"embedding": Array2D(shape=(len(dataset), hidden_size[0]), dtype="int32")}
+            {"embedding": Array2D(shape=(len(dset), hidden_size), dtype="int32")}
         )
         result: Dataset = Dataset.from_generator(gen, features=features)
         result = result.with_format("torch").sort("_index").remove_columns("_index")
-        result = concatenate_datasets(
-            [result, dataset.remove_columns("_index")], axis=1
-        )
+        result = concatenate_datasets([result, dset.remove_columns("_index")], axis=1)
         return result
 
-    def _tokenize_fn(self, data, text_key: str, max_length: int):
-        return self.tokenizer(
+    @staticmethod
+    def _tokenize(data, tokenizer, text_key: str, max_length: int):
+        return tokenizer(
             data[text_key],
             truncation=True,
             padding=False,
