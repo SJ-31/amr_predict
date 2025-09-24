@@ -5,6 +5,7 @@ data:
   meta: "../data/meta"
   processed: "../data/processed"
   temp: "../data/temp"
+  tests: "../tests/data"
 bin: "../bin"
 out:
   root: "../results/output"
@@ -12,3 +13,29 @@ out:
 src: "../src"
 remote: "../data/remote"
 cache: "../data/temp/cache"
+
+# * Data preprocessing
+
+bakta: "" # Output of bakta tool
+funcscan: "" #
+genomes: "genomes" # Genome directory, relative to REMOTE
+
+embedding:
+  method: "seqLens"
+  pooling: "mean"
+
+preprocessing:
+  bin:
+    split_method: bin
+  orf_only:
+    split_method: bakta
+    include_utrs: [False, False]
+  orf_w_downstream:
+    split_method: bakta
+    include_utrs: [False, True]
+  orf_w_upstream:
+    split_method: bakta
+    include_utrs: [True, False]
+  orf_w_both:
+    split_method: bakta
+    include_utrs: [True, True]

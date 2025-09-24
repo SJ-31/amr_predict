@@ -9,5 +9,6 @@
 # Other
 *.egg-info*
 *.snakemake*
+*__pycache__
 /.stfolder/
 /data/remote
