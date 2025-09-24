@@ -1,17 +1,12 @@
 from pathlib import Path
 
 
-configfile: "shared.yaml"
-
-
 include: "shared.smk"
 
 
 if TEST:
     config["bakta"] = f"{TEST_DATA}/bakta"
     config["genomes"] = f"{TEST_DATA}/genomes"
-    # TODO: configure the annotation sources
-    # config["funcscan"]
 
 PREPROCESSING = config["preprocessing"]
 S_OUTDIR = (
@@ -25,7 +20,7 @@ E_OUTDIR = (
 
 rule all:
     input:
-        embedded=[directory(f"{E_OUTDIR}/{d}") for d in PREPROCESSING.keys()],
+        embedded=[f"{E_OUTDIR}/{d}" for d in PREPROCESSING.keys()],
 
 
 rule generate_metadata:
@@ -43,7 +38,6 @@ rule make_text_datasets:
     params:
         outdir=S_OUTDIR,
         preprocessing=PREPROCESSING,
-        genomes=f"{REMOTE}/{config['genome_dir']}",
     script:
         "scripts/prepare_data.py"
 
@@ -54,6 +48,6 @@ rule embed:
     params:
         outdir=E_OUTDIR,
     output:
-        rules.all.embedded,
+        rules.all.input.embedded,
     script:
         "scripts/prepare_data.py"
