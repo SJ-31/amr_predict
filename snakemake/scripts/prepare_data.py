@@ -9,6 +9,7 @@ from snakemake.script import snakemake as smk
 TEST: bool = smk.config["test"]
 CONFIG: dict = smk.config
 
+
 # * Generate metadata
 if smk.rule == "generate_metadata":
     if TEST:

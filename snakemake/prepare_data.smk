@@ -32,7 +32,7 @@ rule generate_metadata:
 
 rule make_text_datasets:
     output:
-        [directory(f"{E_OUTDIR}/{d}") for d in PREPROCESSING.keys()],
+        [directory(f"{S_OUTDIR}/{d}") for d in PREPROCESSING.keys()],
     input:
         meta=rules.generate_metadata.output,
     params:
@@ -42,7 +42,7 @@ rule make_text_datasets:
         "scripts/prepare_data.py"
 
 
-rule embed:
+rule make_embedded_datasets:
     input:
         rules.make_text_datasets.output,
     params:

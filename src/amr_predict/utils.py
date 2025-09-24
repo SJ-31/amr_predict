@@ -51,11 +51,9 @@ class SeqEmbedder:
     def __init__(
         self,
         method: EMBEDDING_METHODS = "seqLens",
-        tokenizer: AutoTokenizer | None = None,
         **kwargs,
     ):
         self.method: EMBEDDING_METHODS = method
-        self.tokenizer: AutoTokenizer | None = tokenizer
         self.kwargs: dict = kwargs
 
     def __call__(self, dataset: Dataset | SeqDataset) -> Dataset:
