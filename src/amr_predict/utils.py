@@ -382,29 +382,25 @@ class ModuleConfig:
 
 class SeqDataset:
     """
-
-    Parameters
-    ----------
-    tokenizer :
-
-    Returns
-    -------
-
-
-    Notes
-    -----
-
+    Class representing a sequence dataset, with methods for generation
     """
 
     def __init__(
         self,
         path: str | Path,
         tokenizer: AutoTokenizer | str | Path,
+        embedder: SeqEmbedder,
         max_length: int = 512,
     ) -> None:
         self.dataset: Dataset = load_from_disk(path)
         self.tokenizer: AutoTokenizer = tokenizer
         self.max_length: int = max_length
+        self.embedder: SeqEmbedder = embedder
+
+    def embed(self, savepath: Path | str | None) -> None:
+        self.dataset = self.embedder(self.dataset)
+        if savepath is not None:
+            self.dataset.save_to_disk(dataset_path=savepath)
 
     @staticmethod
     def save_from_fastas(
@@ -454,22 +450,10 @@ class SeqDataset:
         dataset = Dataset.from_generator(spp.gen)
         dataset.save_to_disk(dataset_path=savepath)
 
-    def _tokenize_fn(self, data):
-        return self.tokenizer(
-            data[self.text_key],
-            truncation=True,
-            padding=False,
-            max_length=self.max_length,
-        )
-
-    def _tokenize(self, dataset: Dataset):
-        dataset.map(self._tokenize_fn, batched=True, remove_columns=[])
-        return self.tokenizer()
-
 
 # TODO:
 # 1. Find a way to format fasta files into a huggingface dataset, along with all their
-# annotation data. Probably use generator style
+# annotation data. Probably use generator style DONE
 # 2. Set up a function to tokenize the dataset
 # 3. Figure out what's up with the datacollator
 # 4. Extract the hidden state from seqLens output
