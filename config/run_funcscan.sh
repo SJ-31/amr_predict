@@ -2,6 +2,7 @@
 
 # [2025-09-22 Mon] Keep it using the jia samples for now
 # Run from repos/amr_predict/pipelines
+# [2025-09-24 Wed] Disabled protein annotation due to errors
 remote=".."
 nextflow run nf-core/funcscan \
     --input "./jia_samplesheet.csv" \
@@ -10,5 +11,4 @@ nextflow run nf-core/funcscan \
     --run_arg_screening \
     --annotation_tool bakta \
     --annotation_bakta_db "${remote}/datasets/bakta_db_v5.1_full" \
-    --save_annotations true \
-    --run_protein_annotation
+    --save_annotations true

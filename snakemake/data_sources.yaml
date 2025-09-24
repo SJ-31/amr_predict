@@ -3,3 +3,7 @@
 biosample_sheets:
   asts.tsv: "#BioSample"
   BVBRC_genome.csv: "BioSample Accession"
+
+# List of BioProject filenames in `meta` directory to download from
+bioproject_files:
+  ["PRJNA855368_AssemblyDetails.txt", "PRJNA996347_AssemblyDetails.txt"]

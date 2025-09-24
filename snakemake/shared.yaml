@@ -1,6 +1,8 @@
 test: False
+huggingface: "../data/remote/cache/huggingface"
 data:
   raw: "../data/raw"
+  meta: "../data/meta"
   processed: "../data/processed"
   temp: "../data/temp"
 bin: "../bin"
