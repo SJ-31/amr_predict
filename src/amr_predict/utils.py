@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,15 +13,17 @@ import polars as pl
 import torch
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
-from datasets import load_from_disk
+from datasets import Array2D, Features, concatenate_datasets
 from datasets.arrow_dataset import Dataset
+from datasets.load import load_from_disk
 from polars.exceptions import NoRowsReturnedError
 from torch import Tensor
-
-# from torch.utils.data import Dataset
-from transformers import AutoTokenizer
+from torch.utils.data import DataLoader
+from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
+from transformers.modeling_outputs import MaskedLMOutput
 
 SPLIT_METHODS: TypeAlias = Literal["bin", "bakta"]
+EMBEDDING_METHODS: TypeAlias = Literal["seqLens", "Evo2"]
 
 
 def add_intergenic(
@@ -42,6 +45,121 @@ def add_intergenic(
         )
     )
     return df
+
+
+class SeqEmbedder:
+    def __init__(
+        self,
+        method: EMBEDDING_METHODS = "seqLens",
+        tokenizer: AutoTokenizer | None = None,
+        **kwargs,
+    ):
+        self.method: EMBEDDING_METHODS = method
+        self.tokenizer: AutoTokenizer | None = tokenizer
+        self.kwargs: dict = kwargs
+
+    def __call__(self, dataset: Dataset | SeqDataset) -> Dataset:
+        if self.method == "seqLens":
+            return self._seqlens_embed(dataset, **self.kwargs)
+        elif self.method == "Evo2":
+            raise ValueError("Not implemented yet")
+        else:
+            raise ValueError("Given method not supported!")
+
+    def _seqlens_embed(
+        self,
+        dataset: Dataset,
+        huggingface: str,
+        text_key: str = "sequence",
+        model_key: str = "omicseye/seqLens_4096_512_46M-Mp",
+        batch_size: int = 64,
+        pooling: Literal["mean", "cls", "max", "concat"] = "mean",
+    ) -> Dataset:
+        """Generate embeddings of `dataset` with seqLens
+
+        Parameters
+        ----------
+        huggingface : str
+            Path to huggingface cache on disk
+        pooling : Literal
+            Method for pooling sequence hidden states. Current implementations
+            are from the seqLens repository
+        text_key : str
+            Column name of `dataset` containing the sequences
+        """
+        os.environ["HF_HOME"] = huggingface
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        tokenizer = AutoTokenizer.from_pretrained(model_key)
+        model = AutoModelForMaskedLM.from_pretrained(model_key)
+        model.config.output_hidden_states = True
+        to_keep = {"_index", "label"}
+        dataset = dataset.add_column("_index", list(range(len(dataset))))
+        to_remove = [c for c in dataset.column_names if c not in to_keep]
+        tokenized = dataset.map(
+            lambda x: self._tokenize_fn(x, text_key=text_key, max_length=512),
+            batched=True,
+            remove_columns=to_remove,
+        )
+        data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+        # TODO: is there any reason to change this from the default?
+        loader = DataLoader(tokenized, batch_size=batch_size, collate_fn=data_collator)
+        hidden_size = []
+
+        def gen():
+            with torch.no_grad():
+                for batch in loader:
+                    input_ids = batch["input_ids"].to(device)
+                    attention_mask = batch["attention_mask"].to(device)
+                    output: MaskedLMOutput = model(
+                        input_ids=input_ids, attention_mask=attention_mask
+                    )
+                    last_hidden = output.hidden_states[-1]
+                    # This has shape (batch_size, sequence_length, hidden_size)
+                    # Mask out padding
+                    expanded_mask = attention_mask.unsqueeze(-1).expand_as(last_hidden)
+                    hidden_masked = last_hidden * expanded_mask
+                    if pooling == "max":
+                        embedding = hidden_masked.max(dim=1).values
+                    elif pooling == "cls":
+                        embedding = hidden_masked[:, 0, :]
+                    elif pooling == "mean":
+                        sum_features = hidden_masked.sum(dim=1)
+                        non_padding_count = expanded_mask.sum(dim=1).clamp(
+                            min=1
+                        )  # Clamp min to 1 to avoid division by zero
+                        embedding = sum_features / non_padding_count
+                    elif pooling == "concat":
+                        sum_features = hidden_masked.sum(dim=1)
+                        non_padding_count = expanded_mask.sum(dim=1).clamp(min=1)
+                        embedding = torch.cat(
+                            [
+                                hidden_masked[:, 0, :],  # CLS
+                                hidden_masked.max(dim=1).values,  # Max
+                                sum_features / non_padding_count,  # Mean
+                            ],
+                            dim=1,
+                        )
+                    if not hidden_size:
+                        hidden_size.append(embedding.shape[1])
+                    yield {"embedding": embedding}
+
+        features = Features(
+            {"embedding": Array2D(shape=(len(dataset), hidden_size[0]), dtype="int32")}
+        )
+        result: Dataset = Dataset.from_generator(gen, features=features)
+        result = result.with_format("torch").sort("_index").remove_columns("_index")
+        result = concatenate_datasets(
+            [result, dataset.remove_columns("_index")], axis=1
+        )
+        return result
+
+    def _tokenize_fn(self, data, text_key: str, max_length: int):
+        return self.tokenizer(
+            data[text_key],
+            truncation=True,
+            padding=False,
+            max_length=max_length,
+        )
 
 
 class SeqPreprocessor:
