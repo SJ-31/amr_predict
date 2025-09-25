@@ -18,7 +18,7 @@ from Bio.SeqRecord import SeqRecord
 from datasets import DatasetDict, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
-from polars.exceptions import NoRowsReturnedError
+from polars.exceptions import NoDataError
 from torch import Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
@@ -557,24 +557,27 @@ class SeqDataset:
             )
             dataset = concatenate_datasets([dataset, to_combine], axis=1)
         if seq_metadata:
-            seq_meta: pl.DataFrame = read_tabular(seq_metadata).rename(
-                {seq_id_col: "seqid", seq_start: "start", seq_stop: "stop"}
-            )
-            entries_within: pl.DataFrame = join_within(
-                dataset.select_columns(
-                    ["sample", "seqid", "start", "stop", "uid"]
-                ).to_polars(),
-                seq_meta,
-                initial_join=["sample", "seqid"],
-                id_col="uid",
-                start_col="start",
-                stop_col="stop",
-            )
-            to_combine = Dataset.from_polars(
-                dataset.select_columns("uid")
-                .to_polars()
-                .join(entries_within, on="uid", how="left", maintain_order=True)
-                .drop("uid")
-            )
-            dataset = concatenate_datasets([dataset, to_combine], axis=1)
+            try:
+                seq_meta: pl.DataFrame = read_tabular(seq_metadata).rename(
+                    {seq_id_col: "seqid", seq_start: "start", seq_stop: "stop"}
+                )
+                entries_within: pl.DataFrame = join_within(
+                    dataset.select_columns(
+                        ["sample", "seqid", "start", "stop", "uid"]
+                    ).to_polars(),
+                    seq_meta,
+                    initial_join=["sample", "seqid"],
+                    id_col="uid",
+                    start_col="start",
+                    stop_col="stop",
+                )
+                to_combine = Dataset.from_polars(
+                    dataset.select_columns("uid")
+                    .to_polars()
+                    .join(entries_within, on="uid", how="left", maintain_order=True)
+                    .drop("uid")
+                )
+                dataset = concatenate_datasets([dataset, to_combine], axis=1)
+            except NoDataError:
+                print("No sequence metadata provided")
         dataset.save_to_disk(dataset_path=savepath)
