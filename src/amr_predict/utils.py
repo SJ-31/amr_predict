@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TypeAlias
 
+import anndata as ad
 import numpy as np
 import polars as pl
 import torch
@@ -59,19 +60,48 @@ def read_tabular(file: Path | str, infer_schema_length=None, **kwargs) -> pl.Dat
     return df
 
 
-def load_as_torch(
+def load_as(
     dset_path,
-    format: Literal["huggingface", "torch"] = "huggingface",
+    format: Literal["huggingface", "torch", "adata"] = "huggingface",
     columns: Sequence | None = None,
-) -> Dataset | td.Dataset | DatasetDict:
-    dset = load_from_disk(dset_path).with_format("torch")
+    x_key: str | None = None,
+) -> Dataset | td.Dataset | DatasetDict | ad.AnnData:
+    """Load huggingface dataset and convert to pytorch tensors
+
+    Parameters
+    ----------
+    columns : Sequence | None
+        ordered sequence of columns to keep in the dataset
+    """
+    load_to = "torch" if format != "adata" else "numpy"
+    dset = load_from_disk(dset_path).with_format(load_to)
     to_keep = columns if columns is not None else dset.column_names
     if format == "huggingface":
         return dset.select_columns(to_keep)
+    elif format == "adata":
+        x_key = x_key if x_key is not None else to_keep[0]
+        x = dset[x_key][:]
+        obs = dset.select_columns(to_keep).to_pandas()
+        return ad.AnnData(X=x, obs=obs)
     else:
         feature_types = dset.features
         to_keep = [k for k in to_keep if feature_types[k] != Value("string")]
         return td.TensorDataset(*[dset[k][:] for k in to_keep])
+
+
+def dataset2adata(dset: td.Dataset | Dataset, x_key: str = "embedding") -> ad.AnnData:
+    import pandas as pd
+
+    if isinstance(dset, td.Dataset):
+        tensors = {f"v{i}": v for i, v in enumerate(dset[:])}
+        x = tensors.pop("v0")
+        if not isinstance(x, np.ndarray):
+            x = x.numpy()
+        obs = pd.DataFrame(tensors)
+    else:
+        x = dset[x_key][:].numpy()
+        obs = dset.remove_columns(x_key).to_pandas()
+    return ad.AnnData(X=x, obs=obs)
 
 
 # * Classes
