@@ -13,7 +13,7 @@ import polars as pl
 import torch
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
-from datasets import Array2D, Features, concatenate_datasets
+from datasets import Array2D, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from polars.exceptions import NoRowsReturnedError
@@ -24,6 +24,8 @@ from transformers.modeling_outputs import MaskedLMOutput
 
 SPLIT_METHODS: TypeAlias = Literal["bin", "bakta"]
 EMBEDDING_METHODS: TypeAlias = Literal["seqLens", "Evo2"]
+
+# * Utility functions
 
 
 def add_intergenic(
@@ -45,6 +47,18 @@ def add_intergenic(
         )
     )
     return df
+
+
+def read_tabular(file: Path | str, infer_schema_length=None, **kwargs) -> pl.DataFrame:
+    file = file if isinstance(file, Path) else Path(file)
+    sep = "\t" if file.suffix == ".tsv" else ","
+    df: pl.DataFrame | None = pl.read_csv(
+        file, separator=sep, infer_schema_length=infer_schema_length, **kwargs
+    )
+    return df
+
+
+# * Classes
 
 
 class SeqEmbedder:
@@ -253,7 +267,15 @@ class SeqPreprocessor:
             split_to = len(record) - self.max_length
             while acc <= split_to:
                 current = record[acc : acc + self.max_length]
-                vals.append(self._sample_dict(current, meta, index=i))
+                vals.append(
+                    self._sample_dict(
+                        current,
+                        meta,
+                        index=i,
+                        start=acc,
+                        stop=acc + self.max_length,
+                    ),
+                )
                 acc += self.max_length
                 i += 1
         elif self.split_method == "bakta":
@@ -262,7 +284,7 @@ class SeqPreprocessor:
                 filtered = add_intergenic(record, filtered, "Start", "Stop")
                 for i, row in enumerate(filtered.iter_rows(named=True)):
                     length = row["Stop"] - row["Start"]
-                    current = self._get_subsequence(
+                    current, indices = self._get_subsequence(
                         record, row, start="Start", stop="Stop"
                     )
                     vals.append(
@@ -276,13 +298,15 @@ class SeqPreprocessor:
                             type=row["Type"],
                             length=length,
                             index=i,
+                            start=indices[0],
+                            stop=indices[1],
                         )
                     )
         return vals
 
     def _get_subsequence(
         self, record: SeqRecord, row: dict, start: str = "Start", stop: str = "Stop"
-    ) -> SeqRecord:
+    ) -> tuple[SeqRecord, tuple[int, int]]:
         start_idx, stop_idx = row[start], row[stop]
         downstream, upstream = (
             row.get("downstream_intergenic", 0),
@@ -290,14 +314,14 @@ class SeqPreprocessor:
         )
         downstream = max(0, math.floor(downstream * self.utr_percent))
         upstream = max(0, math.floor(upstream * self.utr_percent))
-        if not self.include_utrs[0] and not self.include_utrs[1]:
-            return record[start_idx:stop_idx]
-        elif self.include_utrs[0] and not self.include_utrs[1]:
-            return record[start_idx + upstream : stop_idx]
+        if self.include_utrs[0] and not self.include_utrs[1]:
+            start_idx += upstream
         elif not self.include_utrs[0] and self.include_utrs[1]:
-            return record[start_idx : stop_idx + downstream]
-        else:
-            return record[start_idx + upstream : stop_idx + downstream]
+            stop_idx += downstream
+        elif self.include_utrs[0] and self.include_utrs[1]:
+            start_idx += upstream
+            stop_idx += downstream
+        return record[start_idx:stop_idx], (start_idx, stop_idx)
 
     def gen(self):
         """Return generator object, for use with Datasets.from_generator"""
