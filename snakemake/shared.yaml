@@ -16,8 +16,16 @@ cache: "../data/temp/cache"
 
 # * Data preprocessing
 
+sample_metadata:
+  file: "" # TODO: add in combined metadata file from ncbi's ast browser and
+  # bvbrc. Mainly want the mapping between samples and ast scorse
+  id_col: ""
+seq_metadata:
+  hamronization: "" #
+  combgc: ""
+  ampcombi: ""
+
 bakta: "" # Output of bakta tool
-funcscan: "" #
 genomes: "genomes" # Genome directory, relative to REMOTE
 
 embedding:

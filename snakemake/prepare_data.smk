@@ -7,6 +7,11 @@ include: "shared.smk"
 if TEST:
     config["bakta"] = f"{TEST_DATA}/bakta"
     config["genomes"] = f"{TEST_DATA}/genomes"
+    config["seq_metadata"] = {
+        "hamronization": f"{TEST_DATA}/hamronization_combined_report.tsv"
+    }
+    config["sample_metadata"]["file"] = f"{config["data"]["meta"]}/jia_samples.tsv"
+    config["sample_metadata"]["id_col"] = "Accession"
 
 PREPROCESSING = config["preprocessing"]
 S_OUTDIR = (
@@ -23,9 +28,9 @@ rule all:
         embedded=[f"{E_OUTDIR}/{d}" for d in PREPROCESSING.keys()],
 
 
-rule generate_metadata:
+rule get_seq_metadata:
     output:
-        f"{PROCESSED}/{DATE}/metadata.csv",
+        f"{PROCESSED}/{DATE}/seq_metadata.csv",
     script:
         "scripts/prepare_data.py"
 
@@ -34,7 +39,7 @@ rule make_text_datasets:
     output:
         [directory(f"{S_OUTDIR}/{d}") for d in PREPROCESSING.keys()],
     input:
-        meta=rules.generate_metadata.output,
+        rules.get_seq_metadata.output,
     params:
         outdir=S_OUTDIR,
         preprocessing=PREPROCESSING,
@@ -48,6 +53,6 @@ rule make_embedded_datasets:
     params:
         outdir=E_OUTDIR,
     output:
-        rules.all.input.embedded,
+        [directory(f"{E_OUTDIR}/{d}") for d in PREPROCESSING.keys()],
     script:
         "scripts/prepare_data.py"
