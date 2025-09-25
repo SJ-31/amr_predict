@@ -30,6 +30,49 @@ EMBEDDING_METHODS: TypeAlias = Literal["seqLens", "Evo2"]
 # * Utility functions
 
 
+def join_within(
+    left: pl.DataFrame,
+    right: pl.DataFrame,
+    initial_join: Sequence,
+    id_col: str = "uid",
+    start_col: str = "start",
+    stop_col: str = "stop",
+) -> pl.DataFrame:
+    """Messy attempt at a left-based `within` join
+
+    Parameters
+    ----------
+    left : pl.DataFrame
+    right : pl.DataFrame
+    initial_join : Sequence
+        columns to initially join left, right by
+    id_col : str
+        Column uniquely identifying rows. Kept for joining later
+
+    Returns
+    -------
+    DataFrame where entries of `right` match entries of `left`, and were originally contained
+        within (`start_col`, `stop_col`) of `left`
+        You can then join this column back into left using `uid`
+
+    Notes
+    -----
+
+    """
+    valid = []
+    wanted_cols = [c for c in right.columns if c not in initial_join]
+    grouped = tmp.join(left, on=initial_join, how="left").group_by(initial_join)
+    for _, g in grouped:
+        filtered = g.filter(
+            (pl.col(f"{start_col}_right") <= pl.col("start"))
+            & (pl.col(f"{stop_col}_right") <= pl.col("stop"))
+        )
+        if not filtered.is_empty():
+            valid.append(filtered)
+    df = pl.concat(valid).select([id_col] + wanted_cols)
+    return df
+
+
 def add_intergenic(
     record: SeqRecord,
     df: pl.DataFrame,
@@ -465,6 +508,10 @@ class SeqDataset:
         id_col: str = "sample",
         split_method: SPLIT_METHODS = "bakta",
         annotations: Path | str | None = None,
+        seq_metadata: Path | str | None = None,
+        seq_id_col: str = "seqid",
+        seq_start: str = "start",
+        seq_stop: str = "stop",
         max_length: int = 512,
         **kwargs,
     ) -> None:
@@ -499,48 +546,35 @@ class SeqDataset:
         )
         dataset = Dataset.from_generator(spp.gen)
         if metadata:
-            meta = read_tabular(metadata).unique(id_col)
+            meta = read_tabular(metadata).rename({id_col: "sample"}).unique("sample")
             if mcols is not None:
                 meta = meta.select(mcols)
             to_combine = Dataset.from_polars(
                 dataset.select_columns("sample")
                 .to_polars()
-                .join(
-                    meta,
-                    how="left",
-                    left_on="sample",
-                    right_on=id_col,
-                    maintain_order="left",
-                )
+                .join(meta, how="left", on="sample", maintain_order="left")
                 .drop("sample")
             )
-            dataset = concatenate_datasets([dataset, to_combine])
+            dataset = concatenate_datasets([dataset, to_combine], axis=1)
         if seq_metadata:
-            seq_meta: pl.DataFrame = read_tabular(seq_metadata).unique(id_col)
-            # to_combine = Dataset.from_polars(
-            #     dataset.select_columns("sample")
-            #     .to_polars()
-            #     .join_where(
-            #         meta,
-            #         how="left",
-            #         left_on="sample",
-            #         right_on=id_col,
-            #         maintain_order="left",
-            #     )
-            #     .drop("sample")
-            # )
-        dataset.save_to_disk(dataset_path=savepath)
-
-    # TODO:
-    # 3. Figure out what's up with the datacollator
-    def _add_seq_meta(self, sample_dict: dict) -> dict:
-        if self.seq_meta is None:
-            return sample_dict
-        else:
-            lookup = self.seq_meta.filter(
-                (pl.col("sample") == sample_dict["sample"])
-                & (pl.col("seqid") == sample_dict["seqid"])
-                & (pl.col("start") <= sample_dict["start"])
-                & (pl.col("stop") <= sample_dict["stop"])
+            seq_meta: pl.DataFrame = read_tabular(seq_metadata).rename(
+                {seq_id_col: "seqid", seq_start: "start", seq_stop: "stop"}
             )
-            # if not lookup.is_empty()
+            entries_within: pl.DataFrame = join_within(
+                dataset.select_columns(
+                    ["sample", "seqid", "start", "stop", "uid"]
+                ).to_polars(),
+                seq_meta,
+                initial_join=["sample", "seqid"],
+                id_col="uid",
+                start_col="start",
+                stop_col="stop",
+            )
+            to_combine = Dataset.from_polars(
+                dataset.select_columns("uid")
+                .to_polars()
+                .join(entries_within, on="uid", how="left", maintain_order=True)
+                .drop("uid")
+            )
+            dataset = concatenate_datasets([dataset, to_combine], axis=1)
+        dataset.save_to_disk(dataset_path=savepath)
