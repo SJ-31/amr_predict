@@ -62,13 +62,21 @@ def join_within(
     left = left.with_row_index()
     grouped = left.join(right, on=initial_join, how="left").group_by(initial_join)
     for _, g in grouped:
+        # Accept where a sequence in `left` falls completely into a sequence on `right`
+        # and vice versa
         filtered = g.filter(
-            (pl.col(f"{start_col}_right") <= pl.col(start_col))
-            & (pl.col(f"{stop_col}_right") <= pl.col(stop_col))
+            (  # right within
+                (pl.col(f"{start_col}_right") >= pl.col(start_col))
+                & (pl.col(f"{stop_col}_right") <= pl.col(stop_col))
+            )
+            | (  # left within
+                (pl.col(f"{start_col}_right") <= pl.col(start_col))
+                & (pl.col(f"{stop_col}_right") >= pl.col(stop_col))
+            )
         )
         if not filtered.is_empty():
             valid.append(filtered)
-    df = pl.concat(valid).select(wanted_cols)
+    df = pl.concat(valid).select(wanted_cols).unique("index")
     left = left.join(df, on="index", how="left", maintain_order="left").drop("index")
     return left
 
