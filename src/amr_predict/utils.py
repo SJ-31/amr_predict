@@ -232,9 +232,7 @@ class SeqPreprocessor:
     def __init__(
         self,
         seq_path: Path,
-        meta: None | pl.DataFrame = None,
         anno_path: Path | str | None = None,
-        id_col: str = "sample",
         split_method: SPLIT_METHODS = "bin",
         max_length: int = 512,
         include_utrs: tuple[bool, bool] = (False, False),
@@ -272,8 +270,6 @@ class SeqPreprocessor:
             )
         self.split_method: SPLIT_METHODS = split_method
         self.annotations: Path = anno_path
-        self.id_col: str = id_col
-        self.meta: pl.DataFrame | None = meta
         self.include_utrs: tuple[bool, bool] = include_utrs
         self.max_length: int = max_length
         self.utr_percent: float = utr_percent
@@ -283,23 +279,21 @@ class SeqPreprocessor:
             s for s in seq_path.iterdir() if s.suffix in accepted_suffixes
         ]
 
-    def _sample_dict(self, record, meta: dict | None, **kwargs):
+    def _sample_dict(self, sample, record, **kwargs) -> dict:
         """Boilerplate to create sequence entry for generator"""
         val = {
-            "sample": id,
+            "sample": sample,
             "seqid": record.id,
             "sequence": str(record.seq),
             "description": record.description,
         }
-        if meta is not None:
-            val.update(meta)
         val.update(kwargs)
         return val
 
     def _process_record(
         self,
+        sample: str,
         record: SeqRecord,
-        meta: dict | None,
         anno: pl.DataFrame | None = None,
     ) -> list[dict]:
         """Generate a list of sequence dicts from a single fasta record, splitting
@@ -316,15 +310,14 @@ class SeqPreprocessor:
             split_to = len(record) - self.max_length
             while acc <= split_to:
                 current = record[acc : acc + self.max_length]
-                vals.append(
-                    self._sample_dict(
-                        current,
-                        meta,
-                        index=i,
-                        start=acc,
-                        stop=acc + self.max_length,
-                    ),
+                val: dict = self._sample_dict(
+                    sample=sample,
+                    record=current,
+                    index=i,
+                    start=acc,
+                    stop=acc + self.max_length,
                 )
+                vals.append(val)
                 acc += self.max_length
                 i += 1
         elif self.split_method == "bakta":
@@ -336,21 +329,20 @@ class SeqPreprocessor:
                     current, indices = self._get_subsequence(
                         record, row, start="Start", stop="Stop"
                     )
-                    vals.append(
-                        self._sample_dict(
-                            current,
-                            meta,
-                            strand=row["Strand"],
-                            gene=row["Gene"],
-                            product=row["Product"],
-                            locus_tag=row["Locus Tag"],
-                            type=row["Type"],
-                            length=length,
-                            index=i,
-                            start=indices[0],
-                            stop=indices[1],
-                        )
+                    val = self._sample_dict(
+                        sample=sample,
+                        record=current,
+                        strand=row["Strand"],
+                        gene=row["Gene"],
+                        product=row["Product"],
+                        locus_tag=row["Locus Tag"],
+                        type=row["Type"],
+                        length=length,
+                        index=i,
+                        start=indices[0],
+                        stop=indices[1],
                     )
+                    vals.append(val)
         return vals
 
     def _get_subsequence(
@@ -376,13 +368,6 @@ class SeqPreprocessor:
         """Return generator object, for use with Datasets.from_generator"""
         for fasta in self.fastas:
             id = fasta.stem
-            if self.meta is not None:
-                try:
-                    meta = self.meta.row(
-                        by_predicate=pl.col(self.id_col) == id, named=True
-                    )
-                except NoRowsReturnedError:
-                    meta = {}
             if self.split_method == "bakta":
                 anno = pl.read_csv(
                     self.annotations.joinpath(f"{id}_bakta.tsv"),
@@ -393,7 +378,7 @@ class SeqPreprocessor:
             else:
                 anno = None
             for record in SeqIO.parse(fasta, "fasta"):
-                for s in self._process_record(record=record, meta=meta, anno=anno):
+                for s in self._process_record(sample=id, record=record, anno=anno):
                     yield s
 
 
@@ -492,33 +477,70 @@ class SeqDataset:
             Directory containing fasta files. Each file is expected to be in the format
             <sample_name>.fasta|fna
         metadata : Path | str | None
-            Optional path to metadata csv or tsv file describing sample attributes.
+            Optional path to csv or tsv file describing sample attributes.
+            Each row should uniquely identify a sample
+        seq_metadata : Path | str | None
+            Optional path to csv or tsv file containing sequence-level attributes for each sample
+            e.g. amr gene annotations
+            Unique entries should be defined by `id_col` and `seqid_col`
+            Content is similar to individual files contained in `annotations`, but aggregated
+            for the cohort
         mcols : Sequence | None
             If None, all metadata columns will be included in the dataset object. Otherwise,
             only these specific columns
         """
-        if metadata:
-            metadata = metadata if isinstance(metadata, Path) else Path(metadata)
-            sep = "\t" if metadata.suffix == ".tsv" else ","
-            meta: pl.DataFrame | None = pl.read_csv(
-                metadata, separator=sep, infer_schema_length=None
-            ).unique(id_col)
-            if mcols is not None:
-                meta = meta.select(mcols)
-        else:
-            meta = None
+
         spp = SeqPreprocessor(
             seq_path=Path(fastas) if isinstance(fastas, str) else fastas,
-            meta=meta,
-            id_col=id_col,
             split_method=split_method,
             anno_path=annotations,
             max_length=max_length,
             **kwargs,
         )
         dataset = Dataset.from_generator(spp.gen)
+        if metadata:
+            meta = read_tabular(metadata).unique(id_col)
+            if mcols is not None:
+                meta = meta.select(mcols)
+            to_combine = Dataset.from_polars(
+                dataset.select_columns("sample")
+                .to_polars()
+                .join(
+                    meta,
+                    how="left",
+                    left_on="sample",
+                    right_on=id_col,
+                    maintain_order="left",
+                )
+                .drop("sample")
+            )
+            dataset = concatenate_datasets([dataset, to_combine])
+        if seq_metadata:
+            seq_meta: pl.DataFrame = read_tabular(seq_metadata).unique(id_col)
+            # to_combine = Dataset.from_polars(
+            #     dataset.select_columns("sample")
+            #     .to_polars()
+            #     .join_where(
+            #         meta,
+            #         how="left",
+            #         left_on="sample",
+            #         right_on=id_col,
+            #         maintain_order="left",
+            #     )
+            #     .drop("sample")
+            # )
         dataset.save_to_disk(dataset_path=savepath)
 
-
-# TODO:
-# 3. Figure out what's up with the datacollator
+    # TODO:
+    # 3. Figure out what's up with the datacollator
+    def _add_seq_meta(self, sample_dict: dict) -> dict:
+        if self.seq_meta is None:
+            return sample_dict
+        else:
+            lookup = self.seq_meta.filter(
+                (pl.col("sample") == sample_dict["sample"])
+                & (pl.col("seqid") == sample_dict["seqid"])
+                & (pl.col("start") <= sample_dict["start"])
+                & (pl.col("stop") <= sample_dict["stop"])
+            )
+            # if not lookup.is_empty()
