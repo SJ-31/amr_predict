@@ -34,7 +34,6 @@ def join_within(
     left: pl.DataFrame,
     right: pl.DataFrame,
     initial_join: Sequence,
-    id_col: str = "uid",
     start_col: str = "start",
     stop_col: str = "stop",
 ) -> pl.DataFrame:
@@ -46,8 +45,6 @@ def join_within(
     right : pl.DataFrame
     initial_join : Sequence
         columns to initially join left, right by
-    id_col : str
-        Column uniquely identifying rows. Kept for joining later
 
     Returns
     -------
@@ -60,17 +57,20 @@ def join_within(
 
     """
     valid = []
-    wanted_cols = [c for c in right.columns if c not in initial_join]
-    grouped = tmp.join(left, on=initial_join, how="left").group_by(initial_join)
+    unwanted = set(initial_join) | {start_col, stop_col}
+    wanted_cols = ["index"] + [c for c in right.columns if c not in unwanted]
+    left = left.with_row_index()
+    grouped = left.join(right, on=initial_join, how="left").group_by(initial_join)
     for _, g in grouped:
         filtered = g.filter(
-            (pl.col(f"{start_col}_right") <= pl.col("start"))
-            & (pl.col(f"{stop_col}_right") <= pl.col("stop"))
+            (pl.col(f"{start_col}_right") <= pl.col(start_col))
+            & (pl.col(f"{stop_col}_right") <= pl.col(stop_col))
         )
         if not filtered.is_empty():
             valid.append(filtered)
-    df = pl.concat(valid).select([id_col] + wanted_cols)
-    return df
+    df = pl.concat(valid).select(wanted_cols)
+    left = left.join(df, on="index", how="left", maintain_order="left").drop("index")
+    return left
 
 
 def add_intergenic(
@@ -558,26 +558,24 @@ class SeqDataset:
             dataset = concatenate_datasets([dataset, to_combine], axis=1)
         if seq_metadata:
             try:
-                seq_meta: pl.DataFrame = read_tabular(seq_metadata).rename(
-                    {seq_id_col: "seqid", seq_start: "start", seq_stop: "stop"}
+                seq_meta: pl.DataFrame = (
+                    read_tabular(seq_metadata)
+                    .rename({seq_id_col: "seqid", seq_start: "start", seq_stop: "stop"})
+                    .unique(["sample", "seqid", "start", "stop"])
                 )
                 entries_within: pl.DataFrame = join_within(
                     dataset.select_columns(
-                        ["sample", "seqid", "start", "stop", "uid"]
+                        ["sample", "seqid", "start", "stop"]
                     ).to_polars(),
                     seq_meta,
                     initial_join=["sample", "seqid"],
-                    id_col="uid",
                     start_col="start",
                     stop_col="stop",
                 )
-                to_combine = Dataset.from_polars(
-                    dataset.select_columns("uid")
-                    .to_polars()
-                    .join(entries_within, on="uid", how="left", maintain_order=True)
-                    .drop("uid")
-                )
-                dataset = concatenate_datasets([dataset, to_combine], axis=1)
+                exclude = set(dataset.column_names)
+                to_drop = [c for c in entries_within.columns if c in exclude]
+                entries_within = Dataset.from_polars(entries_within.drop(to_drop))
+                dataset = concatenate_datasets([dataset, entries_within], axis=1)
             except NoDataError:
                 print("No sequence metadata provided")
         dataset.save_to_disk(dataset_path=savepath)
