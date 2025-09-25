@@ -11,9 +11,10 @@ from typing import Literal, TypeAlias
 import numpy as np
 import polars as pl
 import torch
+import torch.utils.data as td
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
-from datasets import Array2D, Features, Value, concatenate_datasets
+from datasets import DatasetDict, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from polars.exceptions import NoRowsReturnedError
@@ -58,6 +59,21 @@ def read_tabular(file: Path | str, infer_schema_length=None, **kwargs) -> pl.Dat
     return df
 
 
+def load_as_torch(
+    dset_path,
+    format: Literal["huggingface", "torch"] = "huggingface",
+    columns: Sequence | None = None,
+) -> Dataset | td.Dataset | DatasetDict:
+    dset = load_from_disk(dset_path).with_format("torch")
+    to_keep = columns if columns is not None else dset.column_names
+    if format == "huggingface":
+        return dset.select_columns(to_keep)
+    else:
+        feature_types = dset.features
+        to_keep = [k for k in to_keep if feature_types[k] != Value("string")]
+        return td.TensorDataset(*[dset[k][:] for k in to_keep])
+
+
 # * Classes
 
 
@@ -99,14 +115,15 @@ class SeqEmbedder:
         text_key : str
             Column name of `dset` containing the sequences
         """
+        torch.set_default_dtype(torch.float32)
         os.environ["HF_HOME"] = huggingface
         device = "cuda" if torch.cuda.is_available() else "cpu"
         tokenizer = AutoTokenizer.from_pretrained(model_key)
         model = AutoModelForMaskedLM.from_pretrained(model_key)
         model.to(device)
         model.config.output_hidden_states = True
-        to_keep = {"_index", "label"}
-        dset = dset.add_column("_index", list(range(len(dset))))
+        to_keep = {"uid", "label"}
+        dset = dset.add_column("uid", list(range(len(dset))))
         to_remove = [c for c in dset.column_names if c not in to_keep]
         tokenized = dset.map(
             lambda x: self._tokenize(
@@ -153,15 +170,26 @@ class SeqEmbedder:
                             ],
                             dim=1,
                         )
-                    yield {"embedding": embedding}
+                    for e, uid in zip(
+                        torch.unbind(embedding, axis=0), torch.unbind(batch["uid"])
+                    ):
+                        yield {"embedding": e.reshape(1, -1), "uid": uid}
+
+        # TODO: might want to keep these separate, i.e. embeddings in one file, and
+        # annotations in another file. Can join on "uid"
 
         hidden_size = next(gen())["embedding"].shape[1]
         features = Features(
-            {"embedding": Array2D(shape=(len(dset), hidden_size), dtype="int32")}
+            {
+                "embedding": Array2D(shape=(1, hidden_size), dtype="float32"),
+                "uid": Value("int32"),
+            }
         )
         result: Dataset = Dataset.from_generator(gen, features=features)
-        result = result.with_format("torch").sort("_index").remove_columns("_index")
-        result = concatenate_datasets([result, dset.remove_columns("_index")], axis=1)
+        # result: Dataset = Dataset.from_generator(gen)
+        print(result)
+        result = result.with_format("torch").sort("uid").remove_columns("uid")
+        result = concatenate_datasets([result, dset.sort("uid")], axis=1)
         return result
 
     @staticmethod
