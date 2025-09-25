@@ -132,6 +132,7 @@ class SeqEmbedder:
             batched=True,
             remove_columns=to_remove,
         )
+        dset = dset.remove_columns(text_key)
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
         # TODO: is there any reason to change this from the default?
         loader = DataLoader(tokenized, batch_size=batch_size, collate_fn=data_collator)
@@ -173,21 +174,11 @@ class SeqEmbedder:
                     for e, uid in zip(
                         torch.unbind(embedding, axis=0), torch.unbind(batch["uid"])
                     ):
-                        yield {"embedding": e.reshape(1, -1), "uid": uid}
+                        yield {"embedding": e, "uid": uid}
 
         # TODO: might want to keep these separate, i.e. embeddings in one file, and
         # annotations in another file. Can join on "uid"
-
-        hidden_size = next(gen())["embedding"].shape[1]
-        features = Features(
-            {
-                "embedding": Array2D(shape=(1, hidden_size), dtype="float32"),
-                "uid": Value("int32"),
-            }
-        )
-        result: Dataset = Dataset.from_generator(gen, features=features)
-        # result: Dataset = Dataset.from_generator(gen)
-        print(result)
+        result: Dataset = Dataset.from_generator(gen)
         result = result.with_format("torch").sort("uid").remove_columns("uid")
         result = concatenate_datasets([result, dset.sort("uid")], axis=1)
         return result
