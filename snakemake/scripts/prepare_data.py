@@ -34,7 +34,16 @@ def format_hamronization(
         "_retrieved-genes-.*",
     ]
     for pat in to_remove:
-        hamr = hamr.with_columns(sample=pl.col("sample").str.replace(pat, value=""))
+        hamr = hamr.with_columns(pl.col(id_col).str.replace(pat, value=""))
+    # Fix weird formatting
+    hamr = hamr.with_columns(pl.col(seqid_col).str.replace("_seq.*", value=""))
+    hamr = hamr.with_columns(
+        pl.struct(id_col, seqid_col)
+        .map_elements(
+            lambda x: x[seqid_col].replace(f"{x[id_col]}_", ""), return_dtype=pl.String
+        )
+        .alias(seqid_col)
+    )
     as_first = [
         start_col,
         stop_col,
@@ -45,6 +54,25 @@ def format_hamronization(
         "drug_class",
     ]
     return hamr.group_by([id_col, seqid_col]).agg(pl.col(f).first() for f in as_first)
+
+
+def format_bakta(bakta_dir: Path) -> pl.DataFrame:
+    dfs = []
+    for file in bakta_dir.glob("*_bakta.tsv"):
+        sample = file.stem.replace("_bakta.tsv", "")
+        rename = {
+            "#Sequence Id": "seqid",
+            "Gene": "gene",
+            "Start": "start",
+            "Stop": "stop",
+            "Locus Tag": "locus_tag",
+            "Product": "product",
+            "Type": "type",
+        }
+        df = pl.read_csv(file, separator="\t", skip_rows=5, infer_schema_length=None)
+        df = df.rename(rename).select(rename.values()).with_columns(sample=sample)
+        dfs.append(df)
+    return pl.concat(dfs)
 
 
 # * Generate metadata
@@ -59,7 +87,8 @@ if smk.rule == "get_seq_metadata":
     seq_meta = smk.config["seq_metadata"]
     if seq_meta.get("hamronization"):
         dfs.append(format_hamronization(seq_meta["hamronization"]))
-        print(dfs)
+    if seq_meta.get("bakta"):
+        dfs.append(format_bakta(Path(seq_meta["bakta"])))
     elif seq_meta.get("combgc"):
         raise NotImplementedError()
     elif seq_meta.get("ampcombi"):
