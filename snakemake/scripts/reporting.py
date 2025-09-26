@@ -47,7 +47,8 @@ def comparison_routine(dataset_name: str, adata: ad.AnnData, outdir: Path) -> No
         fig.set_size_inches((15, 10))
         fig.savefig(outdir.joinpath(name))
 
-    hclust = linkage(precomputed, metric="prec")
+    # TODO: if this can't run, use k-means instead
+    hclust = linkage(precomputed)
     precomputed = squareform(precomputed)
 
     results = {"metric": [], "method": [], "score": [], "name": []}
@@ -60,9 +61,7 @@ def comparison_routine(dataset_name: str, adata: ad.AnnData, outdir: Path) -> No
     results["method"].append("leiden")
     results["metric"].append("fowlkes_mallows")
 
-    results["score"].append(
-        silhouette_score(precomputed, labels_pred=raw_results["leiden"])
-    )
+    results["score"].append(silhouette_score(precomputed, labels=raw_results["leiden"]))
     results["name"].append("_")
 
     for y in smk.config["cluster_on"]:
@@ -83,7 +82,7 @@ def comparison_routine(dataset_name: str, adata: ad.AnnData, outdir: Path) -> No
         record_clustering_metrics(
             fn_dict=scoring_metrics,
             y_true=y_true,
-            y_pred=hclust_assignment,
+            y_pred=hclust_assignment[:, 0],
             results=results,
             name=y,
             method="hclust",
@@ -93,7 +92,7 @@ def comparison_routine(dataset_name: str, adata: ad.AnnData, outdir: Path) -> No
         results["metric"].append("silhouette")
         results["score"].append(
             silhouette_score(
-                precomputed, labels=hclust_assignment, metric="precomputed"
+                precomputed, labels=hclust_assignment[:, 0], metric="precomputed"
             )
         )
         results["name"].append(y)
@@ -105,7 +104,7 @@ def comparison_routine(dataset_name: str, adata: ad.AnnData, outdir: Path) -> No
 if smk.rule == "compare_embeddings":
     for dir in smk.params["datasets"]:
         adata: ad.AnnData = load_as(dir, "adata")
-        sc.pp.subsample()  # Maybe subsample if there are too many and it takes too long
+        # sc.pp.subsample()  # Maybe subsample if there are too many and it takes too long
         comparison_routine(
-            adata=adata, name=dir.stem, outdir=Path(smk.params["outdir"])
+            adata=adata, dataset_name=dir.stem, outdir=Path(smk.params["outdir"])
         )
