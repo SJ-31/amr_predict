@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from typing import overload
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -9,6 +10,9 @@ import scanpy as sc
 import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from pypalettes import load_cmap
+
+# TODO: use a different plotting engine for large datasets
 
 
 def plot_adata(
@@ -147,3 +151,33 @@ def plot_adata(
                 set_labels(ax)
     fig.suptitle(subtitle)
     return fig
+
+
+@overload
+def rand_cmap_d(val: int | None, assign: bool = True) -> list[str]: ...
+
+
+@overload
+def rand_cmap_d(val: Sequence, assign: bool = False) -> dict: ...
+
+
+def rand_cmap_d(
+    val: Sequence | None | int = None, assign: bool = False
+) -> list[str] | dict:
+    def get_n(length: int) -> list[str]:
+        tmp = set()
+        while len(tmp) < length:
+            tmp |= set(load_cmap().colors)
+        return list(tmp)[:length]
+
+    if val is None:
+        return load_cmap().colors
+    if isinstance(val, int):
+        return get_n(val)
+    else:
+        uniques = set(val)
+        colors = get_n(len(uniques))
+        mapping = dict(zip(uniques, colors))
+        if assign:
+            return [mapping[v] for v in val]
+        return mapping
