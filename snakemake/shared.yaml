@@ -14,6 +14,14 @@ src: "../src"
 remote: "../data/remote"
 cache: "../data/temp/cache"
 
+# * Embedding comparison
+
+# Quantify embedding clusterings
+cluster_on:
+  - "sample" # do the sequence embeddings recover their original genomes when clustered?
+  - "gene" # do sequence embeddings cluster by genes?
+  - "drug_class"
+
 # * Data preprocessing
 
 sample_metadata:

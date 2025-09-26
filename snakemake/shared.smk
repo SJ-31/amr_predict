@@ -6,6 +6,7 @@ import pandas as pd
 
 TODAY = date.today().isoformat()
 DATE = config.get("date", "no_date")
+IN_DATE = config.get("in_date", "no_date")
 TEST = config["test"]
 
 RAW = config["data"]["raw"]

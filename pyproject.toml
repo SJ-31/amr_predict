@@ -4,7 +4,22 @@ version = "0.1.0"
 description = "TODO"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-dependencies = ["numpy", "torch", "ipython", "polars", "snakemake", "pandas"]
+dependencies = [
+  "numpy",
+  "torch",
+  "ipython",
+  "polars",
+  "snakemake",
+  "transformers",
+  "datasets",
+  "biopython",
+  "anndata",
+  "fastcluster",
+  "scanpy",
+  "pypalettes",
+  "pandas",
+  "scikit-learn",
+]
 
 [tool.pyright]
 venvPath = "/home/shannc/Bio_SDD/miniforge3/envs/amr_predict"
