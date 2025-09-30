@@ -93,8 +93,11 @@ def format_hamronization(
         "input_sequence_id": seqid_col,
     }
     to_rename.update({w: f"{prefix}_{w}" for w in wanted_cols})
-    hamr = pl.read_csv(file, separator="\t").rename()
-
+    hamr = pl.read_csv(file, separator="\t", raise_if_empty=False)
+    if hamr.is_empty():
+        return hamr
+    else:
+        hamr = hamr.rename(to_rename)
     to_remove = [
         "\\.mapping.*\\.deeparg",
         "\\.tsv\\.amrfinderplus",
@@ -139,7 +142,15 @@ def format_bakta(
             "Product": f"{prefix}_product",
             "Type": f"{prefix}_type",
         }
-        df = pl.read_csv(file, separator="\t", skip_rows=5, infer_schema_length=None)
+        df = pl.read_csv(
+            file,
+            separator="\t",
+            skip_rows=5,
+            infer_schema_length=None,
+            raise_if_empty=False,
+        )
+        if df.is_empty():
+            continue
         df = (
             df.rename(rename)
             .select(rename.values())
