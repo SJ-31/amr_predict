@@ -257,8 +257,6 @@ class SeqEmbedder:
                     ):
                         yield {"embedding": e, "uid": uid}
 
-        # TODO: might want to keep these separate, i.e. embeddings in one file, and
-        # annotations in another file. Can join on "uid"
         result: Dataset = Dataset.from_generator(gen)
         result = result.with_format("torch").sort("uid").remove_columns("uid")
         result = concatenate_datasets([result, dset.sort("uid")], axis=1)
@@ -566,15 +564,14 @@ class SeqDataset:
             dataset = concatenate_datasets([dataset, to_combine], axis=1)
         if seq_metadata:
             try:
+                required_cols = ["sample", "seqid", "start", "stop"]
                 seq_meta: pl.DataFrame = (
                     read_tabular(seq_metadata)
                     .rename({seq_id_col: "seqid", seq_start: "start", seq_stop: "stop"})
-                    .unique(["sample", "seqid", "start", "stop"])
+                    .unique(required_cols)
                 )
                 entries_within: pl.DataFrame = join_within(
-                    dataset.select_columns(
-                        ["sample", "seqid", "start", "stop"]
-                    ).to_polars(),
+                    dataset.select_columns(required_cols).to_polars(),
                     seq_meta,
                     initial_join=["sample", "seqid"],
                     start_col="start",
