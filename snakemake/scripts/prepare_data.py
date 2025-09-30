@@ -6,7 +6,6 @@ import polars as pl
 from amr_predict.utils import SeqDataset, SeqEmbedder
 from snakemake.script import snakemake as smk
 
-TEST: bool = smk.config["test"]
 CONFIG: dict = smk.config
 
 # * Utilities
@@ -33,11 +32,43 @@ def format_combgc(
         summary_file = dir / "combgc_summary.tsv"
         if not summary_file.exists():
             continue
-        df = pl.read_csv(summary_file, separator="\t")
-        print(df)
+        df = pl.read_csv(summary_file, separator="\t", raise_if_empty=False)
         if not df.is_empty():
-            dfs.append(df.rename(to_rename).select(list(to_rename.values())))
+            dfs.append(
+                df.rename(to_rename)
+                .select(to_rename.values())
+                .with_columns(pl.lit(True).alias("is_bgc"))
+            )
     return pl.concat(dfs)
+
+
+def format_ampcombi(
+    file,
+    id_col: str = "sample",
+    seqid_col: str = "seqid",
+    start_col: str = "start",
+    stop_col: str = "stop",
+    prefix: str = "ampcombi",
+) -> pl.DataFrame:
+    wanted_cols = ["transporter_protein"]
+    to_rename = {
+        "sample_id": id_col,
+        "CDS_start": start_col,
+        "CDS_end": stop_col,
+        "contig_id": seqid_col,
+    }
+    to_rename.update({w: f"{prefix}_{w}" for w in wanted_cols})
+    ampcombi = pl.read_csv(
+        file, separator="\t", infer_schema_length=None, raise_if_empty=False
+    )
+    if ampcombi.is_empty():
+        return ampcombi
+    else:
+        return (
+            ampcombi.rename(to_rename)
+            .select(to_rename.values())
+            .with_columns(pl.lit(True).alias("is_amp"))
+        )
 
 
 def format_hamronization(
@@ -119,12 +150,6 @@ def format_bakta(
 
 
 # * Generate metadata
-# TODO: have this rule format the summarized amr prediction files from the funcscan
-# This includes
-# 1. hamronization DONE
-# 2. ampcombi
-# 3. combgc
-# You want to pass the result as the seq_meta argument of SeqDataset
 if smk.rule == "get_seq_metadata":
     dfs = []
     seq_meta = smk.config["seq_metadata"]
@@ -136,8 +161,7 @@ if smk.rule == "get_seq_metadata":
     elif seq_meta.get("combgc"):
         dfs.append(format_combgc(Path(seq_meta["combgc"]), **rename_kws))
     elif seq_meta.get("ampcombi"):
-        raise NotImplementedError()
-    # TODO: each file essentially needs to have four cols: sample, seqid, start, stop
+        dfs.append(format_ampcombi(seq_meta["ampcombi"], **rename_kws))
     if dfs:
         df: pl.DataFrame = pl.concat(dfs)
         df.write_csv(smk.output[0])
