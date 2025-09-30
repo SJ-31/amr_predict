@@ -12,21 +12,58 @@ CONFIG: dict = smk.config
 # * Utilities
 
 
+def format_combgc(
+    path: Path,
+    id_col: str = "sample",
+    seqid_col: str = "seqid",
+    start_col: str = "start",
+    stop_col: str = "stop",
+    prefix: str = "combgc",
+) -> pl.DataFrame:
+    dfs = []
+    to_rename = {
+        "sample_id": id_col,
+        "contig_id": seqid_col,
+        "BGC_start": start_col,
+        "BGC_end": stop_col,
+    }
+    wanted_cols = ["PFAM_domains", "Product_class", "MIBiG_ID", "InterPro_ID"]
+    to_rename.update({w: f"{prefix}_{w}" for w in wanted_cols})
+    for dir in path.iterdir():
+        summary_file = dir / "combgc_summary.tsv"
+        if not summary_file.exists():
+            continue
+        df = pl.read_csv(summary_file, separator="\t")
+        print(df)
+        if not df.is_empty():
+            dfs.append(df.rename(to_rename).select(list(to_rename.values())))
+    return pl.concat(dfs)
+
+
 def format_hamronization(
     file,
     id_col: str = "sample",
     seqid_col: str = "seqid",
     start_col: str = "start",
     stop_col: str = "stop",
+    prefix: str = "hamr",
 ) -> pl.DataFrame:
-    hamr = pl.read_csv(file, separator="\t").rename(
-        {
-            "input_file_name": id_col,
-            "input_gene_start": start_col,
-            "input_gene_stop": stop_col,
-            "input_sequence_id": seqid_col,
-        }
-    )
+    wanted_cols = [
+        "gene_symbol",
+        "resistance_mechanism",
+        "predicted_phenotype",
+        "antimicrobial_agent",
+        "drug_class",
+    ]
+    to_rename = {
+        "input_file_name": id_col,
+        "input_gene_start": start_col,
+        "input_gene_stop": stop_col,
+        "input_sequence_id": seqid_col,
+    }
+    to_rename.update({w: f"{prefix}_{w}" for w in wanted_cols})
+    hamr = pl.read_csv(file, separator="\t").rename()
+
     to_remove = [
         "\\.mapping.*\\.deeparg",
         "\\.tsv\\.amrfinderplus",
@@ -47,30 +84,36 @@ def format_hamronization(
     as_first = [
         start_col,
         stop_col,
-        "gene_symbol",
-        "resistance_mechanism",
-        "predicted_phenotype",
-        "antimicrobial_agent",
-        "drug_class",
-    ]
+    ] + [f"{prefix}_{w}" for w in wanted_cols]
     return hamr.group_by([id_col, seqid_col]).agg(pl.col(f).first() for f in as_first)
 
 
-def format_bakta(bakta_dir: Path) -> pl.DataFrame:
+def format_bakta(
+    bakta_dir: Path,
+    id_col: str = "sample",
+    seqid_col: str = "seqid",
+    start_col: str = "start",
+    stop_col: str = "stop",
+    prefix="bakta",
+) -> pl.DataFrame:
     dfs = []
     for file in bakta_dir.glob("*_bakta.tsv"):
         sample = file.stem.replace("_bakta.tsv", "")
         rename = {
-            "#Sequence Id": "seqid",
-            "Gene": "gene",
-            "Start": "start",
-            "Stop": "stop",
-            "Locus Tag": "locus_tag",
-            "Product": "product",
-            "Type": "type",
+            "#Sequence Id": seqid_col,
+            "Gene": f"{prefix}_gene",
+            "Start": start_col,
+            "Stop": stop_col,
+            "Locus Tag": f"{prefix}_locus_tag",
+            "Product": f"{prefix}_product",
+            "Type": f"{prefix}_type",
         }
         df = pl.read_csv(file, separator="\t", skip_rows=5, infer_schema_length=None)
-        df = df.rename(rename).select(rename.values()).with_columns(sample=sample)
+        df = (
+            df.rename(rename)
+            .select(rename.values())
+            .with_columns(pl.lit(sample).alias(id_col))
+        )
         dfs.append(df)
     return pl.concat(dfs)
 
@@ -85,12 +128,13 @@ def format_bakta(bakta_dir: Path) -> pl.DataFrame:
 if smk.rule == "get_seq_metadata":
     dfs = []
     seq_meta = smk.config["seq_metadata"]
+    rename_kws = seq_meta["renaming_rules"]
     if seq_meta.get("hamronization"):
-        dfs.append(format_hamronization(seq_meta["hamronization"]))
+        dfs.append(format_hamronization(seq_meta["hamronization"], **rename_kws))
     if seq_meta.get("bakta"):
-        dfs.append(format_bakta(Path(seq_meta["bakta"])))
+        dfs.append(format_bakta(Path(seq_meta["bakta"]), **rename_kws))
     elif seq_meta.get("combgc"):
-        raise NotImplementedError()
+        dfs.append(format_combgc(Path(seq_meta["combgc"]), **rename_kws))
     elif seq_meta.get("ampcombi"):
         raise NotImplementedError()
     # TODO: each file essentially needs to have four cols: sample, seqid, start, stop
@@ -121,7 +165,7 @@ elif smk.rule == "make_text_datasets":
 elif smk.rule == "make_embedded_datasets":
     for seq_ds in smk.input:
         inpath = Path(seq_ds)
-        savepath = Path(smk.params["outdir"]).joinpath(inpath.stem)
+        savepath = Path(smk.params["outdir"]) / inpath.stem
         if not savepath.exists():
             dset = SeqDataset(
                 inpath,
