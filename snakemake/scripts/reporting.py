@@ -1,17 +1,25 @@
 #!/usr/bin/env ipython
 
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 
 import anndata as ad
+import numpy as np
 import polars as pl
 import scanpy as sc
 from amr_predict.plotting import plot_adata
 from amr_predict.utils import load_as
 from fastcluster import linkage, pdist
+from numpy.random import Generator
 from scipy.cluster.hierarchy import cut_tree
 from scipy.spatial.distance import squareform
-from sklearn.metrics import fowlkes_mallows_score, silhouette_score
+from sklearn.metrics import (
+    adjusted_rand_score,
+    completeness_score,
+    homogeneity_score,
+    silhouette_score,
+)
 from snakemake.script import snakemake as smk
 
 
@@ -20,12 +28,22 @@ def record_clustering_metrics(
 ) -> None:
     for metric, fn in fn_dict.items():
         results["metric"].append(metric)
-        results["score"].append(fn(labels_true=y_true, labels_pred=y_pred))
+        results["value"].append(fn(labels_true=y_true, labels_pred=y_pred))
         for k, v in kwargs.items():
             results[k].append(v)
 
 
-def comparison_routine(dataset_name: str, adata: ad.AnnData, outdir: Path) -> None:
+def safe_silhouette_score(**kwargs) -> float:
+    try:
+        return silhouette_score(**kwargs)
+    except ValueError as e:
+        print(f"Warning: ValueError {e} in silhouette score computation")
+        return np.nan
+
+
+def comparison_routine(
+    dataset_name: str, adata: ad.AnnData, outdir: Path, config: dict, round: int
+) -> pl.DataFrame:
     sc.pp.pca(adata)
     sc.pp.neighbors(adata)
     sc.tl.umap(adata)
@@ -37,7 +55,7 @@ def comparison_routine(dataset_name: str, adata: ad.AnnData, outdir: Path) -> No
         name = f"{dataset_name}_{plot_style}.png"
         fig = plot_adata(
             adata,
-            colors=smk.config["cluster_on"],
+            colors=config["cluster_on"],
             plot_together=True,
             plot_mode=plot_style,
             alpha=0.8,
@@ -45,29 +63,36 @@ def comparison_routine(dataset_name: str, adata: ad.AnnData, outdir: Path) -> No
         )
         fig.tight_layout()
         fig.set_size_inches((15, 10))
-        fig.savefig(outdir.joinpath(name))
+        fig.savefig(outdir / f"plots/{round}_{name}")
 
     # TODO: if this can't run, use k-means instead
     hclust = linkage(precomputed)
     precomputed = squareform(precomputed)
 
-    results = {"metric": [], "method": [], "score": [], "name": []}
+    results = {"metric": [], "method": [], "value": [], "name": []}
     scoring_metrics = {
-        "fowlkes_mallows": fowlkes_mallows_score,
+        "adjusted_rand": adjusted_rand_score,
+        "homogeneity": homogeneity_score,
+        "completeness": completeness_score,
     }
 
     # Gather clustering metrics
 
-    results["method"].append("leiden")
-    results["metric"].append("fowlkes_mallows")
+    # results["method"].append("leiden")
+    # results["metric"].append("fowlkes_mallows")
 
-    results["score"].append(silhouette_score(precomputed, labels=raw_results["leiden"]))
-    results["name"].append("_")
+    # results["value"].append(
+    #     safe_silhouette_score(
+    #         X=precomputed, labels=raw_results["leiden"], metric="precomputed"
+    #     )
+    # )
+    # results["name"].append("_")
 
-    for y in smk.config["cluster_on"]:
+    for y in config["cluster_on"]:
         y_true = adata.obs[y]
         n_unique = len(y_true.unique())
         hclust_assignment = cut_tree(hclust, n_clusters=n_unique)
+        hclust_assignment[hclust_assignment is None] = -1
         raw_results.loc[:, f"hclust_{y}"] = hclust_assignment
 
         record_clustering_metrics(
@@ -88,23 +113,55 @@ def comparison_routine(dataset_name: str, adata: ad.AnnData, outdir: Path) -> No
             method="hclust",
         )
 
-        results["method"].append("hclust")
-        results["metric"].append("silhouette")
-        results["score"].append(
-            silhouette_score(
-                precomputed, labels=hclust_assignment[:, 0], metric="precomputed"
-            )
-        )
-        results["name"].append(y)
+        # results["method"].append("hclust")
+        # results["metric"].append("silhouette")
+        # results["value"].append(
+        #     safe_silhouette_score(
+        #         X=precomputed, labels=hclust_assignment[:, 0], metric="precomputed"
+        #     )
+        # )
+        # results["name"].append(y)
 
-    pl.DataFrame(results).write_csv(smk.output["metrics"])
+    return pl.DataFrame(results)
 
 
 # * Embedding comparison
 if smk.rule == "compare_embeddings":
+    config = smk.config[smk.rule]
+    rng: Generator = np.random.default_rng(seed=smk.config["rng"])
+    all_dfs = []
     for dir in smk.params["datasets"]:
         adata: ad.AnnData = load_as(dir, "adata")
-        # sc.pp.subsample()  # Maybe subsample if there are too many and it takes too long
-        comparison_routine(
-            adata=adata, dataset_name=dir.stem, outdir=Path(smk.params["outdir"])
+        adata.obs = adata.obs.replace(
+            to_replace={c: np.nan for c in config["cluster_on"]}, value="unknown"
         )
+        dfs = []
+        for i in range(config["bootstrap_rounds"]):
+            samples = rng.choice(
+                adata.obs["sample"].unique(), size=config["n_samples_per"]
+            )
+            subsampled = adata[adata.obs["sample"].isin(samples), :]
+            print(f"{subsampled.shape=}")
+            print(subsampled.obs["sample"].value_counts())
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                cur = comparison_routine(
+                    adata=subsampled,
+                    dataset_name=dir.stem,
+                    outdir=Path(smk.params["outdir"]),
+                    config=config,
+                    round=i,
+                )
+                dfs.append(cur)
+        aggregated: pl.DataFrame = pl.concat(dfs)
+        aggregated = (
+            aggregated.group_by(["metric", "method", "name"])
+            .agg(
+                pl.col("value").mean().alias("mean"),
+                pl.col("value").std().alias("std"),
+                pl.col("value").median().alias("median"),
+            )
+            .with_columns(dataset=pl.lit(dir.stem))
+        )
+        all_dfs.append(aggregated)
+    pl.concat(all_dfs).write_csv(smk.output["metrics"])

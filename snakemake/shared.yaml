@@ -14,13 +14,19 @@ src: "../src"
 remote: "../data/remote"
 cache: "../data/temp/cache"
 
+rng: 49274
+
 # * Embedding comparison
 
 # Quantify embedding clusterings
-cluster_on:
-  - "sample" # do the sequence embeddings recover their original genomes when clustered?
-  - "gene" # do sequence embeddings cluster by genes?
-  - "drug_class"
+compare_embeddings:
+  bootstrap_rounds: 3 # bootstrap with subsampling to make computations faster and also so that there aren't too many
+  n_samples_per: 4 # number of samples randomly chosen in bootstrap rounds
+  # [2025-10-01 Wed] Would add more, but 20 samples led to 34,000 sequences
+  cluster_on:
+    - "sample" # do the sequence embeddings recover their original genomes when clustered?
+    # - "gene" # do sequence embeddings cluster by genes?
+    - "drug_class"
 
 # * Data preprocessing
 
@@ -29,8 +35,14 @@ sample_metadata:
   # bvbrc. Mainly want the mapping between samples and ast scorse
   id_col: ""
 seq_metadata:
+  renaming_rules:
+    id_col: "sample"
+    seqid_col: "seqid"
+    start_col: "start"
+    stop_col: "stop"
   hamronization: "" #
   combgc: ""
+  bakta: ""
   ampcombi: ""
 
 bakta: "" # Output of bakta tool
