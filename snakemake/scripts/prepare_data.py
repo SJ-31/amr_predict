@@ -1,10 +1,14 @@
 #!/usr/bin/env ipython
 
+import os
 from pathlib import Path
 
 import polars as pl
-from amr_predict.utils import SeqDataset, SeqEmbedder
 from snakemake.script import snakemake as smk
+
+os.environ["HF_HOME"] = smk.config["huggingface"]
+
+from amr_predict.utils import SeqDataset, SeqEmbedder
 
 CONFIG: dict = smk.config
 
@@ -169,12 +173,12 @@ if smk.rule == "get_seq_metadata":
         dfs.append(format_hamronization(seq_meta["hamronization"], **rename_kws))
     if seq_meta.get("bakta"):
         dfs.append(format_bakta(Path(seq_meta["bakta"]), **rename_kws))
-    elif seq_meta.get("combgc"):
+    if seq_meta.get("combgc"):
         dfs.append(format_combgc(Path(seq_meta["combgc"]), **rename_kws))
-    elif seq_meta.get("ampcombi"):
+    if seq_meta.get("ampcombi"):
         dfs.append(format_ampcombi(seq_meta["ampcombi"], **rename_kws))
     if dfs:
-        df: pl.DataFrame = pl.concat(dfs)
+        df: pl.DataFrame = pl.concat(dfs, how="diagonal")
         df.write_csv(smk.output[0])
     else:
         pl.DataFrame().write_csv(smk.output[0])
@@ -184,7 +188,7 @@ elif smk.rule == "make_text_datasets":
     for name, kwargs in smk.params["preprocessing"].items():
         savepath = Path(f"{smk.params['outdir']}/{name}")
         if kwargs["split_method"] == "bakta":
-            anno = Path(CONFIG["bakta"])
+            anno = Path(CONFIG["seq_metadata"]["bakta"])
         else:
             anno = None
         SeqDataset.save_from_fastas(

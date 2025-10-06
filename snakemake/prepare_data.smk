@@ -7,12 +7,14 @@ include: "shared.smk"
 if TEST:
     config["bakta"] = f"{TEST_DATA}/bakta"
     config["genomes"] = f"{TEST_DATA}/genomes"
-    config["seq_metadata"] = {
-        "hamronization": f"{TEST_DATA}/hamronization_combined_report.tsv"
-        "combgc": f"{TEST_DATA}/combgc",
-        "ampcombi": f"{TEST_DATA}/Ampcombi_summary_cluster.tsv",
-        "bakta": f"{TEST_DATA}/bakta"
-    }
+    config["seq_metadata"].update(
+        {
+            "hamronization": f"{TEST_DATA}/hamronization_combined_report.tsv",
+            "combgc": f"{TEST_DATA}/combgc",
+            "ampcombi": f"{TEST_DATA}/Ampcombi_summary_cluster.tsv",
+            "bakta": f"{TEST_DATA}/bakta",
+        }
+    )
     config["sample_metadata"]["file"] = f"{config["data"]["meta"]}/jia_samples.tsv"
     config["sample_metadata"]["id_col"] = "Accession"
 
@@ -29,11 +31,12 @@ E_OUTDIR = (
 rule all:
     input:
         embedded=[f"{E_OUTDIR}/{d}" for d in PREPROCESSING.keys()],
+        meta=f"{PROCESSED}/{DATE}/seq_metadata.csv",
 
 
 rule get_seq_metadata:
     output:
-        f"{PROCESSED}/{DATE}/seq_metadata.csv",
+        rules.all.input.meta,
     script:
         "scripts/prepare_data.py"
 
