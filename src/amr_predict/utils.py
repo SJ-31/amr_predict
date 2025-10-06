@@ -418,17 +418,24 @@ class SeqPreprocessor:
         for fasta in self.fastas:
             id = fasta.stem
             if self.split_method == "bakta":
-                anno = pl.read_csv(
-                    self.annotations.joinpath(f"{id}_bakta.tsv"),
-                    separator="\t",
-                    skip_rows=5,
-                    infer_schema_length=None,
-                )
+                try:
+                    anno = pl.read_csv(
+                        self.annotations.joinpath(f"{id}_bakta.tsv"),
+                        separator="\t",
+                        skip_rows=5,
+                        infer_schema_length=None,
+                    )
+                except FileNotFoundError:
+                    print(
+                        f"WARNING: bakta file {id}_bakta.tsv not found! Skipping this sample"
+                    )
+                    anno = None
             else:
                 anno = None
-            for record in SeqIO.parse(fasta, "fasta"):
-                for s in self._process_record(sample=id, record=record, anno=anno):
-                    yield s
+            if anno is not None or self.split_method != "bakta":
+                for record in SeqIO.parse(fasta, "fasta"):
+                    for s in self._process_record(sample=id, record=record, anno=anno):
+                        yield s
 
 
 @dataclass
