@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Literal, TypeAlias
 
 import polars as pl
-import polars.selectors as cs
 import torch
 from amr_predict.utils import load_as
 from datasets import concatenate_datasets
@@ -82,16 +81,19 @@ class SeqPooler:
     def _weights_from_pairwise(
         self,
         x: Tensor,
+        mask: Tensor,
         fn: Callable = pairwise_cosine_similarity,
         pool: Literal["mean", "max", "sum"] = "mean",
     ) -> Tensor:
-        distances = fn(x)
+        weights = torch.zeros(x.shape[0])
         if pool == "mean":
-            return distances.mean(axis=1)
+            vals = fn(x[mask, :]).mean(axis=1)
         elif pool == "max":
-            return distances.max(axis=1)
+            vals = fn(x[mask, :]).max(axis=1)
         elif pool == "sum":
-            return distances.sum(axis=1)
+            vals = fn(x[mask, :]).sum(axis=1)
+        weights[mask] = vals
+        return weights
 
     def _similarity_weighted(
         self,
@@ -105,10 +107,11 @@ class SeqPooler:
             fn = pairwise_euclidean_distance  # TODO: should change this to similarity
         elif metric == "dot_product":
             fn = pairwise_linear_similarity
+
         return self._sum(
             dataset,
             mean=False,
-            weight_fn=lambda x: self._weights_from_pairwise(x, fn, pool=pool),
+            weight_fn=lambda x, y: self._weights_from_pairwise(x, y, fn, pool=pool),
         )
 
     def _sum(
@@ -119,8 +122,9 @@ class SeqPooler:
         Parameters
         ----------
         weight_fn : Callable
-            Function taking all embeddings associated with a sample as input, and returning
-            a vector specifying how to weigh each embedding when summing to sample-level
+            Function taking the whole embedding tensor and a boolean mask for the current sample
+            Return a vector (of length equal to the columns of dataset)
+            specifying how to weigh each embedding when summing to sample-level
         mean : bool
             For each sample, sum up embeddings then divide by the number of embeddings
 
@@ -134,7 +138,7 @@ class SeqPooler:
             )
         else:
             mask = torch.stack(
-                [weight_fn(embeddings[samples == s, :]) for s in unique_samples]
+                [weight_fn(embeddings, samples == s) for s in unique_samples]
             )
         summed = torch.matmul(mask, embeddings)
         if mean:
