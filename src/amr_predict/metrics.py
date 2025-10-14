@@ -1,6 +1,5 @@
 #!/usr/bin/env ipython
 
-#!/usr/bin/env ipython
 
 from collections.abc import Sequence
 from functools import reduce
