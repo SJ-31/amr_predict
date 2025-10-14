@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import anndata as ad
 import numpy as np
@@ -18,6 +18,8 @@ from datasets.load import load_from_disk
 from torch import Tensor
 
 # * Utility functions
+
+TASK_TYPES: TypeAlias = Literal["classification", "regression"]
 
 
 def iter_cols(x: Tensor | np.ndarray | tuple) -> Iterable:
@@ -174,7 +176,7 @@ class ModuleConfig:
         dropout_p: float = 0.2,
         init_device: str = "cpu",
         targets: tuple[Tensor] | None = None,
-        outlayer_type: Literal["softmax", "regression"] = "regression",
+        task_type: TASK_TYPES = "regression",
         **kwargs,
     ) -> None:
         """
@@ -200,7 +202,7 @@ class ModuleConfig:
         self.scheduler_config: dict | None = scheduler_config
         self.dropout_p: float = dropout_p
         self.cache: str | Sequence | None = cache
-        self.outlayer_type: str = outlayer_type
+        self.task_type: TASK_TYPES = task_type
         self.kwargs: dict = kwargs
 
     @property
