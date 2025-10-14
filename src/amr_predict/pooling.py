@@ -1,0 +1,122 @@
+#!/usr/bin/env ipython
+from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import Literal, TypeAlias
+
+import polars as pl
+import polars.selectors as cs
+import torch
+from amr_predict.utils import load_as
+from datasets import concatenate_datasets
+from datasets.arrow_dataset import Dataset
+from sklearn.preprocessing import LabelEncoder
+from torch import Tensor
+from torchmetrics.functional.pairwise import (
+    pairwise_cosine_similarity,
+    pairwise_euclidean_distance,
+    pairwise_linear_similarity,
+)
+
+POOLING_METHODS: TypeAlias = Literal["concat", "sum", "attention", "mean"]
+
+
+class SeqCombiner:
+    """Class to pool samples' contig embeddings into a single genome-scale embedding"""
+
+    def __init__(
+        self,
+        obs_keep: Sequence | None = None,
+        method: POOLING_METHODS = "sum",
+        embedding_key: str = "embedding",
+        sample_key: str = "sample",
+        **kws,
+    ) -> None:
+        """
+
+        Parameters
+        ----------
+        obs_keep : Sequence
+            Sequence of sample-level observations in the dataset to retain e.g. variables
+            to predict. Sample names are automatically kept
+        """
+        self.encoder: LabelEncoder = LabelEncoder()
+        self.embedding_key: str = embedding_key
+        self.obs_keep: list = list(obs_keep) + [sample_key]
+        self.sample_key: str = sample_key
+        self.method: POOLING_METHODS = method
+        self.kws: dict = kws
+
+    def _transform_samples(self, dataset: Dataset) -> Tensor:
+        return torch.tensor(self.encoder.transform(dataset[self.sample_key][:]))
+
+    def _finalize_dataset(self, dataset: Dataset, aggregated: Tensor) -> Dataset:
+        """Aggregate variables from dataset by sample, and combine with pooled
+        embeddings
+        """
+        encoded = self.encoder.transform(dataset[self.sample_key])
+        obs = (
+            dataset.to_polars()
+            .drop(self.embedding_key)
+            .with_columns(pl.Series(encoded).alias("encoded"))
+            .group_by("encoded")
+            .agg(pl.col(self.obs_keep).first())
+            .sort("encoded", descending=False)
+            .drop("encoded")
+        )
+        to_concat = [Dataset.from_dict({"x": aggregated}), Dataset.from_polars(obs)]
+        return concatenate_datasets(to_concat, axis=1).with_format("torch")
+
+    def __call__(self, dataset: Dataset | Path | str) -> Dataset:
+        d: Dataset = load_as(dataset) if not isinstance(dataset, Dataset) else dataset
+        self.encoder.fit(d[self.sample_key])
+        # Every method returns a tensor of the embeddings aggregated to sample level,
+        # sorted in ascending order of the encoded sample names
+        if self.method == "sum":
+            x: Tensor = self._sum(dataset, mean=False, **self.kws)
+        elif self.method == "mean":
+            x: Tensor = self._sum(dataset, mean=True, **self.kws)
+        return self._finalize_dataset(d, x)
+
+    def _weights_from_pairwise(
+        self,
+        x: Tensor,
+        fn: Callable = pairwise_cosine_similarity,
+        pool: Literal["mean", "max", "sum"] = "mean",
+    ) -> Tensor:
+        distances = fn(x)
+        if pool == "mean":
+            return distances.mean(axis=1)
+        elif pool == "max":
+            return distances.max(axis=1)
+        elif pool == "sum":
+            return distances.sum(axis=1)
+
+    def _sum(
+        self, dataset: Dataset, mean: bool = True, weight_fn: Callable | None = None
+    ) -> Tensor:
+        """Pool contig embeddings by summation, with multiple variants
+
+        Parameters
+        ----------
+        weight_fn : Callable
+            Function taking all embeddings associated with a sample as input, and returning
+            a vector specifying how to weigh each embedding when summing to sample-level
+        mean : bool
+            For each sample, sum up embeddings then divide by the number of embeddings
+
+        """
+        samples = self._transform_samples(dataset)
+        embeddings = dataset[self.embedding_key][:]
+        unique_samples = torch.unique(samples, sorted=True)
+        if weight_fn is None:
+            mask = torch.stack([samples == s for s in unique_samples]).to(
+                torch.get_default_dtype()
+            )
+        else:
+            mask = torch.stack(
+                [weight_fn(embeddings[samples == s, :]) for s in unique_samples]
+            )
+        summed = torch.matmul(mask, embeddings)
+        if mean:
+            summed = torch.mul(summed, mask.sum(axis=1).reshape(-1, 1))
+        return summed

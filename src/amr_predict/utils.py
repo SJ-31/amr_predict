@@ -19,7 +19,6 @@ from datasets import DatasetDict, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from polars.exceptions import NoDataError
-from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
@@ -27,7 +26,6 @@ from transformers.modeling_outputs import MaskedLMOutput
 
 SPLIT_METHODS: TypeAlias = Literal["bin", "bakta"]
 EMBEDDING_METHODS: TypeAlias = Literal["seqLens", "Evo2"]
-COMBINING_METHODS: TypeAlias = Literal["concat", "sum", "attention"]
 
 # * Utility functions
 
@@ -160,72 +158,6 @@ def dataset2adata(dset: td.Dataset | Dataset, x_key: str = "embedding") -> ad.An
 
 
 # * Classes
-
-
-class SeqCombiner:
-    """Class to aggregate samples' sequence embeddings into a single genome-scale embedding"""
-
-    def __init__(
-        self,
-        obs_keep: Sequence | None = None,
-        method: COMBINING_METHODS = "sum",
-        embedding_key: str = "embedding",
-        sample_key: str = "sample",
-        **kws,
-    ) -> None:
-        """
-
-        Parameters
-        ----------
-        obs_keep : Sequence
-            Sequence of sample-level observations in the dataset to retain e.g. variables
-            to predict. Sample names are automatically kept
-        """
-        self.encoder: LabelEncoder = LabelEncoder()
-        self.embedding_key: str = embedding_key
-        self.obs_keep: list = list(obs_keep) + [sample_key]
-        self.sample_key: str = sample_key
-        self.method: COMBINING_METHODS = method
-        self.kws: dict = kws
-
-    def _transform_samples(self, dataset: Dataset) -> Tensor:
-        return torch.tensor(self.encoder.transform(dataset[self.sample_key][:]))
-
-    def _finalize_dataset(self, dataset: Dataset, aggregated: Tensor) -> Dataset:
-        """Aggregate variables from dataset by sample, and combine with aggregated
-        embeddings
-        """
-        encoded = self.encoder.transform(dataset[self.sample_key])
-        obs = (
-            dataset.to_polars()
-            .drop(self.embedding_key)
-            .with_columns(pl.Series(encoded).alias("encoded"))
-            .group_by("encoded")
-            .agg(pl.col(self.obs_keep).first())
-            .sort("encoded", descending=False)
-            .drop("encoded")
-        )
-        to_concat = [Dataset.from_dict({"x": aggregated}), Dataset.from_polars(obs)]
-        return concatenate_datasets(to_concat, axis=1).with_format("torch")
-
-    def __call__(self, dataset: Dataset | Path | str) -> Dataset:
-        d: Dataset = load_as(dataset) if not isinstance(dataset, Dataset) else dataset
-        self.encoder.fit(d[self.sample_key])
-        # Every method returns a tensor of the embeddings aggregated to sample level,
-        # sorted in ascending order of the encoded sample names
-        if self.method == "sum":
-            x: Tensor = self._sum(dataset, **self.kws)
-        return self._finalize_dataset(d, x)
-
-    def _sum(self, dataset: Dataset, normalize: bool = True) -> Tensor:
-        samples = self._transform_samples(dataset)
-        mask = torch.stack(
-            [samples == s for s in torch.unique(samples, sorted=True)]
-        ).to(torch.get_default_dtype())
-        summed = torch.matmul(mask, dataset[self.embedding_key][:])
-        if normalize:
-            summed = torch.mul(summed, mask.sum(axis=1).reshape(-1, 1))
-        return summed
 
 
 class SeqEmbedder:
