@@ -16,7 +16,7 @@ from torchmetrics.functional.pairwise import (
     pairwise_linear_similarity,
 )
 
-POOLING_METHODS: TypeAlias = Literal["concat", "sum", "attention", "mean", "similarity"]
+POOLING_METHODS: TypeAlias = Literal["sum", "mean", "similarity"]
 
 
 class SeqPooler:
