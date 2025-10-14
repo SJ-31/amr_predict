@@ -192,6 +192,9 @@ class SeqCombiner:
         return torch.tensor(self.encoder.transform(dataset[self.sample_key][:]))
 
     def _finalize_dataset(self, dataset: Dataset, aggregated: Tensor) -> Dataset:
+        """Aggregate variables from dataset by sample, and combine with aggregated
+        embeddings
+        """
         encoded = self.encoder.transform(dataset[self.sample_key])
         obs = (
             dataset.to_polars()
@@ -200,9 +203,10 @@ class SeqCombiner:
             .group_by("encoded")
             .agg(pl.col(self.obs_keep).first())
             .sort("encoded", descending=False)
+            .drop("encoded")
         )
         to_concat = [Dataset.from_dict({"x": aggregated}), Dataset.from_polars(obs)]
-        return concatenate_datasets(to_concat, axis=1)
+        return concatenate_datasets(to_concat, axis=1).with_format("torch")
 
     def __call__(self, dataset: Dataset | Path | str) -> Dataset:
         d: Dataset = load_as(dataset) if not isinstance(dataset, Dataset) else dataset
@@ -217,10 +221,10 @@ class SeqCombiner:
         samples = self._transform_samples(dataset)
         mask = torch.stack(
             [samples == s for s in torch.unique(samples, sorted=True)]
-        ).to(torch.get_default_device())
+        ).to(torch.get_default_dtype())
         summed = torch.matmul(mask, dataset[self.embedding_key][:])
         if normalize:
-            summed = summed / mask.sum(axis=1)
+            summed = torch.mul(summed, mask.sum(axis=1).reshape(-1, 1))
         return summed
 
 
