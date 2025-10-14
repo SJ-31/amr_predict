@@ -17,10 +17,10 @@ from torchmetrics.functional.pairwise import (
     pairwise_linear_similarity,
 )
 
-POOLING_METHODS: TypeAlias = Literal["concat", "sum", "attention", "mean"]
+POOLING_METHODS: TypeAlias = Literal["concat", "sum", "attention", "mean", "similarity"]
 
 
-class SeqCombiner:
+class SeqPooler:
     """Class to pool samples' contig embeddings into a single genome-scale embedding"""
 
     def __init__(
@@ -72,9 +72,11 @@ class SeqCombiner:
         # Every method returns a tensor of the embeddings aggregated to sample level,
         # sorted in ascending order of the encoded sample names
         if self.method == "sum":
-            x: Tensor = self._sum(dataset, mean=False, **self.kws)
+            x: Tensor = self._sum(dataset, mean=False)
         elif self.method == "mean":
-            x: Tensor = self._sum(dataset, mean=True, **self.kws)
+            x = self._sum(dataset, mean=True)
+        elif self.method == "similarity":
+            x = self._similarity_weighted(dataset, **self.kws)
         return self._finalize_dataset(d, x)
 
     def _weights_from_pairwise(
@@ -90,6 +92,24 @@ class SeqCombiner:
             return distances.max(axis=1)
         elif pool == "sum":
             return distances.sum(axis=1)
+
+    def _similarity_weighted(
+        self,
+        dataset: Dataset,
+        metric: Literal["cosine", "dot_product", "euclidean"] = "cosine",
+        pool: str = "mean",
+    ):
+        if metric == "cosine":
+            fn = pairwise_cosine_similarity
+        elif metric == "euclidean":
+            fn = pairwise_euclidean_distance  # TODO: should change this to similarity
+        elif metric == "dot_product":
+            fn = pairwise_linear_similarity
+        return self._sum(
+            dataset,
+            mean=False,
+            weight_fn=lambda x: self._weights_from_pairwise(x, fn, pool=pool),
+        )
 
     def _sum(
         self, dataset: Dataset, mean: bool = True, weight_fn: Callable | None = None
