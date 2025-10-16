@@ -84,6 +84,46 @@ def join_within(
     return left
 
 
+def discretize_resistance(
+    dataset: Dataset,
+    cols: Sequence,
+    susceptible: float = 0.3,
+    resistant: float = 0.8,
+    suffix: str = "",
+) -> Dataset:
+    """Discretize continuous resistance scores
+    e.g. AST into one of three categories, using quantiles
+
+    Parameters
+    ----------
+    susceptible : float
+        values less than this quantile are categorized as "susceptible"
+    resistant : float
+        values greater than this are categorized as "resistant"
+    suffix : str
+        create new columns in `dataset` with this suffix. Otherwise, replace columns
+    cols : Sequence
+        columns to consider
+    """
+    df: pl.DataFrame = dataset.to_polars().select(cols)
+    exprs = (
+        pl.when(pl.col(col) < pl.col(col).quantile(susceptible))
+        .then(pl.lit("susceptible"))
+        .when(pl.col(col) > pl.col(col).quantile(resistant))
+        .then(pl.lit("resistant"))
+        .otherwise(pl.lit("intermediate"))
+        .alias(col)
+        for col in cols
+    )
+    df = df.with_columns(*exprs)
+    if not suffix:
+        dataset = dataset.remove_columns(cols)
+    for col in cols:
+        n = f"{col}_{suffix}" if suffix else col
+        dataset = dataset.add_column(n, df[col])
+    return dataset
+
+
 def add_intergenic(
     record: SeqRecord,
     df: pl.DataFrame,
