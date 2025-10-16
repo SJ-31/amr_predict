@@ -1,3 +1,6 @@
+import itertools
+
+
 include: "Snakefile"
 
 
@@ -22,7 +25,7 @@ DATASETS = {
 
 
 RESULTS = {}
-for k, v, r in zip(["S", "P"], to_compare, ["compare_embeddings"], ["compare_pooled"]):
+for k, v, r in zip(["S", "P"], to_compare, ["compare_embeddings", "compare_pooled"]):
     RESULTS[k] = {
         "plots": expand(
             "{o}/plots/{i}_{d}_{p}.png",
@@ -37,8 +40,14 @@ for k, v, r in zip(["S", "P"], to_compare, ["compare_embeddings"], ["compare_poo
 
 rule all:
     input:
-        **RESULTS["S"],
-        **RESULTS["P"],
+        list(
+            itertools.chain.from_iterable(
+                [
+                    list(RESULTS[x]["plots"]) + [RESULTS[x]["metrics"]]
+                    for x in ["S", "P"]
+                ]
+            )
+        ),
 
 
 rule compare_embeddings:
