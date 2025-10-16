@@ -43,7 +43,6 @@ class Evaluator:
             vl = DataLoader(val, **self.kws) if val is not None else val
             self.trainer.fit(self.model, train_dataloaders=tl, val_dataloaders=vl)
 
-    # TODO: make functions
     def cv(
         self,
         dataset: Dataset,
@@ -51,6 +50,20 @@ class Evaluator:
         stratify_by: str | None = None,
         **kws,
     ) -> pl.DataFrame:
+        """
+        K-fold cross-validation
+        [2025-10-16 Thu] WARNING: datasets.select might create new datasets, but you checked locally
+        and it seemed not to
+
+        Parameters
+        ----------
+        validation : float
+            optional, the proportion of the dataset to keep for validation
+        stratify_by : str | None
+            for classification tasks, the name of the task (column in dataset) to stratify
+        kws : dict
+            kws passed to the sklearn k-fold init
+        """
         if validation is not None:
             val_split = dataset.train_test_split(validation)
             val: Dataset | None = val_split["test"]

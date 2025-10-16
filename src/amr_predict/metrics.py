@@ -1,12 +1,12 @@
 #!/usr/bin/env ipython
 
-
 from collections.abc import Sequence
 from functools import reduce
 
 import lightning as L
 import numpy as np
 import pandas as pd
+import polars as pl
 import sklearn.preprocessing as sp
 import torch
 import torch.nn as nn
@@ -14,6 +14,10 @@ import torchmetrics.functional.classification as tmet
 from amr_predict.utils import iter_cols
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
+from torchmetrics.functional.regression.mse import mean_squared_error
+from torchmetrics.functional.regression.nrmse import normalized_root_mean_squared_error
+from torchmetrics.functional.regression.pearson import pearson_corrcoef
+from torchmetrics.functional.regression.spearman import spearman_corrcoef
 
 
 def multitask_acc(
@@ -64,7 +68,7 @@ def multitask_acc(
     return pd.DataFrame(df)
 
 
-def multitask_metrics2df(metrics: dict) -> pd.DataFrame:
+def multitask_metrics2df(metrics: dict) -> pl.DataFrame:
     to_df = {"task": [], "metric": [], "value": []}
     for task, dct in metrics.items():
         for metric, value in dct.items():
@@ -72,15 +76,33 @@ def multitask_metrics2df(metrics: dict) -> pd.DataFrame:
                 to_df["task"].append(task)
                 to_df["metric"].append(metric)
                 to_df["value"].append(value.item())
-    return pd.DataFrame(to_df)
+    return pl.DataFrame(to_df)
 
 
-def multitask_all_metrics(
+def multitask_all_reg(
+    pred: Tensor, y_true: Tensor, task_names: Sequence[str] | None = None
+) -> dict:
+    result = {}
+    if task_names is None:
+        task_names = [str(i) for i in range(pred.shape[1])]
+    for p, truth, task in zip(iter_cols(pred), iter_cols(y_true), task_names):
+        result[task] = {}
+        result[task]["mse"] = mean_squared_error(preds=p, target=truth)
+        result[task]["spearman"] = spearman_corrcoef(preds=p, target=truth)
+        result[task]["pearson"] = pearson_corrcoef(preds=p, target=truth)
+        result[task]["nrmse"] = normalized_root_mean_squared_error(
+            preds=p, target=truth
+        )
+    return result
+
+
+def multitask_all_cls(
     scores: Sequence[Tensor],
     y_true: Tensor,
     n_classes: Sequence[int],
     task_names: Sequence[str] | None = None,
 ) -> dict:
+    """Compute various multitask metrics for classification"""
     if y_true.shape[1] != len(scores):
         raise ValueError(
             "The given truth matrix does not match the sequence of scores!"
