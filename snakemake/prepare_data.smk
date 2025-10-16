@@ -17,6 +17,7 @@ if TEST:
     )
     config["sample_metadata"]["file"] = f"{config["data"]["meta"]}/jia_samples.tsv"
     config["sample_metadata"]["id_col"] = "Accession"
+    config["pooling"].update({"obs_keep": ["AMK", "GEN", "IPM", "CRO"]})
 
 PREPROCESSING = config["preprocessing"]
 DATA_OUTS = {
@@ -35,6 +36,12 @@ DATA_OUTS = {
 rule all:
     input:
         embedded=[f"{DATA_OUTS["E"]}/{d}" for d in PREPROCESSING.keys()],
+        pooled=expand(
+            "{o}/{d}-{p}",
+            o=DATA_OUTS["P"],
+            d=PREPROCESSING.keys(),
+            p=config["pooling"]["methods"],
+        ),
         meta=f"{PROCESSED}/{DATE}/seq_metadata.csv",
 
 
@@ -74,6 +81,6 @@ rule pool_embeddings:
     params:
         outdir=DATA_OUTS["P"],
     output:
-        [directory(f"{DATA_OUTS['P']}/{d}") for d in PREPROCESSING.keys()],
+        *[directory(d) for d in rules.all.input.pooled],
     script:
         "scripts/prepare_data.py"

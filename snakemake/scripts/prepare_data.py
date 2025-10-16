@@ -8,7 +8,8 @@ from snakemake.script import snakemake as smk
 
 os.environ["HF_HOME"] = smk.config["huggingface"]
 
-from amr_predict.utils import SeqDataset, SeqEmbedder
+from amr_predict.pooling import SeqPooler
+from amr_predict.preprocessing import SeqDataset, SeqEmbedder
 
 CONFIG: dict = smk.config
 
@@ -215,3 +216,15 @@ elif smk.rule == "make_embedded_datasets":
                 ),
             )
             dset.embed(savepath)
+# * Pool
+elif smk.rule == "pool_embeddings":
+    config = CONFIG["pooling"]
+    methods = config.pop("methods")
+    for embedding_ds in smk.input:
+        inpath = Path(embedding_ds)
+        for method in methods:
+            savepath = Path(smk.params["outdir"]) / f"{inpath.stem}-{method}"
+            if not savepath.exists():
+                sp: SeqPooler = SeqPooler(method=method, **config)
+                pooled = sp(inpath)
+                pooled.save_to_disk(dataset_path=savepath)
