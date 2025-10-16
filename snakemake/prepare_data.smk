@@ -33,15 +33,22 @@ DATA_OUTS = {
 }
 
 
+def get_pooled_out(as_dir: bool = False):
+    expanded = expand(
+        "{o}/{d}-{p}",
+        o=DATA_OUTS["P"],
+        d=PREPROCESSING.keys(),
+        p=config["pooling"]["methods"],
+    )
+    if as_dir:
+        return directory(expanded)
+    return expanded
+
+
 rule all:
     input:
         embedded=[f"{DATA_OUTS["E"]}/{d}" for d in PREPROCESSING.keys()],
-        pooled=expand(
-            "{o}/{d}-{p}",
-            o=DATA_OUTS["P"],
-            d=PREPROCESSING.keys(),
-            p=config["pooling"]["methods"],
-        ),
+        pooled=get_pooled_out(),
         meta=f"{PROCESSED}/{DATE}/seq_metadata.csv",
 
 
@@ -81,6 +88,6 @@ rule pool_embeddings:
     params:
         outdir=DATA_OUTS["P"],
     output:
-        *[directory(d) for d in rules.all.input.pooled],
+        get_pooled_out(True),
     script:
         "scripts/prepare_data.py"
