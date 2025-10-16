@@ -17,7 +17,12 @@ if TEST:
     )
     config["sample_metadata"]["file"] = f"{config["data"]["meta"]}/jia_samples.tsv"
     config["sample_metadata"]["id_col"] = "Accession"
-    config["pooling"].update({"obs_keep": ["AMK", "GEN", "IPM", "CRO"]})
+    config["pooling"].update(
+        {
+            "obs_keep": ["AMK", "GEN", "IPM", "CRO"],
+            "make_discrete": ["AMK", "GEN", "IPM", "CRO"],
+        }
+    )
 
 PREPROCESSING = config["preprocessing"]
 DATA_OUTS = {

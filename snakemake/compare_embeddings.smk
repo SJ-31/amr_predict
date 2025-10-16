@@ -6,12 +6,8 @@ if TEST:
         "sample",
         "Strain",
     ]
-    # TODO: set up something for this
-    config["compare_pooled"]["cluster_on"] = [
-        "sample",
-        "resistance_mechanism",
-        "Strain",
-    ]
+    config["compare_pooled"]["cluster_on"] = ["AMK_class", "GEN_class"]
+    config["compare_pooled"]["continuous"] = ["AMK", "CRO", "IPM"]
 
 to_compare = ["sequences", "pooled"]
 

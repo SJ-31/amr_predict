@@ -1,8 +1,15 @@
 #!/usr/bin/env ipython
 
+import os
 import warnings
 from collections.abc import Callable
 from pathlib import Path
+
+import plotnine as gg
+from plotnine.ggplot import ggplot
+from snakemake.script import snakemake as smk
+
+os.environ["HF_HOME"] = smk.config["huggingface"]
 
 import anndata as ad
 import numpy as np
@@ -20,7 +27,6 @@ from sklearn.metrics import (
     homogeneity_score,
     silhouette_score,
 )
-from snakemake.script import snakemake as smk
 
 
 def record_clustering_metrics(
@@ -42,7 +48,12 @@ def safe_silhouette_score(**kwargs) -> float:
 
 
 def comparison_routine(
-    dataset_name: str, adata: ad.AnnData, outdir: Path, config: dict, round: int
+    dataset_name: str,
+    adata: ad.AnnData,
+    outdir: Path,
+    config: dict,
+    round: int,
+    color_keys: dict,
 ) -> pl.DataFrame:
     sc.pp.pca(adata)
     sc.pp.neighbors(adata)
@@ -51,19 +62,16 @@ def comparison_routine(
     raw_results = adata.obs.copy()
     precomputed = pdist(adata.X, metric="cosine")
 
-    for plot_style in ["pca", "umap"]:
-        name = f"{dataset_name}_{plot_style}.png"
-        fig = plot_adata(
-            adata,
-            colors=config["cluster_on"],
-            plot_together=True,
-            plot_mode=plot_style,
-            alpha=0.8,
-            legend=False,
-        )
-        fig.tight_layout()
-        fig.set_size_inches((15, 10))
-        fig.savefig(outdir / f"plots/{round}_{name}")
+    for ck_name, ck in color_keys.items():
+        for plot_style in ["pca", "umap"]:
+            name = f"{dataset_name}_{plot_style}.png"
+            fig: ggplot = plot_adata(
+                adata,
+                colors=config[ck],
+                plot_mode=plot_style,
+            )
+            fig = fig + gg.ggtitle(title=dataset_name)
+            fig.save(outdir / f"plots/{round}_{name}{ck_name}", width=15, height=10)
 
     # TODO: if this can't run, use k-means instead
     hclust = linkage(precomputed)
@@ -126,7 +134,7 @@ def comparison_routine(
 
 
 # * Embedding comparison
-if smk.rule == "compare_embeddings":
+if smk.rule in {"compare_embeddings", "compare_pooled"}:
     config = smk.config[smk.rule]
     rng: Generator = np.random.default_rng(seed=smk.config["rng"])
     all_dfs = []
@@ -137,17 +145,21 @@ if smk.rule == "compare_embeddings":
         )
         dfs = []
         for i in range(config["bootstrap_rounds"]):
-            samples = rng.choice(
-                adata.obs["sample"].unique(), size=config["n_samples_per"]
-            )
+            if n_samples := config.get("n_samples_per"):
+                samples = rng.choice(adata.obs["sample"].unique(), size=n_samples)
+            else:
+                samples = adata.obs["sample"].unique()
             subsampled = adata[adata.obs["sample"].isin(samples), :]
-            print(f"{subsampled.shape=}")
-            print(subsampled.obs["sample"].value_counts())
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
+                if smk.rule == "compare_embeddings":
+                    color_keys = {"": "cluster_on"}
+                else:
+                    color_keys = {"-d": "cluster_on", "-c": "continuous"}
                 cur = comparison_routine(
                     adata=subsampled,
                     dataset_name=dir.stem,
+                    color_keys=color_keys,
                     outdir=Path(smk.params["outdir"]),
                     config=config,
                     round=i,
