@@ -175,7 +175,7 @@ class ModuleConfig:
         record_norm: bool = False,
         dropout_p: float = 0.2,
         init_device: str = "cpu",
-        targets: tuple[Tensor] | None = None,
+        n_classes_per_task: list[int] | None = None,
         task_type: TASK_TYPES = "regression",
         **kwargs,
     ) -> None:
@@ -198,6 +198,7 @@ class ModuleConfig:
         self.record: bool = record_metrics
         self._init_device: torch.device = torch.device(init_device)
         self.optimizer_fn: Callable | None = optimizer_fn
+        self.n_classes_per_task: list[int] | None = n_classes_per_task
         self.scheduler_fn: Callable | None = scheduler_fn
         self.scheduler_config: dict | None = scheduler_config
         self.dropout_p: float = dropout_p

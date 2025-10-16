@@ -71,11 +71,11 @@ class SeqPooler:
         # Every method returns a tensor of the embeddings aggregated to sample level,
         # sorted in ascending order of the encoded sample names
         if self.method == "sum":
-            x: Tensor = self._sum(dataset, mean=False)
+            x: Tensor = self._sum(d, mean=False)
         elif self.method == "mean":
-            x = self._sum(dataset, mean=True)
+            x = self._sum(d, mean=True)
         elif self.method == "similarity":
-            x = self._similarity_weighted(dataset, **self.kws)
+            x = self._similarity_weighted(d, **self.kws)
         return self._finalize_dataset(d, x)
 
     def _weights_from_pairwise(

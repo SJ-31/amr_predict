@@ -22,6 +22,7 @@ from xgboost import XGBClassifier
 # fit, predict_step and predict_proba. Though probably not gonna need the latter cause
 # will be doing regression
 
+
 # * Baseline
 
 
@@ -32,48 +33,51 @@ class Baseline:
 
     def __init__(
         self,
-        in_features: int,
         n_classes_per_task: list[int],
+        task_names: Sequence,
         x_key: str = "x",
         device: str | torch.device = "cpu",
         model=XGBClassifier,
+        conf: ModuleConfig | None = None,
         **kws,
     ):
         self.x_key = x_key
+        self.task_names: Sequence = task_names
         self.models: list = [model(**kws, num_class=n) for n in n_classes_per_task]
+        self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
         self.device: torch.device = (
             device if isinstance(device, torch.device) else torch.device(device)
         )
 
-    def fit(self, X: Dataset, y: Sequence):
+    def fit(self, x: Dataset | DataLoader):
+        X: Dataset = x if isinstance(x, Dataset) else x.dataset
         x_tensor = X[self.x_key][:]
-        y = X.to_polars().select(y).to_numpy()
+        y = X.to_polars().select(self.task_names).to_numpy()
         X = x_tensor.cpu().numpy()
         for model, y in zip(self.models, iter_cols(y)):
             model.fit(X, y)
 
-    def predict_step(self, batch):
+    def _predict_helper(self, batch, proba: bool = False) -> Tensor:
         try:
             x, _ = batch
         except ValueError:
             x = batch
-        if isinstance(x, Tensor):
-            x = x.cpu().numpy()
-        return torch.tensor(
-            np.column_stack(tuple(m.predict(x) for m in self.models)),
-            device=self.device,
-        )
+        if isinstance(x, DataLoader):
+            x = x.dataset[self.x_key][:]
+        elif isinstance(x, Dataset):
+            x = x[self.x_key][:]
+        x = x.cpu().numpy()
+        if proba:
+            predictions = tuple(m.predict_proba(x) for m in self.models)
+        else:
+            predictions = tuple(m.predict(x) for m in self.models)
+        return torch.tensor(np.column_stack(predictions), device=self.device)
+
+    def predict_step(self, batch):
+        return self._predict_helper(batch, False)
 
     def predict_proba(self, batch):
-        try:
-            x, _ = batch
-        except ValueError:
-            x = batch
-        if isinstance(x, Tensor):
-            x = x.cpu().numpy()
-        return tuple(
-            torch.tensor(m.predict_proba(x), device=self.device) for m in self.models
-        )
+        return self._predict_helper(batch, True)
 
 
 # * BaseNN
@@ -193,6 +197,10 @@ class MultiModule(BaseNN):
         n_classes_per_task : list[int]
             For classification, a sequence of the number of classes per task.
             For regression, the elements of this parameter don't matter
+        task_names : Sequence
+            For supervised models, a sequence of task keys with which to access the target
+            variables from the dataset during training
+
 
         """
         super().__init__(
@@ -326,9 +334,9 @@ class MultiModule(BaseNN):
         except ValueError:
             x = batch
         if isinstance(x, DataLoader):
-            x = x.dataset[:][0]
+            x = x.dataset[self.x_key][:]
         elif isinstance(x, Dataset):
-            x = x[:]
+            x = x[self.x_key][:]
         x = self.maybe_scale(x)
         proba = self._to_proba(self(x))
         if isinstance(proba, tuple):
@@ -369,3 +377,6 @@ class MultiModule(BaseNN):
             "validation" etc.
         """
         raise NotImplementedError()
+
+
+# * MLP
