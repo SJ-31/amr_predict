@@ -1,10 +1,10 @@
+from pathlib import Path
 
 
-configfile: "shared.yaml"
 configfile: "data_sources.yaml"
 
 
-include: "shared.smk"
+include: "Snakefile"
 
 
 assembly_outdir = f"{config["remote"]}/downloaded_assemblies"

@@ -1,4 +1,4 @@
-include: "shared.smk"
+include: "Snakefile"
 
 
 OUTDIR = f"{OUT}/embedding_comparison/{DATE}"

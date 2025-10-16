@@ -1,4 +1,4 @@
-configfile: "shared.yaml"
+configfile: "env.yaml"
 
 
 from datetime import date

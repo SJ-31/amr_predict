@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-include: "shared.smk"
+include: "Snakefile"
 
 
 if TEST:
@@ -19,18 +19,22 @@ if TEST:
     config["sample_metadata"]["id_col"] = "Accession"
 
 PREPROCESSING = config["preprocessing"]
-S_OUTDIR = (
-    f"{REMOTE}/datasets/processed_sequences/{DATE}"  # Datasets containing processed
-)
-# genome data e.g. split into ORFs, binned etc.
-E_OUTDIR = (
-    f"{REMOTE}/datasets/embedded/{DATE}"  # Datasets containing embedded, processed
-)
+DATA_OUTS = {
+    k: f"{REMOTE}/datasets/{s}/{DATE}"
+    for k, s in zip(
+        ["S", "E", "P"],
+        ["processed_sequences", "embedded", "pooled"],
+        # Datasets are...
+        # 1. Processed genome data e.g. split into ORFs, binned etc.
+        # 2. Sequences embedded by the chosen GLM
+        # 3. Sequences pooled into genome-level representations
+    )
+}
 
 
 rule all:
     input:
-        embedded=[f"{E_OUTDIR}/{d}" for d in PREPROCESSING.keys()],
+        embedded=[f"{DATA_OUTS["E"]}/{d}" for d in PREPROCESSING.keys()],
         meta=f"{PROCESSED}/{DATE}/seq_metadata.csv",
 
 
@@ -43,11 +47,11 @@ rule get_seq_metadata:
 
 rule make_text_datasets:
     output:
-        [directory(f"{S_OUTDIR}/{d}") for d in PREPROCESSING.keys()],
+        [directory(f"{DATA_OUTS["S"]}/{d}") for d in PREPROCESSING.keys()],
     input:
         rules.get_seq_metadata.output,
     params:
-        outdir=S_OUTDIR,
+        outdir=DATA_OUTS["S"],
         preprocessing=PREPROCESSING,
     script:
         "scripts/prepare_data.py"
@@ -57,8 +61,19 @@ rule make_embedded_datasets:
     input:
         rules.make_text_datasets.output,
     params:
-        outdir=E_OUTDIR,
+        outdir=DATA_OUTS["E"],
     output:
-        [directory(f"{E_OUTDIR}/{d}") for d in PREPROCESSING.keys()],
+        [directory(f"{DATA_OUTS['E']}/{d}") for d in PREPROCESSING.keys()],
+    script:
+        "scripts/prepare_data.py"
+
+
+rule pool_embeddings:
+    input:
+        rules.make_embedded_datasets.output,
+    params:
+        outdir=DATA_OUTS["P"],
+    output:
+        [directory(f"{DATA_OUTS['P']}/{d}") for d in PREPROCESSING.keys()],
     script:
         "scripts/prepare_data.py"
