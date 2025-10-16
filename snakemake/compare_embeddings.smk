@@ -1,43 +1,67 @@
 include: "Snakefile"
 
 
-OUTDIR = f"{OUT}/embedding_comparison/{DATE}"
-
-EMBEDDINGS_IN = f"{REMOTE}/datasets/embedded/{IN_DATE}"
-
 if TEST:
     config["compare_embeddings"]["cluster_on"] = [
+        "sample",
+        "Strain",
+    ]
+    # TODO: set up something for this
+    config["compare_pooled"]["cluster_on"] = [
         "sample",
         "resistance_mechanism",
         "Strain",
     ]
 
+to_compare = ["sequences", "pooled"]
 
-datasets = list(Path(EMBEDDINGS_IN).iterdir())
-
-results = {
-    "embedding_plots": expand(
-        "{o}/plots/{i}_{d}_{p}.png",
-        o=OUTDIR,
-        d=[d.stem for d in datasets],
-        p=["pca", "umap"],
-        i=range(config["compare_embeddings"]["bootstrap_rounds"]),
-    ),
-    "embedding_metrics": f"{OUTDIR}/metrics.csv",
+OUTDIRS = {
+    k: f"{OUT}/embedding_comparison/{DATE}/{v}" for k, v in zip(["S", "P"], to_compare)
 }
+
+DATASETS = {
+    "S": list(Path(f"{REMOTE}/datasets/embedded/{IN_DATE}").iterdir()),
+    "P": list(Path(f"{REMOTE}/datasets/pooled/{IN_DATE}").iterdir()),
+}
+
+
+RESULTS = {}
+for k, v, r in zip(["S", "P"], to_compare, ["compare_embeddings"], ["compare_pooled"]):
+    RESULTS[k] = {
+        "plots": expand(
+            "{o}/plots/{i}_{d}_{p}.png",
+            o=OUTDIRS[k],
+            d=[d.stem for d in DATASETS[k]],
+            p=["pca", "umap"],
+            i=range(config[r]["bootstrap_rounds"]),
+        ),
+        "metrics": f"{OUTDIRS[k]}/metrics.csv",
+    }
 
 
 rule all:
     input:
-        **results,
+        **RESULTS["S"],
+        **RESULTS["P"],
 
 
 rule compare_embeddings:
     params:
-        datasets=datasets,
-        outdir=OUTDIR,
+        datasets=DATASETS["S"],
+        outdir=OUTDIRS["S"],
     output:
-        metrics=results["embedding_metrics"],
-        plots=results["embedding_plots"],
+        metrics=RESULTS["S"]["metrics"],
+        plots=RESULTS["S"]["plots"],
+    script:
+        "scripts/reporting.py"
+
+
+rule compare_pooled:
+    params:
+        datasets=DATASETS["P"],
+        outdir=OUTDIRS["P"],
+    output:
+        metrics=RESULTS["P"]["metrics"],
+        plots=RESULTS["P"]["plots"],
     script:
         "scripts/reporting.py"
