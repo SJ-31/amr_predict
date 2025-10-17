@@ -64,14 +64,14 @@ def comparison_routine(
 
     for ck_name, ck in color_keys.items():
         for plot_style in ["pca", "umap"]:
-            name = f"{dataset_name}_{plot_style}.png"
+            name = f"{dataset_name}_{plot_style}"
             fig: ggplot = plot_adata(
                 adata,
                 colors=config[ck],
                 plot_mode=plot_style,
             )
             fig = fig + gg.ggtitle(title=dataset_name)
-            fig.save(outdir / f"plots/{round}_{name}{ck_name}", width=15, height=10)
+            fig.save(outdir / f"plots/{round}_{name}{ck_name}.png", width=15, height=10)
 
     # TODO: if this can't run, use k-means instead
     hclust = linkage(precomputed)

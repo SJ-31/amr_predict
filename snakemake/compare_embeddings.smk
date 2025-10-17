@@ -28,10 +28,11 @@ RESULTS = {}
 for k, v, r in zip(["S", "P"], to_compare, ["compare_embeddings", "compare_pooled"]):
     RESULTS[k] = {
         "plots": expand(
-            "{o}/plots/{i}_{d}_{p}.png",
+            "{o}/plots/{i}_{d}_{p}{s}.png",
             o=OUTDIRS[k],
             d=[d.stem for d in DATASETS[k]],
             p=["pca", "umap"],
+            s=["-d", "-c"] if k == "P" else [""],
             i=range(config[r]["bootstrap_rounds"]),
         ),
         "metrics": f"{OUTDIRS[k]}/metrics.csv",

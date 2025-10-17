@@ -221,6 +221,7 @@ elif smk.rule == "make_embedded_datasets":
 elif smk.rule == "pool_embeddings":
     config = CONFIG["pooling"]
     methods = config.pop("methods")
+    discretization = config.pop("discretize")
     for embedding_ds in smk.input:
         inpath = Path(embedding_ds)
         for method in methods:
@@ -228,5 +229,5 @@ elif smk.rule == "pool_embeddings":
             if not savepath.exists():
                 sp: SeqPooler = SeqPooler(method=method, **config)
                 pooled = sp(inpath)
-                pooled = discretize_resistance(**config["discretize"])
+                pooled = discretize_resistance(pooled, **discretization)
                 pooled.save_to_disk(dataset_path=savepath)
