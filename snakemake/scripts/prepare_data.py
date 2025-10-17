@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import polars as pl
+from amr_predict.utils import discretize_resistance
 from snakemake.script import snakemake as smk
 
 os.environ["HF_HOME"] = smk.config["huggingface"]
@@ -227,4 +228,5 @@ elif smk.rule == "pool_embeddings":
             if not savepath.exists():
                 sp: SeqPooler = SeqPooler(method=method, **config)
                 pooled = sp(inpath)
+                pooled = discretize_resistance(**config["discretize"])
                 pooled.save_to_disk(dataset_path=savepath)

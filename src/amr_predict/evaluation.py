@@ -8,7 +8,11 @@ import numpy as np
 import polars as pl
 import sklearn.model_selection as ms
 import torch.nn as nn
-from amr_predict.metrics import multitask_all_cls, multitask_all_reg
+from amr_predict.metrics import (
+    multitask_all_cls,
+    multitask_all_reg,
+    multitask_metrics2df,
+)
 from amr_predict.models import Baseline
 from amr_predict.utils import TASK_TYPES, load_as
 from datasets import Dataset, DatasetDict
@@ -135,9 +139,8 @@ class Evaluator:
                     n_classes=self.model.conf.n_classes_per_task,
                     task_names=tasks,
                 )
-            results.append(
-                pl.DataFrame(metrics).with_columns(pl.lit(key).alias("test_set"))
-            )
+            df = multitask_metrics2df(metrics)
+            results.append(df.with_columns(pl.lit(key).alias("test_set")))
         return pl.concat(results)
 
 
