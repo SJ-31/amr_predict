@@ -17,7 +17,6 @@ except ImportError:
 RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
 
-# def baseline_eval():
 
 if smk.rule == "cross_validate":
     x_key, sample_key = (
@@ -30,10 +29,12 @@ if smk.rule == "cross_validate":
         dname = Path(dpath).stem
         dataset: Dataset = load_as(dpath)
         for ttype, task_names in smk.config["tasks"].items():
-            outfile = f"{smk.params["outdir"]}/{dname}_{ttype}.csv"
+            ttype: TASK_TYPES
+            if ttype == "classification":
+                in_features, n_classes = data_spec(dataset, y=task_names, x_key=x_key)
+
             if not task_names:
                 continue
-            ttype: TASK_TYPES
             if ttype == "classification":
                 in_features, n_classes = data_spec(dataset, y=task_names, x_key=x_key)
                 bmodel = XGBClassifier
@@ -43,17 +44,22 @@ if smk.rule == "cross_validate":
             mconf = ModuleConfig(
                 task_type=ttype, n_classes=n_classes, n_tasks=len(task_names)
             )
-            model = Baseline(
-                task_names=task_names,
-                x_key=x_key,
-                device=smk.params["device"],
-                model=bmodel,
-                conf=mconf,
-            )
-            eva = ae.Evaluator(model=model, how="cv")
-            result: pl.DataFrame = eva.cv(
-                dataset,
-                validation_kws=None,  # No need when using baseline
-                **RCONFIG["k_fold"],
-            )
-            result.write_csv(outfile)
+            for mname in RCONFIG["models"]:
+                outfile = f"{smk.params["outdir"]}/{mname}/{dname}_{ttype}.csv"
+                if mname == "baseline":
+                    model = Baseline(
+                        task_names=task_names,
+                        x_key=x_key,
+                        device=smk.params["device"],
+                        model=bmodel,
+                        conf=mconf,
+                    )
+                else:
+                    raise NotImplementedError()
+                eva = ae.Evaluator(model=model, how="cv")
+                result: pl.DataFrame = eva.cv(
+                    dataset,
+                    validation_kws=None,  # No need when using baseline
+                    **RCONFIG["k_fold"],
+                )
+                result.write_csv(outfile)
