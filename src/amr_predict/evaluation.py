@@ -50,7 +50,7 @@ class Evaluator:
     def cv(
         self,
         dataset: Dataset,
-        validation: float | None = None,
+        validation_kws: dict | None = None,
         stratify_by: str | None = None,
         **kws,
     ) -> pl.DataFrame:
@@ -68,8 +68,9 @@ class Evaluator:
         kws : dict
             kws passed to the sklearn k-fold init
         """
-        if validation is not None:
-            val_split = dataset.train_test_split(validation)
+        validation_kws = validation_kws or {}
+        if not validation_kws:
+            val_split = dataset.train_test_split(**validation_kws)
             val: Dataset | None = val_split["test"]
             dataset = val_split["train"]
         else:
@@ -85,7 +86,7 @@ class Evaluator:
         for i, (train, test) in enumerate(splits):
             fname = f"fold_{i}"
             train_key, test_key = f"{fname}_train", f"{fname}_test"
-            if validation is not None:
+            if validation_kws:
                 split_names[fname] = (train_key, test_key, val)
             else:
                 split_names[fname] = (train_key, test_key, None)
@@ -136,7 +137,7 @@ class Evaluator:
                 metrics = multitask_all_cls(
                     y_pred,
                     y_true,
-                    n_classes=self.model.conf.n_classes_per_task,
+                    n_classes=self.model.conf.n_classes,
                     task_names=tasks,
                 )
             df = multitask_metrics2df(metrics)

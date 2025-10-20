@@ -15,11 +15,32 @@ from Bio.SeqRecord import SeqRecord
 from datasets import DatasetDict, Value
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
+from pandas import isna
 from torch import Tensor
+from torch.utils.data import DataLoader
 
 # * Utility functions
 
 TASK_TYPES: TypeAlias = Literal["classification", "regression"]
+
+
+def data_spec(
+    X: torch.Tensor | np.ndarray | Dataset,
+    y: torch.Tensor | np.ndarray | None | pl.DataFrame = None,
+    x_key: str | None = None,
+) -> tuple[int, tuple[int, ...]]:
+    """Return a tuple of (n_features, n_classes) for the given dataset
+    If multitask, the second element is a tuple of length n_tasks
+    """
+    if isinstance(X, Dataset) and x_key is None:
+        raise ValueError("x_key must be provided if given a dataset")
+    if isinstance(X, Dataset):
+        X = X[x_key][:]
+    if isinstance(y, pl.DataFrame):
+        return X.shape[1], tuple([len(y[s].unique()) for s in y])
+    elif isinstance(y, np.ndarray) or isinstance(y, torch.Tensor) and len(y.shape) > 1:
+        return X.shape[1], tuple([y[:, i].unique().shape[0] for i in range(y.shape[1])])
+    return X.shape[1], tuple([len(set(y))])
 
 
 def iter_cols(x: Tensor | np.ndarray | tuple) -> Iterable:
@@ -215,7 +236,8 @@ class ModuleConfig:
         record_norm: bool = False,
         dropout_p: float = 0.2,
         init_device: str = "cpu",
-        n_classes_per_task: list[int] | None = None,
+        n_tasks: int = 1,
+        n_classes: list[int] | None = None,
         task_type: TASK_TYPES = "regression",
         **kwargs,
     ) -> None:
@@ -232,13 +254,17 @@ class ModuleConfig:
             Fitted (ideally on entire train set) scaler that will apply transformation
             to each batch prior to training
         kwargs : Model-specific kwargs, stored in a dict
+        task_names : Sequence
+            For supervised models, a sequence of task keys with which to access the target
+            variables from the dataset during training
         targets : Tensor of targets that the model will observe during training
         """
+        self.n_tasks: int = n_tasks
         self.record_norm: bool = record_norm
         self.record: bool = record_metrics
         self._init_device: torch.device = torch.device(init_device)
         self.optimizer_fn: Callable | None = optimizer_fn
-        self.n_classes_per_task: list[int] | None = n_classes_per_task
+        self.n_classes: list[int] | None = n_classes
         self.scheduler_fn: Callable | None = scheduler_fn
         self.scheduler_config: dict | None = scheduler_config
         self.dropout_p: float = dropout_p

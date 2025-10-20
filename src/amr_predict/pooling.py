@@ -28,6 +28,7 @@ class SeqPooler:
         method: POOLING_METHODS = "sum",
         embedding_key: str = "embedding",
         sample_key: str = "sample",
+        key: str = "x",
         **kws,
     ) -> None:
         """
@@ -37,12 +38,15 @@ class SeqPooler:
         obs_keep : Sequence
             Sequence of sample-level observations in the dataset to retain e.g. variables
             to predict. Sample names are automatically kept
+        pooled_key : str
+            Name of key (column) in dataset to keep the aggregated embeddings under
         """
         self.encoder: LabelEncoder = LabelEncoder()
         self.embedding_key: str = embedding_key
         self.obs_keep: list = list(obs_keep) + [sample_key]
         self.sample_key: str = sample_key
         self.method: POOLING_METHODS = method
+        self.key: str = key
         self.kws: dict = kws
 
     def _transform_samples(self, dataset: Dataset) -> Tensor:
@@ -62,7 +66,10 @@ class SeqPooler:
             .sort("encoded", descending=False)
             .drop("encoded")
         )
-        to_concat = [Dataset.from_dict({"x": aggregated}), Dataset.from_polars(obs)]
+        to_concat = [
+            Dataset.from_dict({self.key: aggregated}),
+            Dataset.from_polars(obs),
+        ]
         return concatenate_datasets(to_concat, axis=1).with_format("torch")
 
     def __call__(self, dataset: Dataset | Path | str) -> Dataset:

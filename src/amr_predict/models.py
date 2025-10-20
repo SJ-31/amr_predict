@@ -33,7 +33,6 @@ class Baseline:
 
     def __init__(
         self,
-        n_classes_per_task: list[int],
         task_names: Sequence,
         x_key: str = "x",
         device: str | torch.device = "cpu",
@@ -43,7 +42,7 @@ class Baseline:
     ):
         self.x_key = x_key
         self.task_names: Sequence = task_names
-        self.models: list = [model(**kws, num_class=n) for n in n_classes_per_task]
+        self.models: list = [model(**kws) for _ in range(conf.n_tasks)]
         self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
         self.device: torch.device = (
             device if isinstance(device, torch.device) else torch.device(device)
@@ -66,6 +65,8 @@ class Baseline:
             x = x.dataset[self.x_key][:]
         elif isinstance(x, Dataset):
             x = x[self.x_key][:]
+        elif isinstance(x, dict):
+            x = x[self.x_key]
         x = x.cpu().numpy()
         if proba:
             predictions = tuple(m.predict_proba(x) for m in self.models)
@@ -87,14 +88,12 @@ class BaseNN(L.LightningModule):
     def __init__(
         self,
         in_features: int,
-        n_classes_per_task: list[int],
         conf: ModuleConfig | None = None,
     ) -> None:
         super().__init__()
         self.in_features: int = in_features
-        self.n_tasks: int = len(n_classes_per_task)
+        self.n_tasks: int = conf.n_tasks
         self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
-        self.n_classes: Sequence[int] = n_classes_per_task
         self.cache: dict
 
     @classmethod
@@ -184,7 +183,6 @@ class MultiModule(BaseNN):
     def __init__(
         self,
         in_features: int,
-        n_classes_per_task: list[int],
         x_key: str = "x",
         conf: ModuleConfig | None = None,
         task_names: Sequence | None = None,
@@ -194,30 +192,21 @@ class MultiModule(BaseNN):
         ----------
         in_features : int
             number of incoming features
-        n_classes_per_task : list[int]
-            For classification, a sequence of the number of classes per task.
-            For regression, the elements of this parameter don't matter
-        task_names : Sequence
-            For supervised models, a sequence of task keys with which to access the target
-            variables from the dataset during training
-
-
         """
-        super().__init__(
-            in_features=in_features, n_classes_per_task=n_classes_per_task, conf=conf
-        )
+        super().__init__(in_features=in_features, conf=conf)
         self.x_key: str = x_key
         self._metrics: nn.ModuleList | None = None
         self.supervised: bool = True
         self.task_type: TASK_TYPES = self.conf.task_type
+        self.n_classes: Sequence[int] | None = (
+            None if self.task_type == "regression" else self.conf.n_classes
+        )
         if self.conf.record and self.task_type == "classification":
             self._metrics = nn.ModuleList(
-                [Accuracy(task="multiclass", num_classes=n) for n in n_classes_per_task]
+                [Accuracy(task="multiclass", num_classes=n) for n in self.n_classes]
             )
         elif self.conf.record:
-            self._metrics = nn.ModuleList(
-                [MeanSquaredError(num_outputs=len(n_classes_per_task))]
-            )
+            self._metrics = nn.ModuleList([MeanSquaredError(num_outputs=self.n_tasks)])
         if task_names is None:
             self.task_names: Sequence[str] = [str(i) for i in range(self.n_tasks)]
         else:
