@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from functools import reduce
 from pathlib import Path
 from typing import Literal, TypeAlias
 
@@ -219,6 +220,53 @@ def dataset2adata(dset: td.Dataset | Dataset, x_key: str = "embedding") -> ad.An
         x = dset[x_key][:].numpy()
         obs = dset.remove_columns(x_key).to_pandas()
     return ad.AnnData(X=x, obs=obs)
+
+
+def train_test_from_dict(df: pl.DataFrame, spec: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Generate train, test splits from a dictionary and metadata dataframe
+
+    Parameters
+    ----------
+    df : DataFrame
+        dataframe where rows represent samples and columns are observation
+    spec : dict
+        Keys of `spec` refer to columns of `df`, and values are a dictionary that
+            specify how to generate a boolean mask from different values of `spec`
+        The keys of this dictionary are specific values of the column, and values are
+            match types.
+
+        Possible match types are CONTAINS, EXACT, NOT, CONTAINS_ANY
+
+        Match types are interpreted as being for the test set
+            e.g. "myvar": {"foo": EXACT} generates a mask where
+            all samples with myvar == "foo" are placed in the test set
+
+        The matches will be merged with a boolean OR operation
+
+    Returns
+    -------
+    Tuple of boolean masks for train, test splits
+
+    Notes
+    ------
+    CONTAINS and CONTAINS_ANY matches only work for string columns
+    """
+    test_masks = []
+    for obs, val_dct in spec.items():
+        for value, match_type in val_dct.items():
+            match_type: Literal["EXACT", "NOT", "CONTAINS", "CONTAINS_ANY"]
+            if match_type == "EXACT":
+                test_masks.append(df[obs] == value)
+            elif match_type == "CONTAINS":
+                test_masks.append(df[obs].str.contains(value))
+            elif match_type == "NOT":
+                test_masks.append(df[obs] != value)
+            elif match_type == "CONTAINS_ANY":
+                test_masks.append(df[obs].str.contains_any(value))
+            else:
+                raise ValueError(f"`{match_type}` is an invalid match type!")
+    test_mask: np.ndarray = reduce(lambda x, y: x | y, test_masks).to_numpy()
+    return ~test_mask, test_mask
 
 
 # * Classes
