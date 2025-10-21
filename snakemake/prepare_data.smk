@@ -32,6 +32,13 @@ DATA_OUTS = {
         # 3. Sequences pooled into genome-level representations
     )
 }
+pooling_methods = config["pooling"]["methods"]
+
+
+PLOT_OUT = f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation"
+POOLED_PLOTS = expand(
+    "{o}/{d}-{p}.png", o=PLOT_OUT, d=PREPROCESSING.keys(), p=pooling_methods
+)
 
 
 def get_pooled_out(as_dir: bool = False):
@@ -39,7 +46,7 @@ def get_pooled_out(as_dir: bool = False):
         "{o}/{d}-{p}",
         o=DATA_OUTS["P"],
         d=PREPROCESSING.keys(),
-        p=config["pooling"]["methods"],
+        p=pooling_methods,
     )
     if as_dir:
         return directory(expanded)
@@ -48,6 +55,7 @@ def get_pooled_out(as_dir: bool = False):
 
 rule all:
     input:
+        POOLED_PLOTS,
         embedded=[f"{DATA_OUTS["E"]}/{d}" for d in PREPROCESSING.keys()],
         pooled=get_pooled_out(),
         meta=f"{PROCESSED}/{DATE}/seq_metadata.csv",
@@ -88,6 +96,7 @@ rule pool_embeddings:
         rules.make_embedded_datasets.output,
     params:
         outdir=DATA_OUTS["P"],
+        plotdir=PLOT_OUT,
     output:
         get_pooled_out(True),
     script:

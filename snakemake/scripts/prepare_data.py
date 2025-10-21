@@ -1,10 +1,16 @@
 #!/usr/bin/env ipython
 
 import os
+from itertools import batched
 from pathlib import Path
+from typing import Literal
 
+import plotnine as gg
 import polars as pl
-from amr_predict.utils import discretize_resistance
+import torch
+from amr_predict.utils import discretize_resistance, load_as
+from datasets import Dataset
+from scipy import stats
 from snakemake.script import snakemake as smk
 
 os.environ["HF_HOME"] = smk.config["huggingface"]
@@ -13,6 +19,7 @@ from amr_predict.pooling import SeqPooler
 from amr_predict.preprocessing import SeqDataset, SeqEmbedder
 
 CONFIG: dict = smk.config
+RCONFIG: dict = smk.config[smk.rule]
 
 # * Utilities
 
@@ -75,6 +82,52 @@ def format_ampcombi(
             .select(to_rename.values())
             .with_columns(pl.lit(True).alias("is_amp"))
         )
+
+
+def compare_pooled(
+    original: Dataset,
+    pooled: Dataset,
+    o_key: str = "embedding",
+    p_key: str = "x",
+    sample_key: str = "sample",
+    sample_key_p: str | None = None,
+    n: int | None = None,
+    metric: Literal["euclidean", "manhattan"] = "manhattan",
+):
+    if n is None:
+        n = pooled.shape[0]
+    n *= 2
+    replacement = True if n > pooled.shape[0] else False
+    sample_key_p = sample_key_p or sample_key
+    p = 1 if metric == "manhattan" else 2
+    result = {"x": [], "y": [], "d_original": [], "d_pooled": []}
+
+    o_cols: pl.DataFrame = original.remove_columns(o_key).to_polars()
+    p_cols: pl.DataFrame = pooled.remove_columns(p_key).to_polars()
+    unique_samples = p_cols[sample_key_p].unique()
+    o_lookup = {s: (o_cols[sample_key] == s).arg_true() for s in unique_samples}
+    p_lookup = {s: (p_cols[sample_key_p] == s).arg_true() for s in unique_samples}
+    to_compute = batched(
+        o_cols[sample_key].sample(n, shuffle=True, with_replacement=replacement), 2
+    )
+    for x, y in to_compute:
+        for dset, lookup, key, val_key in zip(
+            [original, pooled],
+            [o_lookup, p_lookup],
+            [o_key, p_key],
+            ["d_original", "d_pooled"],
+        ):
+            x_embed = dset.select(lookup[x])[key][:]
+            y_embed = dset.select(lookup[y])[key][:]
+            dist = torch.cdist(x_embed, y_embed, p=p)
+            if val_key == "d_original":
+                dist = dist.mean()
+            else:
+                dist = dist[0][0]
+            result[val_key].append(dist)
+        result["x"].append(x)
+        result["y"].append(y)
+    return pl.DataFrame(result)
 
 
 def format_hamronization(
@@ -219,15 +272,35 @@ elif smk.rule == "make_embedded_datasets":
             dset.embed(savepath)
 # * Pool
 elif smk.rule == "pool_embeddings":
-    config = CONFIG["pooling"]
-    methods = config.pop("methods")
-    discretization = config.pop("discretize")
+    methods = RCONFIG.pop("methods")
+    discretization = RCONFIG.pop("discretize")
     for embedding_ds in smk.input:
         inpath = Path(embedding_ds)
         for method in methods:
             savepath = Path(smk.params["outdir"]) / f"{inpath.stem}-{method}"
+            figpath = Path(smk.params["plotdir"]) / f"{inpath.stem}-{method}.png"
             if not savepath.exists():
-                sp: SeqPooler = SeqPooler(method=method, **config)
+                sp: SeqPooler = SeqPooler(method=method, **RCONFIG)
                 pooled = sp(inpath)
                 pooled = discretize_resistance(pooled, **discretization)
                 pooled.save_to_disk(dataset_path=savepath)
+            original = load_as(inpath)
+            comparison = compare_pooled(
+                original,
+                pooled,
+                o_key=RCONFIG["embedding_key"],
+                p_key=RCONFIG["key"],
+                sample_key=RCONFIG["sample_key"],
+            )
+            corr = stats.spearmanr(comparison["d_original"], comparison["d_pooled"])
+            plot = (
+                gg.ggplot(comparison, gg.aes(x="d_original", y="d_pooled"))
+                + gg.geom_point()
+                + gg.ggtitle(
+                    title="Spearman correlation between distances of contig embeddings & genome embeddings",
+                    subtitle=f"rho = {round(corr.statistic, 2)}, p-value: {round(corr.pvalue, 2)}",
+                )
+                + gg.xlab("Contig distance")
+                + gg.ylab("Genome distance")
+            )
+            plot.save(filename=figpath, verbose=False)
