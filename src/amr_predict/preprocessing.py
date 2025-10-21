@@ -228,7 +228,7 @@ class SeqPreprocessor:
                 val: dict = self._sample_dict(
                     sample=sample,
                     record=current,
-                    index=i,
+                    seqindex=i,
                     start=acc,
                     stop=acc + self.max_length,
                 )
@@ -253,7 +253,7 @@ class SeqPreprocessor:
                         locus_tag=row["Locus Tag"],
                         type=row["Type"],
                         length=length,
-                        index=i,
+                        seqindex=i,
                         start=indices[0],
                         stop=indices[1],
                     )
