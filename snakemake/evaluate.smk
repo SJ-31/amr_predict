@@ -3,9 +3,12 @@ include: "Snakefile"
 
 from pathlib import Path
 
-OUTDIRS = {"cv": f"{OUT}/evaluation/cv", "holdout": f"{OUT}/evaluation/holdout"}
+OUTDIRS = {
+    "cv": f"{OUT}/{DATE}/evaluation/cv",
+    "holdout": f"{OUT}/{DATE}/evaluation/holdout",
+}
 DEVICE = "cuda"
-DATASETS = list(Path(f"{REMOTE}/datasets/pooled/{IN_DATE}").iterdir())
+DATASETS = list(Path(f"{REMOTE}/{IN_DATE}/datasets/pooled").iterdir())
 
 if TEST:
     DEVICE = "cpu"

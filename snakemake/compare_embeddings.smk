@@ -15,12 +15,12 @@ if TEST:
 to_compare = ["sequences", "pooled"]
 
 OUTDIRS = {
-    k: f"{OUT}/embedding_comparison/{DATE}/{v}" for k, v in zip(["S", "P"], to_compare)
+    k: f"{OUT}/{DATE}/embedding_comparison/{v}" for k, v in zip(["S", "P"], to_compare)
 }
 
 DATASETS = {
-    "S": list(Path(f"{REMOTE}/datasets/embedded/{IN_DATE}").iterdir()),
-    "P": list(Path(f"{REMOTE}/datasets/pooled/{IN_DATE}").iterdir()),
+    "S": list(Path(f"{REMOTE}/{IN_DATE}/datasets/embedded").iterdir()),
+    "P": list(Path(f"{REMOTE}/{IN_DATE}/datasets/pooled").iterdir()),
 }
 
 

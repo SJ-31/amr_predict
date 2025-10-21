@@ -22,7 +22,7 @@ if TEST:
 
 PREPROCESSING = config["preprocessing"]
 DATA_OUTS = {
-    k: f"{REMOTE}/datasets/{s}/{DATE}"
+    k: f"{REMOTE}/{DATE}/datasets/{s}"
     for k, s in zip(
         ["S", "E", "P"],
         ["processed_sequences", "embedded", "pooled"],
