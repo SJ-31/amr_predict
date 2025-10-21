@@ -197,7 +197,8 @@ def load_as(
     elif format == "adata":
         x_key = x_key if x_key is not None else to_keep[0]
         x = dset[x_key][:]
-        obs = dset.select_columns(to_keep).to_pandas()
+        to_keep.remove(x_key)
+        obs = dset.remove_columns(x_key).select_columns(to_keep).to_pandas()
         return ad.AnnData(X=x, obs=obs)
     elif format == "polars":
         return dset.to_polars().select(to_keep)
@@ -220,6 +221,24 @@ def dataset2adata(dset: td.Dataset | Dataset, x_key: str = "embedding") -> ad.An
         x = dset[x_key][:].numpy()
         obs = dset.remove_columns(x_key).to_pandas()
     return ad.AnnData(X=x, obs=obs)
+
+
+def vecdist(
+    x: np.ndarray, y: np.ndarray, metric: Literal["cosine", "euclidean", "manhattan"]
+) -> np.ndarray:
+    """Element-wise distance calculation between rows of 2d matrices x, y"""
+    if len(x.shape) > 2 or len(y.shape) > 2:
+        raise ValueError("x and y must both be 2d")
+    if x.shape[0] != y.shape[0]:
+        raise ValueError("x and y have a differing number of elements!")
+    if metric == "cosine":
+        nx = np.linalg.vector_norm(x, axis=1, ord=2)
+        ny = np.linalg.vector_norm(y, axis=1, ord=2)
+        return 1 - (np.vecdot(x, y) / (nx * ny))
+    elif metric == "euclidean":
+        return np.sqrt(np.sum((x - y) ** 2, axis=1))
+    elif metric == "manhattan":
+        return np.sum(np.abs((x - y)), axis=1)
 
 
 def train_test_from_dict(df: pl.DataFrame, spec: dict) -> tuple[np.ndarray, np.ndarray]:
