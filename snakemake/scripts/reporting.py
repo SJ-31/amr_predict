@@ -6,7 +6,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from itertools import batched
 from pathlib import Path
-from typing import TypedDict
 
 import anndata as ad
 import numpy as np
@@ -122,8 +121,9 @@ def safe_silhouette_score(**kwargs) -> float:
         return np.nan
 
 
-def clustering_helper(raw_results: ad.AnnData, precomputed_dist) -> LongResults:
+def clustering_helper(adata: ad.AnnData, precomputed_dist) -> LongResults:
     hclust = linkage(precomputed_dist)
+    df = adata.obs.copy()
     precomputed = squareform(precomputed_dist)
     results: LongResults = LongResults()
     scoring_metrics = {
@@ -149,12 +149,12 @@ def clustering_helper(raw_results: ad.AnnData, precomputed_dist) -> LongResults:
         n_unique = len(y_true.unique())
         hclust_assignment = cut_tree(hclust, n_clusters=n_unique)
         hclust_assignment[hclust_assignment is None] = -1
-        raw_results.loc[:, f"hclust_{y}"] = hclust_assignment
+        df.loc[:, f"hclust_{y}"] = hclust_assignment
 
         record_clustering_metrics(
             fn_dict=scoring_metrics,
             y_true=y_true,
-            y_pred=raw_results["leiden"],
+            y_pred=df["leiden"],
             results=results,
             name=y,
             method="leiden",
@@ -256,7 +256,10 @@ def nn_proportions(
 
 
 def compare_pair_distribution(
-    adata: ad.AnnData, columns: Sequence, distance_metric: str = "cosine", **kws
+    adata: ad.AnnData,
+    columns: Sequence,
+    distance_metric: str = "cosine",
+    **kws,
 ) -> LongResults:
     """
     Compare the distribution of distances between related and unrelated sample pairs,
@@ -269,6 +272,7 @@ def compare_pair_distribution(
     using the Komolgorov-Smirnov test
     """
     results: LongResults = LongResults()
+    kws = kws or {}
     for col in columns:
         related, unrelated = sample_pairs(adata.obs, col, **kws)
         r1, r2 = adata.X[related[:, 0]], adata.X[related[:, 1]]
@@ -298,16 +302,24 @@ def covar_dist(
     results: LongResults = LongResults()
     for col in columns:
         shuffled = pd.Series(np.arange(adata.shape[0])).sample(frac=1, random_state=rng)
+        if len(shuffled) % 2 != 0:
+            shuffled = shuffled[:-1]
         pair_mat = np.array([np.array(p) for p in batched(shuffled, 2)])
         edist = vecdist(adata.X[pair_mat[:, 0]], adata.X[pair_mat[:, 1]], "cosine")
         covar_dist = np.abs(
             adata.obs[col].iloc[pair_mat[:, 0]].values
             - adata.obs[col].iloc[pair_mat[:, 1]].values
         )
+        test = spearmanr(edist, covar_dist)
         results.method.append(distance_metric)
         results.metric.append("covariate_distance_correlation")
         results.name.append(col)
-        results.value.append(spearmanr(edist, covar_dist))
+        results.value.append(test.statistic)
+
+        results.method.append(distance_metric)
+        results.metric.append("covariate_distance_correlation_pval")
+        results.name.append(col)
+        results.value.append(test.pvalue)
     return results
 
 
@@ -337,15 +349,12 @@ def comparison_routine(
     result_dfs = []
     for metric_group in RCONFIG["methods"]:
         cur_config = RCONFIG.get(metric_group, {})
-        cols = cur_config.get("cols")
+        cols = cur_config.get("cols", None)
         if metric_group == "clustering":
             precomputed = pdist(adata.X, metric="cosine")
-            lr = clustering_helper(
-                precomputed_dist=precomputed, raw_results=adata.obs.copy()
-            )
+            lr = clustering_helper(adata=adata, precomputed_dist=precomputed)
             result_dfs.append(pl.DataFrame(asdict(lr)))
         elif metric_group == "neighbor_proportion":
-            cur_config = RCONFIG["neighbor_proportion"]
             nprop, dist_stats = nn_proportions(adata, columns=cols, **cur_config["kws"])
             prop_agg = (
                 nprop.drop("index")
@@ -355,21 +364,27 @@ def comparison_routine(
                     pl.lit("avg_nn_proportion").alias("metric"),
                     pl.lit(cur_config["kws"]["metric"]).alias("method"),
                 )
+                .select(["metric", "method", "value", "name"])
             )
             result_dfs.append(prop_agg)
             result_dfs.append(
                 pl.DataFrame(
                     {
                         "metric": "avg_nn_distance",
-                        "name": "-",
-                        "value": dist_stats["max"].mean(),
                         "method": "max",
+                        "value": dist_stats["max"].mean(),
+                        "name": "-",
                     }
                 )
             )
         elif metric_group == "pair_distance_distribution":
             cur_config["kws"]["rng"] = RNG
-            lr = compare_pair_distribution(adata, columns=cols, **cur_config)
+            lr = compare_pair_distribution(
+                adata,
+                columns=cols,
+                distance_metric=cur_config["distance_metric"],
+                **cur_config["kws"],
+            )
             result_dfs.append(pl.DataFrame(asdict(lr)))
         elif metric_group == "covariate_distance_correlation":
             lr = covar_dist(

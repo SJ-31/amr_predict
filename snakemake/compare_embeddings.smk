@@ -11,6 +11,11 @@ if TEST:
     ]
     config["compare_pooled"]["cluster_on"] = ["AMK_class", "GEN_class"]
     config["compare_pooled"]["continuous"] = ["AMK", "CRO", "IPM"]
+    config["compare_pooled"]["pair_distance_distribution"]["cols"] = ["AMK_class"]
+    config["compare_pooled"]["covariate_distance_correlation"]["cols"] = ["AMK", "CRO"]
+    config["compare_pooled"]["neighbor_proportion"]["cols"] = ["AMK_class"]
+    config["compare_pooled"]["pair_distance_distribution"]["kws"]["replace"] = True
+
 
 to_compare = ["sequences", "pooled"]
 
