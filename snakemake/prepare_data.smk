@@ -17,8 +17,10 @@ if TEST:
     )
     config["sample_metadata"]["file"] = f"{config["data"]["meta"]}/jia_samples.tsv"
     config["sample_metadata"]["id_col"] = "Accession"
-    config["pooling"].update({"obs_keep": ["AMK", "GEN", "IPM", "CRO"]})
-    config["pooling"]["discretize"].update({"cols": ["AMK", "GEN", "IPM", "CRO"]})
+    config["pool_embeddings"].update({"obs_keep": ["AMK", "GEN", "IPM", "CRO"]})
+    config["pool_embeddings"]["discretize"].update(
+        {"cols": ["AMK", "GEN", "IPM", "CRO"]}
+    )
 
 PREPROCESSING = config["preprocessing"]
 DATA_OUTS = {
@@ -32,7 +34,7 @@ DATA_OUTS = {
         # 3. Sequences pooled into genome-level representations
     )
 }
-pooling_methods = config["pooling"]["methods"]
+pooling_methods = config["pool_embeddings"]["methods"]
 
 
 PLOT_OUT = f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation"
@@ -99,5 +101,6 @@ rule pool_embeddings:
         plotdir=PLOT_OUT,
     output:
         get_pooled_out(True),
+        POOLED_PLOTS,
     script:
         "scripts/prepare_data.py"

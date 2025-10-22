@@ -19,7 +19,7 @@ from amr_predict.pooling import SeqPooler
 from amr_predict.preprocessing import SeqDataset, SeqEmbedder
 
 CONFIG: dict = smk.config
-RCONFIG: dict = smk.config[smk.rule]
+RCONFIG: dict = smk.config.get(smk.rule)
 
 # * Utilities
 
