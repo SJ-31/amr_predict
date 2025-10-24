@@ -59,6 +59,7 @@ class SeqPooler:
         self.key: str = key
         self.kws: dict = kws
 
+
     def _finalize_dataset(
         self,
         dataset: Dataset,
@@ -69,10 +70,8 @@ class SeqPooler:
         """Aggregate variables from dataset by sample, and combine with pooled
         embeddings
         """
-        encoded = self.encoder.transform(dataset[self.sample_key])
         mpath = mpath or self.sample_metadata
         meta: pl.DataFrame | None = read_tabular(mpath) if mpath else None
-        print(meta)
         obs_keep = obs_keep or self.obs_keep
         obs = dataset.to_polars()
         if meta is not None:
@@ -84,9 +83,9 @@ class SeqPooler:
             )
         obs = (
             obs.drop(self.embedding_key)
-            .with_columns(pl.Series(encoded).alias("encoded"))
+            .pipe(self._add_encoded)
             .group_by("encoded")
-            .agg(pl.col(self.obs_keep).first())
+            .agg(pl.col(self.obs_keep + [self.sample_key]).first())
             .sort("encoded", descending=False)
             .drop("encoded")
         )
@@ -96,10 +95,26 @@ class SeqPooler:
         ]
         return concatenate_datasets(to_concat, axis=1).with_format("torch")
 
-    def _transform_samples(self, dataset: Dataset) -> Tensor:
+    def _encode_samples(self, dataset: Dataset) -> Tensor:
         return torch.tensor(self.encoder.transform(dataset[self.sample_key][:]))
 
+    def _add_encoded(self, df: pl.DataFrame) -> pl.DataFrame:
+        encoded = self.encoder.transform(df[self.sample_key])
+        return df.with_columns(pl.Series(encoded).alias("encoded"))
 
+    def _pad_embeddings(self, dataset: Dataset) -> Tensor:
+        """
+        Pads so that every genome has the same number of embedding sequences
+        `by_sample` has shape n_samples x max_n_embeddings x embedding_size
+        """
+        embeddings: Tensor = dataset[self.embedding_key][:]
+        samples = self._encode_samples(dataset)
+        unique_samples = torch.unique(samples, sorted=True)
+        by_sample = nn.utils.rnn.pad_sequence(
+            [embeddings[samples == s, :] for s in unique_samples], batch_first=True
+        )
+        return by_sample
+        
 class StaticPooler(SeqPooler):
     """Class to pool samples' contig embeddings into a single genome-scale embedding"""
 
@@ -172,7 +187,7 @@ class StaticPooler(SeqPooler):
 
         return self._sum(
             dataset,
-            mean=False,
+            weigh=False,
             weight_fn=lambda x, y: self._weights_from_pairwise(x, y, fn, pool=pool),
         )
 
@@ -188,23 +203,15 @@ class StaticPooler(SeqPooler):
             shape of the original sequence embeddings
 
         """
-        embeddings: Tensor = dataset[self.embedding_key][:]
-        _, d_in = embeddings.shape
+        _, d_in = dataset[self.embedding_key][:].shape
         num_slices = d_in if n_out == -1 else n_out
         pooler = SWE_Pooling(
             d_in=d_in, num_slices=num_slices, num_ref_points=m, freeze_swe=True
         )
-        samples = self._transform_samples(dataset)
-        unique_samples = torch.unique(samples, sorted=True)
-        batched = nn.utils.rnn.pad_sequence(
-            [embeddings[samples == s, :] for s in unique_samples], batch_first=True
-        )
-        # Pads so that every genome has the same number of embedding sequences
-        # `batched` has shape n_samples x max_n_embeddings x embedding_size
-        return pooler(batched)
+        return pooler(self._pad_embeddings(dataset))
 
     def _sum(
-        self, dataset: Dataset, mean: bool = True, weight_fn: Callable | None = None
+        self, dataset: Dataset, weigh: bool = True, weight_fn: Callable | None = None
     ) -> Tensor:
         """Pool contig embeddings by summation, with multiple variants
 
@@ -214,11 +221,11 @@ class StaticPooler(SeqPooler):
             Function taking the whole embedding tensor and a boolean mask for the current sample
             Return a vector (of length equal to the columns of dataset)
             specifying how to weigh each embedding when summing to sample-level
-        mean : bool
-            For each sample, sum up embeddings then divide by the number of embeddings
+        weigh : bool
+            Multiply the pooled embeddings by some weight vector
 
         """
-        samples = self._transform_samples(dataset)
+        samples = self._encode_samples(dataset)
         embeddings = dataset[self.embedding_key][:]
         unique_samples = torch.unique(samples, sorted=True)
         if weight_fn is None:
@@ -230,7 +237,7 @@ class StaticPooler(SeqPooler):
                 [weight_fn(embeddings, samples == s) for s in unique_samples]
             )
         summed = torch.matmul(mask, embeddings)
-        if mean:
+        if weigh:
             summed = torch.mul(summed, mask.sum(axis=1).reshape(-1, 1))
         return summed
 
@@ -243,6 +250,7 @@ class StaticPooler(SeqPooler):
 class LearningPooler(SeqPooler, L.LightningModule):
     def __init__(
         self,
+        out_features: int,
         obs_keep: Sequence | None = None,
         method: LEARNING_POOLING_METHODS = "swe",
         model: L.LightningModule | nn.Module | None = None,
@@ -264,14 +272,20 @@ class LearningPooler(SeqPooler, L.LightningModule):
         )
         self.method: LEARNING_POOLING_METHODS = method
         if method == "swe":
+            kws["d_in"] = out_features
             self.pooler: nn.Module | L.LightningModule = SWE_Pooling(**kws)
             if not model:
                 raise ValueError(
                     "Prediction model must be given if using `swe` pooling"
                 )
         elif method == "autoencoder":
+            kws["out_features"] = out_features
+            self.pooler = AePooling(**kws)
             raise NotImplementedError()
+        self.embedding_size: int
+        self.out_features: int = out_features
         self.model: MultiModule | None = model
+
 
     def format_for_training(self, dataset: Dataset, obs_types: dict) -> Dataset:
         """
@@ -279,48 +293,63 @@ class LearningPooler(SeqPooler, L.LightningModule):
         chosen pooling method
         Must be used before any training
         """
-        embeddings = dataset[self.embedding_key][:]
-        samples = pl.Series(dataset[self.sample_key][:])
-        unique_samples = samples.unique().sort()
-        batched = nn.utils.rnn.pad_sequence(
-            [embeddings[samples == s, :] for s in unique_samples], batch_first=True
-        )
+        self.encoder.fit(dataset[self.sample_key][:])
+        padded = self._pad_embeddings(dataset)
+        self.embedding_size = padded.shape[1]
+        if self.sample_key not in obs_types:
+            obs_types[self.sample_key] = "string"
         grouped = (
             dataset.select_columns(list(obs_types.keys()))
             .to_polars()
+            .pipe(self._add_encoded)
             .group_by(self.sample_key)
             .agg(pl.all().first())
-            .sort(self.sample_key)
+            .sort("encoded", descending = False)
+            .drop("encoded")
             .to_dict()
         )
         features = Features(
             dict(
-                x=Array2D(shape=(batched[0, :, :].shape), dtype="float32"),
+                x=Array2D(shape=(padded[0, :, :].shape), dtype="float32"),
                 **{o: Value(v) for o, v in obs_types.items()},
             )
         )
         batched_ds = Dataset.from_dict(
-            dict(x=batched, **grouped), features=features
+            dict(x=padded, **grouped), features=features
         ).with_format("torch")
         return batched_ds
 
+    def _pool(self, batch, with_tasks: bool = False) -> dict:
+        embeddings: Tensor = batch[self.embedding_key][:]
+        # Tensor of shape (batch, n_contigs, embedding_size)
+        # After dataset preparation the number of contigs will be equalized across the
+        # dataset by padding
+        pooled: Tensor = self.pooler(embeddings)
+        if with_tasks and self.model is not None:
+            to_send = {self.model.x_key: pooled}
+            to_send.update({t: batch[t] for t in self.model.task_names})
+        return to_send
+
     @override
     def training_step(self, batch, batch_idx):
-        embeddings: Tensor = batch[self.embedding_key][:]
-        samples = self._transform_samples(batch)
-        pooled: Tensor = self.pooler(batch)
         if self.method == "swe":
-            return self.model.training_step(pooled, batch_idx)
+            return self.model.training_step(self._pool(batch, True), batch_idx)
+        elif self.method == "autoencoder":
+            encoded = self._pool(batch, False)
+            as_before = torch.nn.functional.pad(
+                encoded.unsqueeze(1), (0, 0, 0, self.embedding_size), value=1
+            )
+            decoded = self.pooler.decoder(as_before)
+            return nn.functional.mse_loss(decoded, batch[self.embedding_key][:])
 
     @override
     def predict_step(self, batch, batch_idx) -> Any:
-        pooled: Tensor = self.pooler(batch)
         if self.method == "swe":
-            return self.model.training_step(pooled, batch_idx)
-        return super().predict_step()
+            return self.model.predict_step(self._pool(batch, False), batch_idx)
 
 
-# * SWE
+# * Models
+# ** SWE
 """
 @article{naderializadeh2025_plm_swe,
   title={Aggregating residue-level protein language model embeddings with optimal transport},
