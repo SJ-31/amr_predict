@@ -690,3 +690,36 @@ class SWE_Pooling(nn.Module):
             X:  B x N x dn tensor, containing a batch of B sets, each containing N samples in a dn-dimensional space
         """
         return self.theta(X)
+
+
+# ** Basic autoencoder
+
+
+class AePooling(nn.Module):
+    def __init__(
+        self,
+        out_features: int | None = None,
+        encoder_depth: int = 2,
+        decoder_depth: int = 2,
+        activation: nn.Module = nn.ReLU,
+    ) -> None:
+        super().__init__()
+        # self.pooling_weights: nn.Parameter = nn.Parameter(torch.)
+        # TODO: probably want to review what's good here
+        self.encoder: nn.ModuleList = nn.ModuleList()
+        self.decoder: nn.ModuleList = nn.ModuleList()
+        for _ in range(encoder_depth):
+            self.encoder.append(nn.LazyLinear(out_features=out_features))
+            self.encoder.append(activation())
+
+        for _ in range(decoder_depth):
+            self.decoder.append(nn.LazyLinear(out_features=out_features))
+            self.decoder.append(activation())
+
+    @override
+    def forward(self, batch: Tensor) -> Tensor:
+        # Batched has shape (batch, n_seqs, embedding_dim)
+        encoded: Tensor = self.encoder(batch)
+        return encoded.mean(axis=1)
+        # Or should it be
+        # return torch.einsum("abc,bc->ac", batch, self.pooling_weights)
