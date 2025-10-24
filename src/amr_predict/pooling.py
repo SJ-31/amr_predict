@@ -1,11 +1,13 @@
 #!/usr/bin/env ipython
+import contextlib
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Literal, TypeAlias
 
 import polars as pl
 import torch
-from amr_predict.utils import load_as
+import torch.nn as nn
+from amr_predict.utils import load_as, read_tabular
 from datasets import concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from sklearn.preprocessing import LabelEncoder
@@ -16,7 +18,7 @@ from torchmetrics.functional.pairwise import (
     pairwise_linear_similarity,
 )
 
-POOLING_METHODS: TypeAlias = Literal["sum", "mean", "similarity"]
+POOLING_METHODS: TypeAlias = Literal["sum", "mean", "similarity", "swe"]
 
 
 class SeqPooler:
@@ -28,6 +30,7 @@ class SeqPooler:
         method: POOLING_METHODS = "sum",
         embedding_key: str = "embedding",
         sample_key: str = "sample",
+        sample_metadata: Path | str | None = None,
         key: str = "x",
         **kws,
     ) -> None:
@@ -45,6 +48,11 @@ class SeqPooler:
         self.embedding_key: str = embedding_key
         self.obs_keep: list = list(obs_keep) + [sample_key]
         self.sample_key: str = sample_key
+        self.sample_metadata: Path | None = (
+            Path(sample_metadata)
+            if sample_metadata and isinstance(sample_metadata, str)
+            else sample_metadata
+        )
         self.method: POOLING_METHODS = method
         self.key: str = key
         self.kws: dict = kws
@@ -57,9 +65,18 @@ class SeqPooler:
         embeddings
         """
         encoded = self.encoder.transform(dataset[self.sample_key])
+        meta: pl.DataFrame | None = (
+            read_tabular(self.sample_metadata) if self.sample_metadata else None
+        )
+        obs = dataset.to_polars()
+        if meta is not None:
+            obs = obs.join(
+                meta.select([self.sample_key] + self.obs_keep),
+                on=self.sample_key,
+                how="left",
+            )
         obs = (
-            dataset.to_polars()
-            .drop(self.embedding_key)
+            obs.drop(self.embedding_key)
             .with_columns(pl.Series(encoded).alias("encoded"))
             .group_by("encoded")
             .agg(pl.col(self.obs_keep).first())
