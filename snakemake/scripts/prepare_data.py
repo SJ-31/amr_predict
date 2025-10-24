@@ -282,6 +282,7 @@ elif smk.rule == "pool_embeddings":
                 sp: SeqPooler = SeqPooler(
                     method=method,
                     sample_metadata=smk.config["sample_metadata"]["file"],
+                    sample_metadata_key=smk.config["sample_metadata"]["id_col"],
                     **RCONFIG,
                 )
                 pooled = sp(inpath)
