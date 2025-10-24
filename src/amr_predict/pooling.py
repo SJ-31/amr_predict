@@ -96,6 +96,35 @@ class SeqPooler:
         ]
         return concatenate_datasets(to_concat, axis=1).with_format("torch")
 
+    def _transform_samples(self, dataset: Dataset) -> Tensor:
+        return torch.tensor(self.encoder.transform(dataset[self.sample_key][:]))
+
+
+class StaticPooler(SeqPooler):
+    """Class to pool samples' contig embeddings into a single genome-scale embedding"""
+
+    def __init__(
+        self,
+        obs_keep: Sequence | None = None,
+        embedding_key: str = "embedding",
+        method: STATIC_POOLING_METHODS = "mean",
+        sample_key: str = "sample",
+        sample_metadata: Path | str | None = None,
+        sample_metadata_key: str | None = None,
+        key: str = "x",
+        **kws,
+    ) -> None:
+        super().__init__(
+            obs_keep,
+            embedding_key,
+            sample_key,
+            sample_metadata,
+            sample_metadata_key,
+            key,
+            **kws,
+        )
+        self.method: STATIC_POOLING_METHODS = method
+
     def __call__(self, dataset: Dataset | Path | str) -> Dataset:
         d: Dataset = load_as(dataset) if not isinstance(dataset, Dataset) else dataset
         self.encoder.fit(d[self.sample_key])
