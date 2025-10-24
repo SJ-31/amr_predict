@@ -288,7 +288,7 @@ class MultiModule(BaseNN):
             y = None
         x = self.maybe_scale(x)
         output = self(x)
-        loss = self.criterion(y_pred=output, y_true=y, context="train")
+        loss = self.criterion(y_pred=output, y_true=y, batch=batch, context="train")
         self.log("train_loss", loss)
         if self.conf.record:
             self._score_classification(output=output, y_true=y, prefix="train")
@@ -356,7 +356,14 @@ class MultiModule(BaseNN):
     def reset_parameters(self):
         raise NotImplementedError()
 
-    def criterion(self, y_pred, y_true, context: str | None = None, **kwargs):
+    def criterion(
+        self,
+        y_pred,
+        y_true,
+        context: str | None = None,
+        batch: dict | None = None,
+        **kwargs,
+    ):
         """criterion.
 
         Parameters

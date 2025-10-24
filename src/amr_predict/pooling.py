@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from amr_predict.evaluation import MODEL_CLASSES
 from amr_predict.models import MultiModule
-from amr_predict.utils import load_as, read_tabular
+from amr_predict.utils import ModuleConfig, load_as, read_tabular
 from datasets import Array2D, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from sklearn.preprocessing import LabelEncoder
@@ -286,7 +286,6 @@ class LearningPooler(SeqPooler, L.LightningModule):
         elif method == "autoencoder":
             kws["out_features"] = out_features
             self.pooler = AePooling(**kws)
-            raise NotImplementedError()
         self.embedding_size: int
         self.out_features: int = out_features
         self.model: MultiModule | None = model
@@ -339,12 +338,7 @@ class LearningPooler(SeqPooler, L.LightningModule):
         if self.method == "swe":
             return self.model.training_step(self._pool(batch, True), batch_idx)
         elif self.method == "autoencoder":
-            encoded = self._pool(batch, False)
-            as_before = torch.nn.functional.pad(
-                encoded.unsqueeze(1), (0, 0, 0, self.embedding_size), value=1
-            )
-            decoded = self.pooler.decoder(as_before)
-            return nn.functional.mse_loss(decoded, batch[self.embedding_key][:])
+            return self.model.training_step(batch, batch_idx)
 
     @override
     def predict_step(self, batch, batch_idx) -> Any:
@@ -695,15 +689,18 @@ class SWE_Pooling(nn.Module):
 # ** Basic autoencoder
 
 
-class AePooling(nn.Module):
+class AePooling(MultiModule):
     def __init__(
         self,
         out_features: int | None = None,
+        x_key: str = "x",
+        y_key: str = "original",
         encoder_depth: int = 2,
         decoder_depth: int = 2,
         activation: nn.Module = nn.ReLU,
+        conf: ModuleConfig | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(in_features=0, x_key=x_key, conf=conf, task_names=(y_key,))
         # self.pooling_weights: nn.Parameter = nn.Parameter(torch.)
         # TODO: probably want to review what's good here
         self.encoder: nn.ModuleList = nn.ModuleList()
@@ -717,9 +714,23 @@ class AePooling(nn.Module):
             self.decoder.append(activation())
 
     @override
-    def forward(self, batch: Tensor) -> Tensor:
+    def forward(self, X: Tensor) -> Tensor:
         # Batched has shape (batch, n_seqs, embedding_dim)
-        encoded: Tensor = self.encoder(batch)
+        encoded: Tensor = self.encoder(X)
         return encoded.mean(axis=1)
         # Or should it be
         # return torch.einsum("abc,bc->ac", batch, self.pooling_weights)
+
+    def criterion(
+        self,
+        y_pred,
+        y_true,
+        context: str | None = None,
+        batch: dict | None = None,
+        **kwargs,
+    ):
+        as_before = torch.nn.functional.pad(
+            y_pred.unsqueeze(1), (0, 0, 0, self.embedding_size), value=1
+        )
+        decoded = self.pooler.decoder(as_before)
+        return nn.functional.mse_loss(input=decoded, target=batch[self.x_key])
