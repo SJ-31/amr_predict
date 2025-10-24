@@ -3,6 +3,9 @@ configfile: "env.yaml"
 
 from datetime import date
 import pandas as pd
+import os
+
+os.environ["HF_HOME"] = config["huggingface"]
 
 TODAY = date.today().isoformat()
 DATE = config.get("date", "no_date")
