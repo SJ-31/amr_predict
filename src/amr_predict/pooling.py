@@ -21,7 +21,9 @@ from torchmetrics.functional.pairwise import (
     pairwise_linear_similarity,
 )
 
-STATIC_POOLING_METHODS: TypeAlias = Literal["sum", "mean", "similarity", "swe"]
+STATIC_POOLING_METHODS: TypeAlias = Literal[
+    "sum", "mean", "similarity", "swe", "concat"
+]
 LEARNING_POOLING_METHODS: TypeAlias = Literal["autoencoder", "swe"]
 
 
@@ -58,7 +60,6 @@ class SeqPooler:
         )
         self.key: str = key
         self.kws: dict = kws
-
 
     def _finalize_dataset(
         self,
@@ -114,7 +115,8 @@ class SeqPooler:
             [embeddings[samples == s, :] for s in unique_samples], batch_first=True
         )
         return by_sample
-        
+
+
 class StaticPooler(SeqPooler):
     """Class to pool samples' contig embeddings into a single genome-scale embedding"""
 
@@ -142,17 +144,20 @@ class StaticPooler(SeqPooler):
 
     def __call__(self, dataset: Dataset | Path | str) -> Dataset:
         d: Dataset = load_as(dataset) if not isinstance(dataset, Dataset) else dataset
-        self.encoder.fit(d[self.sample_key])
+        self.encoder.fit(d[self.sample_key][:])
         # Every method returns a tensor of the embeddings aggregated to sample level,
         # sorted in ascending order of the encoded sample names
         if self.method == "sum":
-            x: Tensor = self._sum(d, mean=False)
+            x: Tensor = self._sum(d, weigh=False)
         elif self.method == "mean":
-            x = self._sum(d, mean=True)
+            x = self._sum(d, weigh=True)
         elif self.method == "similarity":
             x = self._similarity_weighted(d, **self.kws)
         elif self.method == "swe":
             x = self._swe(d, **self.kws)
+        elif self.method == "concat":
+            padded = self._pad_embeddings(d)
+            x = padded.reshape(padded.shape[0], -1)
         return self._finalize_dataset(d, x)
 
     def _weights_from_pairwise(
@@ -286,7 +291,6 @@ class LearningPooler(SeqPooler, L.LightningModule):
         self.out_features: int = out_features
         self.model: MultiModule | None = model
 
-
     def format_for_training(self, dataset: Dataset, obs_types: dict) -> Dataset:
         """
         Modify the shapes of embeddings and observations to be compatible with the
@@ -304,7 +308,7 @@ class LearningPooler(SeqPooler, L.LightningModule):
             .pipe(self._add_encoded)
             .group_by(self.sample_key)
             .agg(pl.all().first())
-            .sort("encoded", descending = False)
+            .sort("encoded", descending=False)
             .drop("encoded")
             .to_dict()
         )
