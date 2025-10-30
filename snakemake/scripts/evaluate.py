@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import os
 from pathlib import Path
 
 import amr_predict.evaluation as ae
@@ -22,6 +23,7 @@ except ImportError:
 
 RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
+os.environ["HF_HOME"] = smk.config["huggingface"]
 
 RCONFIG["validation_kws"]["seed"] = RNG
 

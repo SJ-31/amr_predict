@@ -15,7 +15,7 @@ from snakemake.script import snakemake as smk
 
 os.environ["HF_HOME"] = smk.config["huggingface"]
 
-from amr_predict.pooling import StaticPooler
+from amr_predict.pooling import SeqPooler
 from amr_predict.preprocessing import SeqDataset, SeqEmbedder
 
 CONFIG: dict = smk.config
@@ -248,6 +248,7 @@ elif smk.rule == "make_text_datasets":
             anno = None
         SeqDataset.save_from_fastas(
             fastas=CONFIG["genomes"],
+            metadata=smk.config["sample_metadata"]["file"],
             savepath=savepath,
             id_col=smk.config["sample_metadata"]["id_col"],
             annotations=anno,
@@ -279,12 +280,7 @@ elif smk.rule == "pool_embeddings":
             savepath = Path(smk.params["outdir"]) / f"{inpath.stem}-{method}"
             figpath = Path(smk.params["plotdir"]) / f"{inpath.stem}-{method}.png"
             if not savepath.exists():
-                sp: StaticPooler = StaticPooler(
-                    method=method,
-                    sample_metadata=smk.config["sample_metadata"]["file"],
-                    sample_metadata_key=smk.config["sample_metadata"]["id_col"],
-                    **RCONFIG,
-                )
+                sp: SeqPooler = SeqPooler(method=method, **RCONFIG)
                 pooled = sp(inpath)
                 pooled = discretize_resistance(pooled, **discretization)
                 pooled.save_to_disk(dataset_path=savepath)

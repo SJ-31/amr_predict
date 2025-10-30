@@ -1,13 +1,16 @@
 # configfile overrides for the Jia dataset
+genomes: "../data/remote/genomes/jia"
+
 pool_embeddings:
-  obs_keep: ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC"]
+  methods: ["mean", "sum", "similarity"] # [2025-10-27 Mon] swe caused bus error
+  obs_keep:
+    ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC", "CST", "MIN"]
   key: "x"
   discretize:
-    cols: ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC"]
+    cols: ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC", "MIN"]
 
 sample_metadata:
-  file: "../data/meta/jia_samples.tsv" # TODO: add in combined metadata file from ncbi's ast browser and
-  # bvbrc. Mainly want the mapping between samples and ast scorse
+  file: "../data/meta/jia_samples_reformatted.tsv"
   id_col: "Accession"
 seq_metadata:
   hamronization: "../data/remote/output/jia_funcscan_2025-09-22/reports/hamronization_summarize/hamronization_combined_report.tsv" # hamronization summary tsv
@@ -16,25 +19,26 @@ seq_metadata:
   ampcombi: "../data/remote/output/jia_funcscan_2025-09-22/reports/ampcombi2/Ampcombi_summary_cluster.tsv" # Ampcombi summary cluster tsv
 
 compare_embeddings:
-  bootstrap_rounds: 3 # bootstrap with subsampling to make computations faster and also so that there aren't too many
-  n_samples_per: 4 # number of samples randomly chosen in bootstrap rounds
+  bootstrap_rounds: 2 # bootstrap with subsampling to make computations faster and also so that there aren't too many
+  n_samples_per: 10 # number of samples randomly chosen in bootstrap rounds
   # [2025-10-01 Wed] Would add more, but 20 samples led to 34,000 sequences
   pair_distance_distribution:
-    cols: [""]
+    cols: ["sample", "hamr_gene_symbol"]
     distance_metric: cosine
     kws:
-      n_pairs_per: 20
+      n_pairs_per: 10
   neighbor_proportion:
-    cols: ["sample"]
+    cols: ["sample", "hamr_gene_symbol", "bakta_product"]
     kws:
       metric: "cosine"
       n_neighbors: 5
   cluster_on:
     - "sample"
-    - "bakta_gene"
+    - "hamr_gene_symbol"
+    - "bakta_product"
     - "hamr_drug_class"
 
-compare_pooled:
+compare_pooled: # [2025-10-30 Thu] will choose to compare classes with the most even distribution, top two are MIN and GEN
   bootstrap_rounds: 1
   n_samples_per: null
   methods:
@@ -43,19 +47,20 @@ compare_pooled:
     - pair_distance_distribution
     - clustering
   pair_distance_distribution:
-    cols: [""]
+    cols: ["MIN_class", "GEN_class"]
     distance_metric: cosine
     kws:
       n_pairs_per: 20
   covariate_distance_correlation:
-    cols: ["AMK"]
+    cols: ["TGC", "CAZ"]
     distance_metric: "cosine"
   neighbor_proportion:
-    cols: ["species"]
+    cols: ["MIN_class", "GEN_class"]
     kws:
       metric: "cosine"
       n_neighbors: 5
   cluster_on:
-    - "AMK_class"
+    - "MIN_class"
+    - "GEN_class"
   continuous:
     - "AMK"
