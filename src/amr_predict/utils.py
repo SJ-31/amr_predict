@@ -171,7 +171,11 @@ def read_tabular(file: Path | str, infer_schema_length=None, **kwargs) -> pl.Dat
     file = file if isinstance(file, Path) else Path(file)
     sep = "\t" if file.suffix == ".tsv" else ","
     df: pl.DataFrame | None = pl.read_csv(
-        file, separator=sep, infer_schema_length=infer_schema_length, **kwargs
+        file,
+        separator=sep,
+        infer_schema_length=infer_schema_length,
+        null_values="NA",
+        **kwargs,
     )
     return df
 

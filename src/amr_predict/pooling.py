@@ -1,12 +1,17 @@
 #!/usr/bin/env ipython
+import contextlib
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, override
 
+import lightning as L
 import polars as pl
 import torch
-from amr_predict.utils import load_as
-from datasets import concatenate_datasets
+import torch.nn as nn
+from amr_predict.evaluation import MODEL_CLASSES
+from amr_predict.models import MultiModule
+from amr_predict.utils import ModuleConfig, load_as, read_tabular
+from datasets import Array2D, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
@@ -16,18 +21,20 @@ from torchmetrics.functional.pairwise import (
     pairwise_linear_similarity,
 )
 
-POOLING_METHODS: TypeAlias = Literal["sum", "mean", "similarity"]
+STATIC_POOLING_METHODS: TypeAlias = Literal[
+    "sum", "mean", "similarity", "swe", "concat"
+]
+LEARNING_POOLING_METHODS: TypeAlias = Literal["autoencoder", "swe"]
 
 
 class SeqPooler:
-    """Class to pool samples' contig embeddings into a single genome-scale embedding"""
-
     def __init__(
         self,
         obs_keep: Sequence | None = None,
-        method: POOLING_METHODS = "sum",
         embedding_key: str = "embedding",
         sample_key: str = "sample",
+        sample_metadata: Path | str | None = None,
+        sample_metadata_key: str | None = None,
         key: str = "x",
         **kws,
     ) -> None:
@@ -43,26 +50,43 @@ class SeqPooler:
         """
         self.encoder: LabelEncoder = LabelEncoder()
         self.embedding_key: str = embedding_key
-        self.obs_keep: list = list(obs_keep) + [sample_key]
+        self.obs_keep: list = list(obs_keep)
         self.sample_key: str = sample_key
-        self.method: POOLING_METHODS = method
+        self.sample_metadata_key: str = sample_metadata_key or sample_key
+        self.sample_metadata: Path | None = (
+            Path(sample_metadata)
+            if sample_metadata and isinstance(sample_metadata, str)
+            else sample_metadata
+        )
         self.key: str = key
         self.kws: dict = kws
 
-    def _transform_samples(self, dataset: Dataset) -> Tensor:
-        return torch.tensor(self.encoder.transform(dataset[self.sample_key][:]))
-
-    def _finalize_dataset(self, dataset: Dataset, aggregated: Tensor) -> Dataset:
+    def _finalize_dataset(
+        self,
+        dataset: Dataset,
+        aggregated: Tensor,
+        mpath: Path | None = None,
+        obs_keep: list | None = None,
+    ) -> Dataset:
         """Aggregate variables from dataset by sample, and combine with pooled
         embeddings
         """
-        encoded = self.encoder.transform(dataset[self.sample_key])
+        mpath = mpath or self.sample_metadata
+        meta: pl.DataFrame | None = read_tabular(mpath) if mpath else None
+        obs_keep = obs_keep or self.obs_keep
+        obs = dataset.to_polars()
+        if meta is not None:
+            obs = obs.join(
+                meta.select([self.sample_metadata_key] + obs_keep),
+                left_on=self.sample_key,
+                right_on=self.sample_metadata_key,
+                how="left",
+            )
         obs = (
-            dataset.to_polars()
-            .drop(self.embedding_key)
-            .with_columns(pl.Series(encoded).alias("encoded"))
+            obs.drop(self.embedding_key)
+            .pipe(self._add_encoded)
             .group_by("encoded")
-            .agg(pl.col(self.obs_keep).first())
+            .agg(pl.col(self.obs_keep + [self.sample_key]).first())
             .sort("encoded", descending=False)
             .drop("encoded")
         )
