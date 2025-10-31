@@ -7,7 +7,7 @@ OUTDIRS = {
     "cv": f"{OUT}/{DATE}/evaluation/cv",
     "holdout": f"{OUT}/{DATE}/evaluation/holdout",
 }
-DEVICE = "cuda"
+DEVICE = config.get("device", "cuda")
 DATASETS = list(Path(f"{REMOTE}/{IN_DATE}/datasets/pooled").iterdir())
 
 if TEST:

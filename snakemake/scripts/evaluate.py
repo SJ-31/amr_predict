@@ -53,8 +53,8 @@ def holdout_helper(
 
 if smk.rule in {"cross_validate", "holdout"}:
     x_key, sample_key = (
-        smk.config["pooling"]["key"],
-        smk.config["pooling"]["sample_key"],
+        smk.config["pool_embeddings"]["key"],
+        smk.config["pool_embeddings"]["sample_key"],
     )
     for dpath in smk.params["datasets"]:
         dname = Path(dpath).stem
