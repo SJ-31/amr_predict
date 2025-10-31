@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torchmetrics.functional.classification as tmet
 from amr_predict.utils import iter_cols, vecdist
+from scipy.stats import ecdf
 from sklearn.neighbors import NearestNeighbors
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
@@ -367,26 +368,68 @@ def nn_proportions(
             [index_df, pl.DataFrame(impurity_tmp)], how="horizontal"
         )
     if include_null:
+        # Simple permutation testing
         gen = np.random.default_rng(rng)
         rand_pairs = gen.choice(
             list(range(adata.shape[0])), (null_bootstrap_rounds, 2), replace=True
         )
         col_df: pd.DataFrame = adata.obs.loc[:, columns]
-        nulls = {}
-        nulls["null_dist"] = vecdist(
+        nulls, ecdfs = {}, {}
+        observed_dist = result["nn_dist"]["mean"].mean()
+        null_dist = vecdist(
             adata.X[rand_pairs[:, 0], :],
             adata.X[rand_pairs[:, 1], :],
             metric=kws.get("metric", "cosine"),
-        ).mean()
+        )
+        dist_ecdf = ecdf(null_dist)
+        nulls["null_dist"] = pl.DataFrame(
+            {
+                "probability_under_null": [
+                    float(dist_ecdf.cdf.evaluate(observed_dist))
+                ],
+                "observed_avg": [observed_dist],
+                "null_avg": [null_dist.mean()],
+            }
+        )
         for n in ["prop", "impurity"]:
             nulls[f"null_{n}"] = {c: [] for c in columns}
+            ecdfs[f"null_{n}"] = {
+                "column": [],
+                "probability_under_null": [],
+                "observed_avg": [],
+            }
         for _ in range(null_bootstrap_rounds):
             cur = col_df.sample(n=n_neighbors, random_state=rng)
             for col in columns:
                 nulls["null_prop"][col].append((cur[col] == cur[col].iloc[0]).sum())
                 if include_impurity:
                     nulls["null_impurity"][col].append(gini_impurity(cur[col]))
-        nulls["null_prop"] = (pd.DataFrame(nulls["null_prop"]) / n_neighbors).mean()
-        nulls["null_impurity"] = pd.DataFrame(nulls["null_impurity"]).mean()
+        for col in columns:
+            for val in ("prop", "impurity"):
+                if not include_impurity and val == "impurity":
+                    continue
+                prop_ecdf = ecdf(nulls[f"null_{val}"][col])
+                observed_avg = result[f"nn_{val}"][col].mean()
+                proba = prop_ecdf.cdf.evaluate(observed_avg)
+                proba = 1 - proba if val == "prop" else proba
+                # Right-tailed test for proportion i.e. probability of observing
+                #   proportion p > `observed_prop` under the null, as the higher the proportion the better
+                # Left-tailed for impurity
+                ecdfs[f"null_{val}"]["column"].append(col)
+                ecdfs[f"null_{val}"]["probability_under_null"].append(float(proba))
+                ecdfs[f"null_{val}"]["observed_avg"].append(observed_avg)
+        nulls["null_prop"] = (
+            (pl.DataFrame(nulls["null_prop"]) / n_neighbors)
+            .mean()
+            .unpivot(value_name="null_avg", variable_name="column")
+            .join(pl.DataFrame(ecdfs["null_prop"]), on="column")
+        )
+        if include_impurity:
+            nulls["null_impurity"] = (
+                pl.DataFrame(nulls["null_impurity"])
+                .mean()
+                .unpivot(value_name="null_avg", variable_name="column")
+                .join(pl.DataFrame(ecdfs["null_impurity"]), on="column")
+            )
         result.update(nulls)
     return result
