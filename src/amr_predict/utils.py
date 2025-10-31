@@ -53,6 +53,8 @@ def data_spec(
     """
     if isinstance(X, Dataset) and x_key is None:
         raise ValueError("x_key must be provided if given a dataset")
+    if isinstance(X, Dataset) and y is not None and isinstance(y[0], str):
+        return X[x_key][:].shape[1], tuple([len(np.unique(X[cls][:])) for cls in y])
     if isinstance(X, Dataset):
         X = X[x_key][:]
     if isinstance(y, pl.DataFrame):
