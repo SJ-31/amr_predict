@@ -9,6 +9,10 @@ pool_embeddings:
   discretize:
     cols: ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC", "MIN"]
 
+tasks:
+  classification: ["GEN_class", "MIN_class"]
+  regression: ["MIN", "GEN"]
+
 sample_metadata:
   file: "../data/meta/jia_samples_reformatted.tsv"
   id_col: "Accession"
@@ -26,7 +30,8 @@ compare_embeddings:
     cols: ["sample", "hamr_gene_symbol"]
     distance_metric: cosine
     kws:
-      n_pairs_per: 10
+      n_pairs_per: 20
+      replace: True
   neighbor_proportion:
     cols: ["sample", "hamr_gene_symbol", "bakta_product"]
     kws:
@@ -64,3 +69,16 @@ compare_pooled: # [2025-10-30 Thu] will choose to compare classes with the most 
     - "GEN_class"
   continuous:
     - "AMK"
+
+cross_validate:
+  models:
+    - baseline
+    # - TODO: add in a base mlp here
+  validation_kws:
+    test_size: 0.2
+  k_fold:
+    n_repeats: 2
+    n_splits: 5
+
+holdout:
+  splits: null # [2025-10-31 Fri] nothing good to split on with just the jia dataset
