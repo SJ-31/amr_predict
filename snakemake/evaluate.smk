@@ -64,10 +64,18 @@ if TEST:
     del RESULTS["holdout"]["holdout_c"]
 
 
-rule all:
-    input:
-        **RESULTS["cv"],
-        **RESULTS["holdout"],
+if not config["holdout"]["splits"]:
+
+    rule all:
+        input:
+            **RESULTS["cv"],
+
+else:
+
+    rule all:
+        input:
+            **RESULTS["cv"],
+            **RESULTS["holdout"],
 
 
 rule cross_validate:
