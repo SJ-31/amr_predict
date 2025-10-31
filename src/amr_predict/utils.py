@@ -16,7 +16,7 @@ from Bio.SeqRecord import SeqRecord
 from datasets import DatasetDict, Value
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
-from pandas import isna
+from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader
 
@@ -25,9 +25,27 @@ from torch.utils.data import DataLoader
 TASK_TYPES: TypeAlias = Literal["classification", "regression"]
 
 
+def encode_strs(
+    data: Dataset | ad.AnnData, task_names: tuple
+) -> tuple[Dataset | ad.AnnData, dict[str, LabelEncoder]]:
+    encoders = {}
+    for task in task_names:
+        encoder = LabelEncoder()
+        if isinstance(data, Dataset):
+            task_vec = data[task][:]
+            data = data.remove_columns(task).add_column(
+                task, encoder.fit_transform(task_vec)
+            )
+        else:
+            task_vec = data.obs[task]
+            data.obs.loc[:, task] = encoder.fit_transform(task_vec)
+        encoders[task] = encoder
+    return data, encoders
+
+
 def data_spec(
     X: torch.Tensor | np.ndarray | Dataset,
-    y: torch.Tensor | np.ndarray | None | pl.DataFrame = None,
+    y: torch.Tensor | np.ndarray | None | pl.DataFrame | Sequence = None,
     x_key: str | None = None,
 ) -> tuple[int, tuple[int, ...]]:
     """Return a tuple of (n_features, n_classes) for the given dataset
