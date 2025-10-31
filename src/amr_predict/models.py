@@ -44,6 +44,7 @@ class Baseline:
         self.task_names: Sequence = task_names
         self.models: list = [model(**kws) for _ in range(conf.n_tasks)]
         self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
+        self.task_type: TASK_TYPES = self.conf.task_type
         self.device: torch.device = (
             device if isinstance(device, torch.device) else torch.device(device)
         )
@@ -56,7 +57,7 @@ class Baseline:
         for model, y in zip(self.models, iter_cols(y)):
             model.fit(X, y)
 
-    def _predict_helper(self, batch, proba: bool = False) -> Tensor:
+    def _predict_helper(self, batch, proba: bool = False) -> Tensor | tuple:
         try:
             x, _ = batch
         except ValueError:
@@ -72,7 +73,13 @@ class Baseline:
             predictions = tuple(m.predict_proba(x) for m in self.models)
         else:
             predictions = tuple(m.predict(x) for m in self.models)
-        return torch.tensor(np.column_stack(predictions), device=self.device)
+        if self.task_type != "classification":
+            predictions = torch.tensor(np.column_stack(predictions), device=self.device)
+        else:
+            predictions = tuple(
+                torch.tensor(p, device=self.device) for p in predictions
+            )
+        return predictions
 
     def predict_step(self, batch):
         return self._predict_helper(batch, False)
