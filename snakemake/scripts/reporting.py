@@ -13,6 +13,7 @@ import pandas as pd
 import plotnine as gg
 import polars as pl
 import scanpy as sc
+from amr_predict.metrics import nn_proportions
 from amr_predict.plotting import plot_adata
 from amr_predict.utils import load_as, vecdist
 from fastcluster import linkage, pdist
@@ -27,7 +28,6 @@ from sklearn.metrics import (
     homogeneity_score,
     silhouette_score,
 )
-from sklearn.neighbors import NearestNeighbors
 
 try:
     from snakemake.script import snakemake as smk
@@ -44,6 +44,7 @@ class LongResults:
     method: list[str] = field(default_factory=lambda: [])
     value: list[float] = field(default_factory=lambda: [])
     name: list[float] = field(default_factory=lambda: [])
+    comment: list[str] = field(default_factory=lambda: [])
 
 
 os.environ["HF_HOME"] = smk.config["huggingface"]
@@ -179,77 +180,6 @@ def clustering_helper(adata: ad.AnnData, precomputed_dist) -> LongResults:
         # results["name"].append(y)
 
     return results
-
-
-def nn_proportions(
-    adata: ad.AnnData, columns: Sequence, **kws
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """For each sample, compute the proportion of nearest neighbors in the dataset that
-    have the same values in `columns`
-
-    Parameters
-    ----------
-    columns : Sequence
-        columns of `adata.obs` to calculate proportion on
-    kws : kwargs
-        keyword arguments passed to sklearn.neighbors.NearestNeighbors
-
-    Returns
-    -------
-    tuple of two dataframes
-        The first dataframe is of shape (n_samples, len(columns)). Each column is the
-        proportion of the sample's nearest neighbors that were the same under that
-        column name
-
-        The second dataframe contains summary statistics for neighbor distances for each
-        sample
-    """
-    nclass = NearestNeighbors(**kws)
-    nclass.fit(adata.X)
-    distances, neighbors = nclass.kneighbors()
-    df = adata.obs
-    n_neighbors = neighbors.shape[1]
-    tmp = {}
-    for col in columns:
-        var_mat = np.hstack(
-            [
-                df[col].values.reshape(-1, 1),
-                np.vstack([df[col].iloc[n] for n in neighbors]),
-            ]
-        )
-        tmp[col] = np.apply_along_axis(
-            lambda x: (x[0] == x[1:]).sum() / n_neighbors, axis=1, arr=var_mat
-        )
-    dist_df = pl.DataFrame(distances)
-    hcols = ("max", "mean", "min")
-    exprs = [
-        fn(pl.all()).alias(name)
-        for name, fn in zip(
-            hcols,
-            (pl.max_horizontal, pl.mean_horizontal, pl.min_horizontal),
-        )
-    ]
-    from_horizontal = dist_df.with_columns(*exprs).select(hcols)
-    transposed = dist_df.transpose()
-    from_transposed = pl.concat(
-        [
-            fn(transposed).transpose().rename({"column_0": name})
-            for fn, name in zip(
-                [pl.DataFrame.std, pl.DataFrame.var, pl.DataFrame.median],
-                ["std", "var", "median"],
-            )
-        ],
-        how="horizontal",
-    )
-    index_df = pl.DataFrame(adata.obs.index.values, schema=["index"])
-    dfs = [
-        pl.concat([index_df, pl.DataFrame(tmp)], how="horizontal"),
-        pl.concat(
-            [index_df, pl.concat([from_horizontal, from_transposed], how="horizontal")],
-            how="horizontal",
-        ),
-    ]
-    return dfs[0], dfs[1]
 
 
 # * Wrapper functions
