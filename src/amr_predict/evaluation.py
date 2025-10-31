@@ -75,8 +75,8 @@ class Evaluator:
             dataset = val_split["train"]
         else:
             val = None
-        if self.task_type == "classification":
-            y = dataset[stratify_by][:] if stratify_by else None
+        if self.task_type == "classification" and stratify_by:
+            y = dataset[stratify_by][:]
             k_fold = ms.RepeatedStratifiedKFold(**kws)
             splits = k_fold.split(np.zeros_like(dataset[self.x_key][:]), y=y)
         else:
@@ -130,10 +130,10 @@ class Evaluator:
             self._fit(train=train_dset, val=val_dset)
             y_true: Tensor = test_dset.to_polars().select(tasks).to_torch()
             if self.task_type == "regression":
-                y_pred: Tensor = self.model.predict_step(test_dset)
+                y_pred: Tensor | tuple = self.model.predict_step(test_dset)
                 metrics = multitask_all_reg(y_pred, y_true, task_names=tasks)
             else:
-                y_pred: Tensor = self.model.predict_proba(test_dset)
+                y_pred = self.model.predict_proba(test_dset)
                 metrics = multitask_all_cls(
                     y_pred,
                     y_true,
