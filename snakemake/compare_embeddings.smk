@@ -15,6 +15,7 @@ if TEST:
     config["compare_pooled"]["covariate_distance_correlation"]["cols"] = ["AMK", "CRO"]
     config["compare_pooled"]["neighbor_proportion"]["cols"] = ["AMK_class"]
     config["compare_pooled"]["pair_distance_distribution"]["kws"]["replace"] = True
+    config["compare_embeddings"]["bootstrap_rounds"] = 2
 
 
 to_compare = ["sequences", "pooled"]

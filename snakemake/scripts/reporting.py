@@ -21,7 +21,7 @@ from numpy.random import Generator
 from plotnine.ggplot import ggplot
 from scipy.cluster.hierarchy import cut_tree
 from scipy.spatial.distance import squareform
-from scipy.stats import entropy, ks_2samp, spearmanr
+from scipy.stats import combine_pvalues, entropy, ks_2samp, spearmanr
 from sklearn.metrics import (
     adjusted_rand_score,
     completeness_score,
@@ -43,8 +43,8 @@ class LongResults:
     metric: list[str] = field(default_factory=lambda: [])
     method: list[str] = field(default_factory=lambda: [])
     value: list[float] = field(default_factory=lambda: [])
-    name: list[float] = field(default_factory=lambda: [])
-    comment: list[str] = field(default_factory=lambda: [])
+    name: list[str] = field(default_factory=lambda: [])
+    p_value: list[float] = field(default_factory=lambda: [])
 
 
 os.environ["HF_HOME"] = smk.config["huggingface"]
@@ -122,7 +122,7 @@ def safe_silhouette_score(**kwargs) -> float:
         return np.nan
 
 
-def clustering_helper(adata: ad.AnnData, precomputed_dist) -> LongResults:
+def clustering_helper(adata: ad.AnnData, precomputed_dist) -> pl.DataFrame:
     hclust = linkage(precomputed_dist)
     df = adata.obs.copy()
     precomputed = squareform(precomputed_dist)
@@ -179,7 +179,7 @@ def clustering_helper(adata: ad.AnnData, precomputed_dist) -> LongResults:
         # )
         # results["name"].append(y)
 
-    return results
+    return pl.DataFrame(asdict(results))
 
 
 # * Wrapper functions
@@ -190,7 +190,7 @@ def compare_pair_distribution(
     columns: Sequence,
     distance_metric: str = "cosine",
     **kws,
-) -> LongResults:
+) -> pl.DataFrame:
     """
     Compare the distribution of distances between related and unrelated sample pairs,
         randomly drawn from `adata`
@@ -210,17 +210,19 @@ def compare_pair_distribution(
         rel_dist = vecdist(r1, r2, metric=distance_metric)
         unrel_dist = vecdist(u1, u2, metric=distance_metric)
         results.metric.append("pair_distribution")
-        results.method.append("ks_2samp_pval")
+        results.method.append("ks_2samp")
         test = ks_2samp(rel_dist, unrel_dist, alternative="greater")  # Alternative
         # is defined in terms of CDFs
-        results.value.append(test.pvalue)
+        results.p_value.append(test.pvalue)
+        results.value.append(test.statistic)
         results.name.append(col)
 
         results.metric.append("pair_distribution")
         results.method.append("kl_div")
         results.value.append(entropy(rel_dist, unrel_dist))
+        results.p_value.append(np.nan)
         results.name.append(col)
-    return results
+    return pl.DataFrame(asdict(results))
 
 
 def covar_dist(
@@ -228,7 +230,7 @@ def covar_dist(
     columns: Sequence,
     rng: int | None = None,
     distance_metric: str = "cosine",
-) -> LongResults:
+) -> pl.DataFrame:
     results: LongResults = LongResults()
     for col in columns:
         shuffled = pd.Series(np.arange(adata.shape[0])).sample(frac=1, random_state=rng)
@@ -245,12 +247,8 @@ def covar_dist(
         results.metric.append("covariate_distance_correlation")
         results.name.append(col)
         results.value.append(test.statistic)
-
-        results.method.append(distance_metric)
-        results.metric.append("covariate_distance_correlation_pval")
-        results.name.append(col)
-        results.value.append(test.pvalue)
-    return results
+        results.p_value.append(test.pvalue)
+    return pl.DataFrame(asdict(results))
 
 
 def comparison_routine(
@@ -282,48 +280,44 @@ def comparison_routine(
         cols = cur_config.get("cols", None)
         if metric_group == "clustering":
             precomputed = pdist(adata.X, metric="cosine")
-            lr = clustering_helper(adata=adata, precomputed_dist=precomputed)
-            result_dfs.append(pl.DataFrame(asdict(lr)))
+            cur_df = clustering_helper(adata=adata, precomputed_dist=precomputed)
         elif metric_group == "neighbor_proportion":
-            nprop, dist_stats = nn_proportions(adata, columns=cols, **cur_config["kws"])
-            prop_agg = (
-                nprop.drop("index")
-                .mean()
-                .unpivot(variable_name="name")
-                .with_columns(
-                    pl.lit("avg_nn_proportion").alias("metric"),
-                    pl.lit(cur_config["kws"]["metric"]).alias("method"),
-                )
-                .select(["metric", "method", "value", "name"])
-            )
-            result_dfs.append(prop_agg)
-            result_dfs.append(
-                pl.DataFrame(
-                    {
-                        "metric": "avg_nn_distance",
-                        "method": "max",
-                        "value": dist_stats["max"].mean(),
-                        "name": "-",
-                    }
-                )
-            )
+            nn_tmp = nn_proportions(adata, columns=cols, **cur_config["kws"])
+            for k, v in nn_tmp.items():
+                to_concat = []
+                if k.startswith("null"):
+                    unpivot_on = ["null_avg", "observed_avg"]
+                    if k.endswith("dist"):
+                        v = v.with_columns(pl.lit("nn_distance").alias("column"))
+                    tmp = (
+                        v.unpivot(on=unpivot_on, index=["name", "p_value"])
+                        .with_columns(
+                            pl.when(pl.col("variable") == "null_avg")
+                            .then(None)
+                            .otherwise(pl.col("p_value"))
+                            .alias("p_value"),
+                            pl.lit(f"{k.replace("null", "nn")}").alias("method"),
+                        )
+                        .rename({"column": "name", "variable": "metric"})
+                    )
+                    to_concat.append(tmp)
+            cur_df = pl.concat(to_concat)
         elif metric_group == "pair_distance_distribution":
             cur_config["kws"]["rng"] = RNG
-            lr = compare_pair_distribution(
+            cur_df = compare_pair_distribution(
                 adata,
                 columns=cols,
                 distance_metric=cur_config["distance_metric"],
                 **cur_config["kws"],
             )
-            result_dfs.append(pl.DataFrame(asdict(lr)))
         elif metric_group == "covariate_distance_correlation":
-            lr = covar_dist(
+            cur_df = covar_dist(
                 adata,
                 columns=cols,
                 distance_metric=cur_config["distance_metric"],
                 rng=RNG,
             )
-            result_dfs.append(pl.DataFrame(asdict(lr)))
+        result_dfs.append(cur_df)
     return pl.concat(result_dfs)
 
 
@@ -359,15 +353,23 @@ if smk.rule in {"compare_embeddings", "compare_pooled"}:
                     round=i,
                 )
                 dfs.append(cur)
-        aggregated: pl.DataFrame = pl.concat(dfs)
-        aggregated = (
-            aggregated.group_by(["metric", "method", "name"])
-            .agg(
-                pl.col("value").mean().alias("mean"),
-                pl.col("value").std().alias("std"),
-                pl.col("value").median().alias("median"),
+        if len(dfs) > 1:
+            aggregated: pl.DataFrame = pl.concat(dfs)
+            aggregated = (
+                aggregated.group_by(["metric", "method", "name"])
+                .agg(
+                    pl.col("value").mean().alias("mean"),
+                    pl.col("value").std().alias("std"),
+                    pl.col("value").median().alias("median"),
+                    pl.col("p_value").map_batches(
+                        lambda x: combine_pvalues(x).pvalue,
+                        returns_scalar=True,
+                        return_dtype=pl.Float64,
+                    ),
+                )
+                .with_columns(dataset=pl.lit(dir.stem))
             )
-            .with_columns(dataset=pl.lit(dir.stem))
-        )
-        all_dfs.append(aggregated)
+            all_dfs.append(aggregated)
+        else:
+            all_dfs.extend(dfs)
     pl.concat(all_dfs).write_csv(smk.output["metrics"])

@@ -384,9 +384,7 @@ def nn_proportions(
         dist_ecdf = ecdf(null_dist)
         nulls["null_dist"] = pl.DataFrame(
             {
-                "probability_under_null": [
-                    float(dist_ecdf.cdf.evaluate(observed_dist))
-                ],
+                "p_value": [float(dist_ecdf.cdf.evaluate(observed_dist))],
                 "observed_avg": [observed_dist],
                 "null_avg": [null_dist.mean()],
             }
@@ -395,7 +393,7 @@ def nn_proportions(
             nulls[f"null_{n}"] = {c: [] for c in columns}
             ecdfs[f"null_{n}"] = {
                 "column": [],
-                "probability_under_null": [],
+                "p_value": [],
                 "observed_avg": [],
             }
         for _ in range(null_bootstrap_rounds):
@@ -416,7 +414,7 @@ def nn_proportions(
                 #   proportion p > `observed_prop` under the null, as the higher the proportion the better
                 # Left-tailed for impurity
                 ecdfs[f"null_{val}"]["column"].append(col)
-                ecdfs[f"null_{val}"]["probability_under_null"].append(float(proba))
+                ecdfs[f"null_{val}"]["p_value"].append(float(proba))
                 ecdfs[f"null_{val}"]["observed_avg"].append(observed_avg)
         nulls["null_prop"] = (
             (pl.DataFrame(nulls["null_prop"]) / n_neighbors)
