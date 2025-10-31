@@ -10,6 +10,7 @@ from amr_predict.utils import (
     TASK_TYPES,
     ModuleConfig,
     data_spec,
+    encode_strs,
     load_as,
     train_test_from_dict,
 )
@@ -67,6 +68,7 @@ if smk.rule in {"cross_validate", "holdout"}:
             if not task_names:
                 continue
             if ttype == "classification":
+                dataset, _ = encode_strs(dataset, task_names)
                 in_features, n_classes = data_spec(dataset, y=task_names, x_key=x_key)
                 bmodel = XGBClassifier
             else:
