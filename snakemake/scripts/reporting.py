@@ -283,14 +283,14 @@ def comparison_routine(
             cur_df = clustering_helper(adata=adata, precomputed_dist=precomputed)
         elif metric_group == "neighbor_proportion":
             nn_tmp = nn_proportions(adata, columns=cols, **cur_config["kws"])
+            to_concat = []
             for k, v in nn_tmp.items():
-                to_concat = []
                 if k.startswith("null"):
                     unpivot_on = ["null_avg", "observed_avg"]
                     if k.endswith("dist"):
                         v = v.with_columns(pl.lit("nn_distance").alias("column"))
                     tmp = (
-                        v.unpivot(on=unpivot_on, index=["name", "p_value"])
+                        v.unpivot(on=unpivot_on, index=["column", "p_value"])
                         .with_columns(
                             pl.when(pl.col("variable") == "null_avg")
                             .then(None)
@@ -301,7 +301,7 @@ def comparison_routine(
                         .rename({"column": "name", "variable": "metric"})
                     )
                     to_concat.append(tmp)
-            cur_df = pl.concat(to_concat)
+            cur_df = pl.concat(to_concat, how="diagonal_relaxed")
         elif metric_group == "pair_distance_distribution":
             cur_config["kws"]["rng"] = RNG
             cur_df = compare_pair_distribution(
@@ -318,7 +318,7 @@ def comparison_routine(
                 rng=RNG,
             )
         result_dfs.append(cur_df)
-    return pl.concat(result_dfs)
+    return pl.concat(result_dfs, how="diagonal_relaxed")
 
 
 # * Rules
@@ -352,24 +352,22 @@ if smk.rule in {"compare_embeddings", "compare_pooled"}:
                     outdir=Path(smk.params["outdir"]),
                     round=i,
                 )
-                dfs.append(cur)
+                dfs.append(cur.with_columns(dataset=pl.lit(dir.stem)))
         if len(dfs) > 1:
             aggregated: pl.DataFrame = pl.concat(dfs)
-            aggregated = (
-                aggregated.group_by(["metric", "method", "name"])
-                .agg(
-                    pl.col("value").mean().alias("mean"),
-                    pl.col("value").std().alias("std"),
-                    pl.col("value").median().alias("median"),
-                    pl.col("p_value").map_batches(
-                        lambda x: combine_pvalues(x).pvalue,
-                        returns_scalar=True,
-                        return_dtype=pl.Float64,
-                    ),
-                )
-                .with_columns(dataset=pl.lit(dir.stem))
+            aggregated = aggregated.group_by(["metric", "method", "name"]).agg(
+                pl.col("value").mean().alias("mean"),
+                pl.col("value").std().alias("std"),
+                pl.col("value").median().alias("median"),
+                pl.col("p_value").map_batches(
+                    lambda x: combine_pvalues(x).pvalue,
+                    returns_scalar=True,
+                    return_dtype=pl.Float64,
+                ),
             )
             all_dfs.append(aggregated)
         else:
             all_dfs.extend(dfs)
-    pl.concat(all_dfs).write_csv(smk.output["metrics"])
+    pl.concat(all_dfs, how="diagonal_relaxed").write_csv(
+        smk.output["metrics"], null_value="NaN"
+    )
