@@ -269,9 +269,7 @@ def covar_dist(
         if correlate_seq_dist and col == "_seq_dist_":
             d1 = df[seq_start_col].values[x] - df[seq_end_col].values[y]
             d2 = df[seq_start_col].values[y] - df[seq_end_col].values[x]
-            covar_dist = np.max(np.vstack([d1, d2, [0] * d1.shape[0]]), axis=0).astype(
-                np.float64
-            )
+            covar_dist = np.maximum(np.maximum(d1, d2), 0).astype(np.float64)
             covar_dist[df[seq_id_col].values[x] != df[seq_id_col].values[y]] = np.inf
         else:
             covar_dist = np.abs(df[col].iloc[x].values - df[col].iloc[y].values)
@@ -388,12 +386,14 @@ if smk.rule in {"compare_embeddings", "compare_pooled"}:
                 dfs.append(cur.with_columns(dataset=pl.lit(dir.stem)))
         if len(dfs) > 1:
             aggregated: pl.DataFrame = pl.concat(dfs)
-            aggregated = aggregated.group_by(["metric", "method", "name"]).agg(
+            aggregated = aggregated.group_by(
+                ["metric", "method", "name", "dataset"]
+            ).agg(
                 pl.col("value").mean().alias("mean"),
                 pl.col("value").std().alias("std"),
                 pl.col("value").median().alias("median"),
                 pl.col("p_value").map_batches(
-                    lambda x: combine_pvalues(x).pvalue,
+                    lambda x: combine_pvalues(x).pvalue if all(x) != -1 else -1,
                     returns_scalar=True,
                     return_dtype=pl.Float64,
                 ),
