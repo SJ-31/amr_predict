@@ -13,8 +13,10 @@ import torch
 import torch.nn as nn
 import torchmetrics.functional.classification as tmet
 from amr_predict.utils import iter_cols, vecdist
+from numpy.random import Generator
 from scipy.stats import ecdf
 from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 from torchmetrics.functional.regression.mse import mean_squared_error
@@ -280,6 +282,7 @@ def nn_proportions(
     include_impurity: bool = True,
     null_bootstrap_rounds: int = 1000,
     rng: int | None = None,
+    prefit: NearestNeighbors | None = None,
     **kws,
 ) -> dict[str, pl.DataFrame | int]:
     """For each sample, compute the proportion of nearest neighbors in the dataset that
@@ -289,6 +292,8 @@ def nn_proportions(
     ----------
     columns : Sequence
         columns of `adata.obs` to calculate proportion on
+    nn_obj : NearestNeighbors
+        pre-fit nearest neighbors object
     kws : kwargs
         keyword arguments passed to sklearn.neighbors.NearestNeighbors
 
@@ -313,10 +318,10 @@ def nn_proportions(
         If `include_impurity`, also includes two keys for the Gini impurity (Gini index)
             of an NN cluster as well as the null equivalent
     """
-
-    nclass = NearestNeighbors(**kws)
-    nclass.fit(adata.X)
-    distances, neighbors = nclass.kneighbors()
+    nn_obj: NearestNeighbors = prefit or NearestNeighbors(**kws)
+    if prefit is None:
+        nn_obj.fit(adata.X)
+    distances, neighbors = nn_obj.kneighbors()
     df = adata.obs
     n_neighbors = neighbors.shape[1]
     tmp = {}
@@ -431,3 +436,111 @@ def nn_proportions(
             )
         result.update(nulls)
     return result
+
+
+# * Neighbor-preserving score
+def seq_nn(x: np.ndarray, **kws) -> NearestNeighbors:
+    """
+    Compute nearest neighbors to sequence
+    """
+
+    # TODO: need to make this parallel
+    def seqdist(x, y, max_value):
+        x_seqid, x_start, x_end = x
+        y_seqid, y_start, y_end = y
+        if x_seqid != y_seqid:
+            return max_value
+        return max(x_start - y_end, y_start - x_end, 0)
+
+    nn = NearestNeighbors(
+        **kws, metric=lambda x, y: seqdist(x, y, np.iinfo(np.int64).max)
+    )
+    encoder = LabelEncoder()
+    if x[:, 0].dtype == "O":
+        x[:, 0] = encoder.fit_transform(x[:, 0])
+    nn.fit(x)
+    return nn
+
+
+def random_from_template(
+    nrows: int, template: np.ndarray, rng: int | None | Generator = None
+) -> np.ndarray:
+    """Create a random 2d matrix, where the (min, max)
+    values are defined per-dimension from `template`
+
+    Parameters
+    ----------
+    template : np.ndarray
+        Array of shape n_obs x n_vars.
+
+
+    Returns
+    -------
+    A matrix of shape (nrows x n_vars), where the ith column is randomly sampled from
+        a uniform distribution with min(template[:, i]) and max(template[:, i])
+    """
+    _, ncols = template.shape
+    if rng is None:
+        rng = np.random.default_rng()
+    elif isinstance(rng, int):
+        rng = np.random.default_rng(rng)
+    mins = template.min(axis=0)
+    maxes = template.max(axis=0)
+    random_cols = [rng.uniform(mins[i], maxes[i], (nrows, 1)) for i in range(ncols)]
+    return np.hstack(random_cols)
+
+
+def nps(
+    adata: ad.AnnData,
+    seq_start_col: str,
+    seq_end_col: str,
+    seq_id_col: str,
+    rng: int | None = None,
+    prefit: NearestNeighbors | None = None,
+    **kws,
+):
+    """Compute the neighbor-preserving score [1] for a set of sequence embeddings
+
+    Parameters
+    ----------
+    param : argument
+    prefit : NearestNeighbors
+        A nn instance pre-fitted to adata.X
+
+    Returns
+    -------
+    Neighbor-preserving score for the embeddings represented by adata.X
+    """
+
+    def len_intersections(arr: np.ndarray, x_idx: int = 0, y_idx: int = 1):
+        return np.array(
+            [
+                len(
+                    np.intersect1d(
+                        arr[x_idx, i, :], arr[y_idx, i, :], assume_unique=False
+                    )
+                )
+                for i in range(arr.shape[1])
+            ]
+        )
+
+    nn_obj = prefit or NearestNeighbors(**kws)
+    if prefit is None:
+        nn_obj.fit(adata.X)
+    kws = {k: v for k, v in kws.items() if k != "metric"}
+    seq_nn_obj: NearestNeighbors = seq_nn(
+        adata.obs.loc[:, [seq_id_col, seq_start_col, seq_end_col]].values, **kws
+    )
+    seq_neighbors = seq_nn_obj.kneighbors(return_distance=False)
+    neighbors = np.array([nn_obj.kneighbors(return_distance=False), seq_neighbors])
+    n_neighbors = neighbors.shape[2]
+    len_intersect = len_intersections(neighbors)
+    qnpr = (len_intersect / n_neighbors).mean()
+    # rNPR is the NPR computed with random embeddings as queries, rather than observed embeddings
+    random_embeds = random_from_template(neighbors.shape[1], adata.X, rng=rng)
+    random_neighbors = np.array(
+        [nn_obj.kneighbors(random_embeds, return_distance=False), seq_neighbors]
+    )
+    rnpr = (len_intersections(random_neighbors) / n_neighbors).mean()
+    res = np.max(np.log10((qnpr + 1e-10) / (rnpr + 1e-10)), 0)
+    return res
