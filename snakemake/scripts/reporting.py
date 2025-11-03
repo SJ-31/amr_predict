@@ -2,6 +2,7 @@
 
 import os
 import warnings
+from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from itertools import batched
@@ -32,7 +33,7 @@ from sklearn.metrics import (
 try:
     from snakemake.script import snakemake as smk
 except ImportError:
-    smk = type("snakemake", (), {"rule": None, "config": {}})
+    smk = type("snakemake", (), {"rule": None, "config": defaultdict(lambda: "")})
 
 RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
@@ -179,6 +180,7 @@ def clustering_helper(adata: ad.AnnData, precomputed_dist) -> pl.DataFrame:
         # )
         # results["name"].append(y)
 
+    results.p_value = [-1] * len(results.value)
     return pl.DataFrame(asdict(results))
 
 
@@ -220,7 +222,7 @@ def compare_pair_distribution(
         results.metric.append("pair_distribution")
         results.method.append("kl_div")
         results.value.append(entropy(rel_dist, unrel_dist))
-        results.p_value.append(np.nan)
+        results.p_value.append(-1)
         results.name.append(col)
     return pl.DataFrame(asdict(results))
 
@@ -230,18 +232,49 @@ def covar_dist(
     columns: Sequence,
     rng: int | None = None,
     distance_metric: str = "cosine",
+    seq_start_col: str | None = None,
+    seq_end_col: str | None = None,
+    seq_id_col: str | None = None,
+    n_bootstrap: int | None = None,
 ) -> pl.DataFrame:
-    results: LongResults = LongResults()
-    for col in columns:
-        shuffled = pd.Series(np.arange(adata.shape[0])).sample(frac=1, random_state=rng)
-        if len(shuffled) % 2 != 0:
-            shuffled = shuffled[:-1]
-        pair_mat = np.array([np.array(p) for p in batched(shuffled, 2)])
-        edist = vecdist(adata.X[pair_mat[:, 0]], adata.X[pair_mat[:, 1]], "cosine")
-        covar_dist = np.abs(
-            adata.obs[col].iloc[pair_mat[:, 0]].values
-            - adata.obs[col].iloc[pair_mat[:, 1]].values
+    """Compute the correlation between embedding distances and covariate distances,
+    for random pairs of samples
+    """
+    gen = np.random.default_rng(rng)
+    df = adata.obs
+    if n_bootstrap:
+        pair_mat = gen.choice(
+            list(range(adata.shape[0])), (n_bootstrap, 2), replace=True
         )
+    correlate_seq_dist = seq_id_col and seq_start_col and seq_end_col
+    # TODO: you should probably check which way is better: bootstrapping explicitly
+    # or shuffling
+    results: LongResults = LongResults()
+    if correlate_seq_dist:
+        columns.append("_seq_dist_")
+
+    for col in columns:
+        if n_bootstrap is None:
+            shuffled = pd.Series(np.arange(adata.shape[0])).sample(
+                frac=1, random_state=rng
+            )
+            if len(shuffled) % 2 != 0:
+                shuffled = shuffled[:-1]
+            pair_mat = np.array([np.array(p) for p in batched(shuffled, 2)])
+        edist = vecdist(
+            adata.X[pair_mat[:, 0]], adata.X[pair_mat[:, 1]], distance_metric
+        )
+        x = pair_mat[:, 0]
+        y = pair_mat[:, 1]
+        if correlate_seq_dist and col == "_seq_dist_":
+            d1 = df[seq_start_col].values[x] - df[seq_end_col].values[y]
+            d2 = df[seq_start_col].values[y] - df[seq_end_col].values[x]
+            covar_dist = np.max(np.vstack([d1, d2, [0] * d1.shape[0]]), axis=0).astype(
+                np.float64
+            )
+            covar_dist[df[seq_id_col].values[x] != df[seq_id_col].values[y]] = np.inf
+        else:
+            covar_dist = np.abs(df[col].iloc[x].values - df[col].iloc[y].values)
         test = spearmanr(edist, covar_dist)
         results.method.append(distance_metric)
         results.metric.append("covariate_distance_correlation")
