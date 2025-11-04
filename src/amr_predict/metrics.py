@@ -15,6 +15,7 @@ import torchmetrics.functional.classification as tmet
 from amr_predict.utils import iter_cols, vecdist
 from numpy.random import Generator
 from scipy.stats import ecdf
+from sklearn.metrics.pairwise import paired_distances
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
@@ -381,7 +382,7 @@ def nn_proportions(
         col_df: pd.DataFrame = adata.obs.loc[:, columns]
         nulls, ecdfs = {}, {}
         observed_dist = result["nn_dist"]["mean"].mean()
-        null_dist = vecdist(
+        null_dist = paired_distances(
             adata.X[rand_pairs[:, 0], :],
             adata.X[rand_pairs[:, 1], :],
             metric=kws.get("metric", "cosine"),
@@ -444,7 +445,13 @@ def seq_nn(x: np.ndarray, **kws) -> NearestNeighbors:
     Compute nearest neighbors to sequence
     """
 
-    # TODO: need to make this parallel
+    # TODO: need to use something faster
+    # Maybe https://github.com/nmslib/nmslib
+    # See here for how to do custom
+    # https://github.com/nmslib/nmslib/blob/master/manual/extend.md
+    #
+    # Another approach would be to map genomic distance to vectors in euclidean
+    # space
     def seqdist(x, y, max_value):
         x_seqid, x_start, x_end = x
         y_seqid, y_start, y_end = y

@@ -14,9 +14,9 @@ import pandas as pd
 import plotnine as gg
 import polars as pl
 import scanpy as sc
-from amr_predict.metrics import nn_proportions
+from amr_predict.metrics import nn_proportions, nps
 from amr_predict.plotting import plot_adata
-from amr_predict.utils import load_as, vecdist
+from amr_predict.utils import load_as
 from fastcluster import linkage, pdist
 from numpy.random import Generator
 from plotnine.ggplot import ggplot
@@ -29,6 +29,7 @@ from sklearn.metrics import (
     homogeneity_score,
     silhouette_score,
 )
+from sklearn.metrics.pairwise import paired_distances
 
 try:
     from snakemake.script import snakemake as smk
@@ -209,8 +210,8 @@ def compare_pair_distribution(
         related, unrelated = sample_pairs(adata.obs, col, **kws)
         r1, r2 = adata.X[related[:, 0]], adata.X[related[:, 1]]
         u1, u2 = adata.X[unrelated[:, 0]], adata.X[unrelated[:, 1]]
-        rel_dist = vecdist(r1, r2, metric=distance_metric)
-        unrel_dist = vecdist(u1, u2, metric=distance_metric)
+        rel_dist = paired_distances(r1, r2, metric=distance_metric)
+        unrel_dist = paired_distances(u1, u2, metric=distance_metric)
         results.metric.append("pair_distribution")
         results.method.append("ks_2samp")
         test = ks_2samp(rel_dist, unrel_dist, alternative="greater")  # Alternative
@@ -261,7 +262,7 @@ def covar_dist(
             if len(shuffled) % 2 != 0:
                 shuffled = shuffled[:-1]
             pair_mat = np.array([np.array(p) for p in batched(shuffled, 2)])
-        edist = vecdist(
+        edist = paired_distances(
             adata.X[pair_mat[:, 0]], adata.X[pair_mat[:, 1]], distance_metric
         )
         x = pair_mat[:, 0]
@@ -341,12 +342,18 @@ def comparison_routine(
                 distance_metric=cur_config["distance_metric"],
                 **cur_config["kws"],
             )
+        elif metric_group == "neighbor_preserving_score":
+            raise NotImplementedError()
+
         elif metric_group == "covariate_distance_correlation":
             cur_df = covar_dist(
                 adata,
                 columns=cols,
                 distance_metric=cur_config["distance_metric"],
                 rng=RNG,
+                seq_id_col=cur_config.get("seq_id_col"),
+                seq_start_col=cur_config.get("seq_start_col"),
+                seq_end_col=cur_config.get("seq_end_col"),
             )
         result_dfs.append(cur_df)
     return pl.concat(result_dfs, how="diagonal_relaxed")

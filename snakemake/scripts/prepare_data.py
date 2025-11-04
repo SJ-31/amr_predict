@@ -16,7 +16,7 @@ from snakemake.script import snakemake as smk
 os.environ["HF_HOME"] = smk.config["huggingface"]
 
 from amr_predict.pooling import StaticPooler
-from amr_predict.preprocessing import SeqDataset, SeqEmbedder
+from amr_predict.preprocessing import EMBEDDING_METHODS, SeqDataset, SeqEmbedder
 
 CONFIG: dict = smk.config
 RCONFIG: dict = smk.config.get(smk.rule)
