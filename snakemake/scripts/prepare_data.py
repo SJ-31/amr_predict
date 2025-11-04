@@ -271,11 +271,15 @@ elif smk.rule == "make_embedded_datasets":
             dset.embed(savepath)
 # * Pool
 elif smk.rule == "pool_embeddings":
-    methods = RCONFIG.pop("methods")
+    methods: list[dict] = RCONFIG.pop("methods")
     discretization = RCONFIG.pop("discretize")
     for embedding_ds in smk.input:
         inpath = Path(embedding_ds)
-        for method in methods:
+        for spec in methods:
+            method = spec["method"]
+            name = spec.get("name", method)
+            spec_kws = RCONFIG.copy()
+            spec_kws.update(spec.get("kws", {}))
             savepath = Path(smk.params["outdir"]) / f"{inpath.stem}-{method}"
             figpath = Path(smk.params["plotdir"]) / f"{inpath.stem}-{method}.png"
             if not savepath.exists():
@@ -283,7 +287,7 @@ elif smk.rule == "pool_embeddings":
                     method=method,
                     sample_metadata=smk.config["sample_metadata"]["file"],
                     sample_metadata_key=smk.config["sample_metadata"]["id_col"],
-                    **RCONFIG,
+                    **spec_kws,
                 )
                 pooled = sp(inpath)
                 pooled = discretize_resistance(pooled, **discretization)
