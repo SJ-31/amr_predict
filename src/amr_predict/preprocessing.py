@@ -9,7 +9,7 @@ from typing import Literal, TypeAlias
 
 import polars as pl
 import torch
-from amr_predict.utils import add_intergenic, join_within, read_tabular
+from amr_predict.utils import add_intergenic, join_within, read_tabular, split_features
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from datasets import concatenate_datasets
@@ -141,7 +141,6 @@ class SeqEmbedder:
 class SeqPreprocessor:
     """
     Class for preprocessing sequence data before converting to embedding vectors
-    This
     """
 
     def __init__(
@@ -253,11 +252,19 @@ class SeqPreprocessor:
         elif self.split_method == "bakta":
             filtered = anno.filter(pl.col("#Sequence Id") == record.id)
             if not filtered.is_empty():
+                filtered = split_features(
+                    filtered,
+                    self.max_length,
+                    "Start",
+                    "Stop",
+                    indicate_ends=True,
+                    prefix="chunk",
+                )
                 filtered = add_intergenic(record, filtered, "Start", "Stop")
                 for i, row in enumerate(filtered.iter_rows(named=True)):
                     length = row["Stop"] - row["Start"]
                     current, indices = self._get_subsequence(
-                        record, row, start="Start", stop="Stop"
+                        record, row, start="chunk_Start", stop="chunk_Stop"
                     )
                     val = self._sample_dict(
                         sample=sample,
@@ -284,14 +291,19 @@ class SeqPreprocessor:
             row.get("upstream_intergenic", 0),
         )
         if self.utr_amount is not None:
-            if isinstance(self.utr_amount[0], float):
+            if not row.get("is_5prime", True):
+                upstream = 0
+            elif isinstance(self.utr_amount[0], float):
                 upstream = max(0, math.floor(upstream * self.utr_amount[0]))
             else:
                 upstream = max(0, math.floor(upstream + self.utr_amount[0]))
+            if not row.get("is_3prime", True):
+                downstream = 0
             if isinstance(self.utr_amount[1], float):
                 downstream = max(0, math.floor(downstream * self.utr_amount[1]))
             else:
                 downstream = max(0, math.floor(downstream + self.utr_amount[1]))
+
         if upstream == 0 and self.upstream_context:
             upstream += self.upstream_context
         if downstream == 0 and self.downstream_context:
