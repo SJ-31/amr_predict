@@ -33,6 +33,8 @@ class SeqPooler:
         obs_keep: Sequence | None = None,
         embedding_key: str = "embedding",
         sample_key: str = "sample",
+        whitelist_col: str | None = None,
+        feature_whitelist: tuple = (),
         sample_metadata: Path | str | None = None,
         sample_metadata_key: str | None = None,
         key: str = "x",
@@ -47,6 +49,8 @@ class SeqPooler:
             to predict. Sample names are automatically kept
         pooled_key : str
             Name of key (column) in dataset to keep the aggregated embeddings under
+        whitelist_col : str | None
+            Name of column to use for feature whitelist
         """
         self.encoder: LabelEncoder = LabelEncoder()
         self.embedding_key: str = embedding_key
@@ -58,8 +62,13 @@ class SeqPooler:
             if sample_metadata and isinstance(sample_metadata, str)
             else sample_metadata
         )
+        self.whitelist_col: str | None = whitelist_col
+        self.feature_whitelist: tuple = feature_whitelist
         self.key: str = key
         self.kws: dict = kws
+
+    def apply_whitelist(self, dataset: Dataset) -> Dataset:
+        return dataset.filter(lambda x: x[self.whitelist] in self.feature_whitelist)
 
     def _finalize_dataset(
         self,
