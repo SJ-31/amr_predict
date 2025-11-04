@@ -206,6 +206,84 @@ def add_intergenic(
     return df
 
 
+def split_features(
+    df: pl.DataFrame,
+    max_length: int,
+    start_col: str = "Start",
+    end_col: str = "Stop",
+    indicate_ends: bool = True,
+    prefix: str = "chunk",
+) -> pl.DataFrame:
+    """Split features into chunks if they exceed `max_length`
+
+    Parameters
+    ----------
+    max_length : int
+        Maximum feature length, and the length of the resulting chunks if features
+        exceed this
+    indicate_ends : bool
+        If true, add two boolean columns `is_5prime` and `is_3prime`
+        indicating whether a feature chunk is at its 5' and/or 3' end respectively
+        Both these columns are true if the feature was not split (shorter or equal to max length)
+    prefix : str
+        Prefix of the new columns indicating the start, end of the chunk.
+        Format is {prefix}_`start_col`, {prefix}_`end_col`
+
+    Returns
+    -------
+    An exploded dataframe with multiple rows per feature
+    """
+    to_remove = ("length", "n_chunks", "remaining")
+    df = df.with_columns(length=pl.col(end_col) - pl.col(start_col)).with_columns(
+        n_chunks=pl.col("length") // max_length,
+        remaining=pl.col("length") % max_length,
+    )
+
+    def map_helper(x, col: Literal["start", "stop"] = "start"):
+        nc = x["n_chunks"]
+        start, stop = x[start_col], x[end_col]
+        remaining = x["remaining"]
+        has_remaining = remaining != 0 or remaining != x["length"]
+        if col == "start":
+            if not nc:
+                return [start]
+            val = [start + max_length * i for i in range(nc)]
+            if has_remaining:
+                val.append(start + max_length * nc)
+            return val
+        elif col == "stop":
+            if not nc:
+                return [stop]
+            val = [start + max_length * (i + 1) for i in range(nc)]
+            if has_remaining:
+                val.append(stop)
+            return val
+
+    c_start = f"{prefix}_{start_col}"
+    c_end = f"{prefix}_{end_col}"
+    into_struct = ["n_chunks", "remaining", "length", start_col, end_col]
+    df = df.with_columns(
+        pl.struct(into_struct)
+        .map_elements(lambda x: map_helper(x, "start"), return_dtype=pl.List(pl.Int64))
+        .alias(c_start),
+        pl.struct(into_struct)
+        .map_elements(lambda x: map_helper(x, "stop"), return_dtype=pl.List(pl.Int64))
+        .alias(c_end),
+    ).explode([c_start, c_end])
+    if indicate_ends:
+        df = df.with_columns(
+            pl.when(pl.col(start_col) == pl.col(c_start))
+            .then(True)
+            .otherwise(False)
+            .alias("is_5prime"),
+            pl.when(pl.col(end_col) == pl.col(c_end))
+            .then(True)
+            .otherwise(False)
+            .alias("is_3prime"),
+        )
+    return df.drop(to_remove)
+
+
 def read_tabular(file: Path | str, infer_schema_length=None, **kwargs) -> pl.DataFrame:
     file = file if isinstance(file, Path) else Path(file)
     sep = "\t" if file.suffix == ".tsv" else ","
