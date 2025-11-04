@@ -172,7 +172,26 @@ def add_intergenic(
     start_col: str = "Start",
     stop_col: str = "Stop",
 ) -> pl.DataFrame:
-    final_intergenic = len(record) - max(df[stop_col])
+    """
+    Add intergenic lengths to the feature dataframe
+    E.g. if feature A has a start, end = 10, 500 and
+        feature B has a start, end = 620, 1000, this function adds two columns
+
+        feature A upstream_intergenic, downstream_intergenic = 10, 120
+        feature B upstream_intergenic, downstream_intergenic = 120, ...
+
+    Parameters
+    ----------
+    record : SeqRecord
+        BioPython sequence record describing a CONTIG (not a gene sequence)
+    start_col : str
+        Column denoting feature start
+    stop_col : str
+        Column denoting feature stop
+    """
+    final_intergenic = len(record) - max(
+        df[stop_col]
+    )  # Remaining sequence with no features
     df = df.with_columns(
         downstream_intergenic=np.concat(
             [df["Start"][1:] - df["Stop"][:-1], [final_intergenic]]
