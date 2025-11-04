@@ -5,8 +5,11 @@ import math
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal, TypeAlias
+from subprocess import run
+from tempfile import NamedTemporaryFile, TemporaryDirectory
+from typing import Iterator, Literal, TypeAlias
 
+import numpy as np
 import polars as pl
 import torch
 from amr_predict.utils import add_intergenic, join_within, read_tabular, split_features
@@ -21,7 +24,7 @@ from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPa
 from transformers.modeling_outputs import MaskedLMOutput
 
 SPLIT_METHODS: TypeAlias = Literal["bin", "bakta"]
-EMBEDDING_METHODS: TypeAlias = Literal["seqLens", "Evo2"]
+EMBEDDING_METHODS: TypeAlias = Literal["seqLens", "Evo2", "kmer", "feature_presence"]
 
 
 class SeqEmbedder:
@@ -33,13 +36,105 @@ class SeqEmbedder:
         self.method: EMBEDDING_METHODS = method
         self.kwargs: dict = kwargs
 
-    def __call__(self, dataset: Dataset) -> Dataset:
+    def __call__(self, dataset: Dataset | None = None) -> Dataset:
+        if self.method not in {"kmer", "feature_presence"} and dataset is None:
+            raise ValueError("The selected method requires a preprocessed dataset")
         if self.method == "seqLens":
             return self._seqlens_embed(dataset, **self.kwargs)
         elif self.method == "Evo2":
             raise ValueError("Not implemented yet")
+        elif self.method == "kmer":
+            return self._kmer_embed(**self.kwargs)
+        elif self.method == "feature_presence":
+            raise ValueError("Not implemented yet")
         else:
             raise ValueError("Given method not supported!")
+
+    def _kmer_embed(
+        self,
+        fastas: Path,
+        id_col: str = "sample",
+        metadata: Path | None = None,
+        k: int = 5,
+        key: str = "x",
+        accepted_suffixes=(".fasta", ".fna", ".fa"),
+    ) -> Dataset:
+        """Process sample-level fasta files so that each sample is represented
+        by a feature vector of kmer counts
+        """
+
+        def count_kmers(fasta: Path) -> pl.DataFrame:
+            # Count kmers quickly with kmc
+            with TemporaryDirectory() as dir:
+                out = Path(dir).joinpath("result.tsv")
+                run(f"kmc -fm -k{k} {fasta} tmp .", shell=True)
+                run(f"kmc_dump tmp {out}", shell=True)
+                counts = (
+                    pl.read_csv(
+                        out,
+                        separator="\t",
+                        new_columns=["kmer", "count"],
+                        has_header=False,
+                    )
+                    .with_columns(pl.lit(fasta.stem).alias(id_col))
+                    .pivot("kmer", values="count")
+                )
+            return counts
+
+        dfs = [
+            count_kmers(f) for f in fastas.iterdir() if f.suffix in accepted_suffixes
+        ]
+        df = pl.concat(dfs, how="diagonal_relaxed").fill_null(0)
+        kmer_cols = df.drop("sample").columns
+        if metadata is not None:
+            meta = read_tabular(metadata)
+            df = df.join(meta, on=id_col)
+        arr = np.array(df.select(kmer_cols))
+        variance = arr.var(axis=0)
+        arr = arr[:, variance != 0]
+        dct = df.drop(kmer_cols).to_dict()
+        dct[key] = arr
+        return Dataset.from_dict(dct).with_format("torch")
+
+    def _evo2_embed(
+        self,
+        dset: Dataset,
+        text_key: str = "sequence",
+    ) -> Dataset:
+        dset = dset.add_column("uid", list(range(len(dset)))).sort("uid")
+        df: pl.DataFrame = dset.to_polars().with_columns(
+            (
+                ">"
+                + pl.concat_str(
+                    [pl.col("uid"), pl.col(text_key)], separator="\n"
+                ).alias("fasta")
+            )
+        )
+        seqs = df["seqid"].unique()
+
+        def gen():
+            for seq in seqs:
+                for embedding in self._evo2_embed_one(df, seq):
+                    yield embedding
+
+        result: Dataset = Dataset.from_generator(gen)
+        result = result.with_format("torch").sort("uid").remove_columns("uid")
+        dset = dset.remove(text_key)
+        result = concatenate_datasets([result, dset], axis=1)
+        return result
+
+    def _evo2_embed_one(self, df: pl.DataFrame, cur_seq: str) -> Iterator[dict]:
+        df = df.filter(pl.col("seqid") == cur_seq)
+        result = []
+        with NamedTemporaryFile("w") as f:
+            f.write("\n".join(df["fasta"]))
+            # evo2 -i f.name -o
+            embedding_file = ""
+        # for i, g in embedding_file:
+
+        # TODO: run evo2 to convert fasta into embeddings
+        result = None
+        return result
 
     def _seqlens_embed(
         self,

@@ -240,9 +240,28 @@ if smk.rule == "get_seq_metadata":
 
 # * Make text datasets
 elif smk.rule == "make_text_datasets":
-    for name, kwargs in smk.params["preprocessing"].items():
+    embedding_method: EMBEDDING_METHODS = smk.config.get("embedding", {}).get("method")
+    if embedding_method == "seqLens":
+        max_length = 512
+    elif embedding_method == "Evo2":
+        max_length = 1800
+    for name, kws in smk.params["preprocessing"].items():
         savepath = Path(f"{smk.params['outdir']}/{name}")
-        if kwargs["split_method"] == "bakta":
+        if name in EMBEDDING_METHODS:
+            # Deterministic embedding methods that can process whole genomes
+            # - kmer
+            # - feature_presence # TODO: need to add this
+            savepath = Path(f"{smk.params['outdir_pooled']}/{name}")
+            sem = SeqEmbedder(
+                name,
+                fastas=CONFIG["genomes"],
+                id_col=smk.config["sample_metadata"]["id_col"],
+                metadata=smk.config["sample_metadata"]["file"],
+                **kws,
+            )
+            dataset = sem()
+            dataset.save_to_disk(dataset_path=savepath)
+        elif kws["split_method"] == "bakta":
             anno = Path(CONFIG["seq_metadata"]["bakta"])
         else:
             anno = None
@@ -252,7 +271,8 @@ elif smk.rule == "make_text_datasets":
             id_col=smk.config["sample_metadata"]["id_col"],
             annotations=anno,
             seq_metadata=smk.input[0],
-            **kwargs,
+            max_length=max_length,
+            **kws,
         )
 # * Embed
 elif smk.rule == "make_embedded_datasets":
