@@ -151,7 +151,9 @@ class SeqPreprocessor:
         split_method: SPLIT_METHODS = "bin",
         max_length: int = 512,
         include_utrs: tuple[bool, bool] = (False, False),
-        utr_percent: float = 0.5,
+        utr_amount: float | None = None,
+        upstream_context: int = 200,
+        downstream_context: int = 200,
     ):
         """Initialize preprocesser
 
@@ -169,11 +171,22 @@ class SeqPreprocessor:
         include_utrs : tuple[bool, bool]
             For ORF-based splitting methods, whether to include the 5' and 3' UTRs into the
                 sequence, respectively
-        utr_percent : float
-            The percentage of intergenic region to be inlcuded as part of the UTR, measured
+        utr_amount : tuple
+            The percentage or number of bases of intergenic region to be
+            included as part of the UTR, measured
             from the gene start (5' UTR) or end (3' UTR)
             By default, takes half of the region from one gene, leaving the other half for the UTR of
             the downstream/upstream
+        upstream_context : int
+            Number of upstream bases to include into the embedding, relevant to all
+            embedded sequences e.g. chunks of genes
+            This is not included if `include_utrs` and the sequence to embed is at the
+            feature 5' end
+        downstream_context : int
+            Number of downstream bases to include into the embedding, relevant to all
+            embedded sequences e.g. chunks of genes
+            This is not included if `include_utrs` and the sequence to embed is at the
+            feature 3' end
 
         Notes
         -----
@@ -187,7 +200,9 @@ class SeqPreprocessor:
         self.annotations: Path = anno_path
         self.include_utrs: tuple[bool, bool] = include_utrs
         self.max_length: int = max_length
-        self.utr_percent: float = utr_percent
+        self.utr_amount: tuple[float | int, float | int] | None = utr_amount
+        self.upstream_context: int = upstream_context
+        self.downstream_context: int = downstream_context
         accepted_suffixes = {".fasta", ".fna", ".fa"}
 
         self.fastas: list[Path] = [
@@ -268,15 +283,27 @@ class SeqPreprocessor:
             row.get("downstream_intergenic", 0),
             row.get("upstream_intergenic", 0),
         )
-        downstream = max(0, math.floor(downstream * self.utr_percent))
-        upstream = max(0, math.floor(upstream * self.utr_percent))
+        if self.utr_amount is not None:
+            if isinstance(self.utr_amount[0], float):
+                upstream = max(0, math.floor(upstream * self.utr_amount[0]))
+            else:
+                upstream = max(0, math.floor(upstream + self.utr_amount[0]))
+            if isinstance(self.utr_amount[1], float):
+                downstream = max(0, math.floor(downstream * self.utr_amount[1]))
+            else:
+                downstream = max(0, math.floor(downstream + self.utr_amount[1]))
+        if upstream == 0 and self.upstream_context:
+            upstream += self.upstream_context
+        if downstream == 0 and self.downstream_context:
+            downstream += self.downstream_context
+
         if self.include_utrs[0] and not self.include_utrs[1]:
-            start_idx += upstream
+            start_idx = max(0, start_idx - upstream)
         elif not self.include_utrs[0] and self.include_utrs[1]:
-            stop_idx += downstream
+            stop_idx = min(stop_idx + downstream, len(record))
         elif self.include_utrs[0] and self.include_utrs[1]:
-            start_idx += upstream
-            stop_idx += downstream
+            start_idx = max(0, start_idx - upstream)
+            stop_idx = min(stop_idx + downstream, len(record))
         return record[start_idx:stop_idx], (start_idx, stop_idx)
 
     def gen(self):
