@@ -263,6 +263,7 @@ def split_features(
     c_end = f"{prefix}_{end_col}"
     into_struct = ["n_chunks", "remaining", "length", start_col, end_col]
     df = df.with_columns(
+        pl.Series(range(len(df))).alias("feature_id"),
         pl.struct(into_struct)
         .map_elements(lambda x: map_helper(x, "start"), return_dtype=pl.List(pl.Int64))
         .alias(c_start),

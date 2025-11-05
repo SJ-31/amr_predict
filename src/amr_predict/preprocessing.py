@@ -58,7 +58,6 @@ class SeqEmbedder:
         metadata: Path | None = None,
         k: int = 5,
         key: str = "x",
-        accepted_suffixes=(".fasta", ".fna", ".fa"),
     ) -> Dataset:
         """Process sample-level fasta files so that each sample is represented
         by a feature vector of kmer counts
@@ -245,10 +244,9 @@ class SeqPreprocessor:
         anno_path: Path | str | None = None,
         split_method: SPLIT_METHODS = "bin",
         max_length: int = 512,
-        include_utrs: tuple[bool, bool] = (False, False),
         utr_amount: tuple[float | int, float | int] | None = None,
-        upstream_context: int = 200,
-        downstream_context: int = 200,
+        upstream_context: int = 0,
+        downstream_context: int = 0,
     ):
         """Initialize preprocesser
 
@@ -263,29 +261,22 @@ class SeqPreprocessor:
             Supported methods
             - bin : Split the sequence at successive intervals equal to `max_length`
             - bakta : Split sequence at
-        include_utrs : tuple[bool, bool]
-            For ORF-based splitting methods, whether to include the 5' and 3' UTRs into the
-                sequence, respectively
-        utr_amount : tuple
+        utr_amount : tuple | None
             The percentage or number of bases of intergenic region to be
             included as part of the UTR, measured
-            from the gene start (5' UTR) or end (3' UTR)
+            from the feature start (5' UTR) or end (3' UTR)
             By default, takes half of the region from one gene, leaving the other half for the UTR of
             the downstream/upstream
         upstream_context : int
             Number of upstream bases to include into the embedding, relevant to all
             embedded sequences e.g. chunks of genes
-            This is not included if `include_utrs` and the sequence to embed is at the
+            This is not included if `utr_amount` and the sequence to embed is at the
             feature 5' end
         downstream_context : int
             Number of downstream bases to include into the embedding, relevant to all
             embedded sequences e.g. chunks of genes
-            This is not included if `include_utrs` and the sequence to embed is at the
+            This is not included if `utr_amount` and the sequence to embed is at the
             feature 3' end
-
-        Notes
-        -----
-
         """
         if split_method != "bin" and anno_path is None:
             raise ValueError(
@@ -293,7 +284,6 @@ class SeqPreprocessor:
             )
         self.split_method: SPLIT_METHODS = split_method
         self.annotations: Path = anno_path
-        self.include_utrs: tuple[bool, bool] = include_utrs
         self.max_length: int = max_length
         self.utr_amount: tuple[float | int, float | int] | None = utr_amount
         self.upstream_context: int = upstream_context
@@ -374,12 +364,13 @@ class SeqPreprocessor:
                         is_5prime=row.get("is_5prime"),
                         is_3prime=row.get("is_3prime"),
                         seqindex=i,
-                        # Start, stop indices after (possible) context widening
+                        # Start, stop indices after (possible) context widening and
+                        # splitting into chunks
                         start=indices[0],
                         stop=indices[1],
-                        # Original start, stop indices of features
-                        old_start=row["Start"],
-                        old_stop=row["Stop"],
+                        # Actual start, stop indices of features
+                        start_actual=row["Start"],
+                        stop_actual=row["Stop"],
                     )
                     vals.append(val)
         return vals
@@ -390,36 +381,32 @@ class SeqPreprocessor:
         start_idx, stop_idx = row[start], row[stop]
         # Get widths of actual downstream, upstream sequences for percentage-based
         # widening. Overriden if widening dowstream, upstream by flat number of bases
-        downstream, upstream = (
+        downstream_width, upstream_width = (
             row.get("downstream_intergenic", 0),
             row.get("upstream_intergenic", 0),
         )
-        if self.utr_amount is not None:
-            if not row.get("is_5prime", True):
-                upstream = 0
-            elif isinstance(self.utr_amount[0], float):
-                upstream = max(0, math.floor(upstream * self.utr_amount[0]))
-            else:
+        is_5prime, is_3prime = row.get("is_5prime", False), row.get("is_3prime", False)
+        upstream, downstream = 0, 0
+        add_utrs = self.utr_amount is not None
+        if add_utrs:
+            # Don't add UTR regions unless the current entry is at a feature boundary
+            if is_5prime and isinstance(self.utr_amount[0], float):
+                upstream = max(0, math.floor(upstream_width * self.utr_amount[0]))
+            elif is_5prime:
                 upstream = max(0, self.utr_amount[0])
-            if not row.get("is_3prime", True):
-                downstream = 0
-            if isinstance(self.utr_amount[1], float):
-                downstream = max(0, math.floor(downstream * self.utr_amount[1]))
-            else:
+            if is_3prime and isinstance(self.utr_amount[1], float):
+                downstream = max(0, math.floor(downstream_width * self.utr_amount[1]))
+            elif is_3prime:
                 downstream = max(0, self.utr_amount[1])
 
-        if upstream == 0 and self.upstream_context:
+        # If adding UTRs, only add more context to gene chunks
+        if self.upstream_context and (not is_5prime or not add_utrs):
             upstream += self.upstream_context
-        if downstream == 0 and self.downstream_context:
+        if self.downstream_context and (not is_3prime or not add_utrs):
             downstream += self.downstream_context
 
-        if self.include_utrs[0] and not self.include_utrs[1]:
-            start_idx = max(0, start_idx - upstream)
-        elif not self.include_utrs[0] and self.include_utrs[1]:
-            stop_idx = min(stop_idx + downstream, len(record))
-        elif self.include_utrs[0] and self.include_utrs[1]:
-            start_idx = max(0, start_idx - upstream)
-            stop_idx = min(stop_idx + downstream, len(record))
+        start_idx = max(0, start_idx - upstream)
+        stop_idx = min(stop_idx + downstream, len(record))
         return record[start_idx:stop_idx], (start_idx, stop_idx)
 
     def gen(self):
