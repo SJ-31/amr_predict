@@ -3,7 +3,7 @@
 import os
 from itertools import batched
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 import plotnine as gg
 import polars as pl
@@ -247,37 +247,48 @@ elif smk.rule == "make_text_datasets":
         max_length = 1800
     for name, kws in smk.params["preprocessing"].items():
         savepath = Path(f"{smk.params['outdir']}/{name}")
-        if name in EMBEDDING_METHODS:
+        if (method := kws.pop("method", None)) in get_args(EMBEDDING_METHODS):
             # Deterministic embedding methods that can process whole genomes
             # - kmer
-            # - feature_presence # TODO: need to add this
+            # - feature_presence # TODO: need to test this one
             savepath = Path(f"{smk.params['outdir_pooled']}/{name}")
+            if method == "kmer":
+                kws.update({"fastas": Path(CONFIG["genomes"])})
+            elif method == "feature_presence":
+                kws.update(
+                    {
+                        "fasta_annotations": Path(CONFIG["seq_metadata"]["bakta"]),
+                        "read_kws": {"skip_rows": 5},
+                    }
+                )
             sem = SeqEmbedder(
-                name,
-                fastas=CONFIG["genomes"],
+                method=method,
                 id_col=smk.config["sample_metadata"]["id_col"],
                 metadata=smk.config["sample_metadata"]["file"],
                 **kws,
             )
-            dataset = sem()
+            dataset = sem(None)
             dataset.save_to_disk(dataset_path=savepath)
-        elif kws["split_method"] == "bakta":
-            anno = Path(CONFIG["seq_metadata"]["bakta"])
         else:
-            anno = None
-        SeqDataset.save_from_fastas(
-            fastas=CONFIG["genomes"],
-            savepath=savepath,
-            id_col=smk.config["sample_metadata"]["id_col"],
-            annotations=anno,
-            seq_metadata=smk.input[0],
-            max_length=max_length,
-            **kws,
-        )
+            if kws["split_method"] == "bakta":
+                anno = Path(CONFIG["seq_metadata"]["bakta"])
+            else:
+                anno = None
+            SeqDataset.save_from_fastas(
+                fastas=CONFIG["genomes"],
+                savepath=savepath,
+                id_col=smk.config["sample_metadata"]["id_col"],
+                annotations=anno,
+                seq_metadata=smk.input[0],
+                max_length=max_length,
+                **kws,
+            )
 # * Embed
 elif smk.rule == "make_embedded_datasets":
     for seq_ds in smk.input:
         inpath = Path(seq_ds)
+        if inpath.stem in smk.params["ignore"]:
+            continue
         savepath = Path(smk.params["outdir"]) / inpath.stem
         if not savepath.exists():
             dset = SeqDataset(
