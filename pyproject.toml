@@ -12,6 +12,7 @@ dependencies = [
   "ipython",
   "polars",
   "lightning",
+  "pyhere",
   "snakemake",
   "transformers",
   "datasets",

@@ -32,6 +32,12 @@ compare_embeddings:
     kws:
       n_pairs_per: 20
       replace: True
+  covariate_distance_correlation:
+    cols: []
+    distance_metric: cosine
+    seq_start_col: "start"
+    seq_end_col: "stop"
+    seq_id_col: "seqid"
   neighbor_proportion:
     cols: ["sample", "hamr_gene_symbol", "bakta_product"]
     kws:
@@ -79,6 +85,8 @@ cross_validate:
   k_fold:
     n_repeats: 2
     n_splits: 5
+
+# TODO: for Evo2 config, set utr_amount [200, 200]
 
 holdout:
   splits: null # [2025-10-31 Fri] nothing good to split on with just the jia dataset

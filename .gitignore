@@ -5,6 +5,7 @@
 /data/temp
 /data/processed
 /data/raw
+/tests/data/*
 
 # Other
 *.egg-info*
