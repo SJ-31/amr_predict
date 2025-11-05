@@ -7,10 +7,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from subprocess import run
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import Iterator, Literal, TypeAlias
+from typing import Callable, Iterator, Literal, TypeAlias
 
 import numpy as np
 import polars as pl
+import polars.selectors as cs
 import torch
 from amr_predict.utils import add_intergenic, join_within, read_tabular, split_features
 from Bio import SeqIO
@@ -245,7 +246,7 @@ class SeqPreprocessor:
         split_method: SPLIT_METHODS = "bin",
         max_length: int = 512,
         include_utrs: tuple[bool, bool] = (False, False),
-        utr_amount: float | None = None,
+        utr_amount: tuple[float | int, float | int] | None = None,
         upstream_context: int = 200,
         downstream_context: int = 200,
     ):
@@ -370,9 +371,15 @@ class SeqPreprocessor:
                         locus_tag=row["Locus Tag"],
                         type=row["Type"],
                         length=length,
+                        is_5prime=row.get("is_5prime"),
+                        is_3prime=row.get("is_3prime"),
                         seqindex=i,
+                        # Start, stop indices after (possible) context widening
                         start=indices[0],
                         stop=indices[1],
+                        # Original start, stop indices of features
+                        old_start=row["Start"],
+                        old_stop=row["Stop"],
                     )
                     vals.append(val)
         return vals
@@ -381,6 +388,8 @@ class SeqPreprocessor:
         self, record: SeqRecord, row: dict, start: str = "Start", stop: str = "Stop"
     ) -> tuple[SeqRecord, tuple[int, int]]:
         start_idx, stop_idx = row[start], row[stop]
+        # Get widths of actual downstream, upstream sequences for percentage-based
+        # widening. Overriden if widening dowstream, upstream by flat number of bases
         downstream, upstream = (
             row.get("downstream_intergenic", 0),
             row.get("upstream_intergenic", 0),
@@ -391,13 +400,13 @@ class SeqPreprocessor:
             elif isinstance(self.utr_amount[0], float):
                 upstream = max(0, math.floor(upstream * self.utr_amount[0]))
             else:
-                upstream = max(0, math.floor(upstream + self.utr_amount[0]))
+                upstream = max(0, self.utr_amount[0])
             if not row.get("is_3prime", True):
                 downstream = 0
             if isinstance(self.utr_amount[1], float):
                 downstream = max(0, math.floor(downstream * self.utr_amount[1]))
             else:
-                downstream = max(0, math.floor(downstream + self.utr_amount[1]))
+                downstream = max(0, self.utr_amount[1])
 
         if upstream == 0 and self.upstream_context:
             upstream += self.upstream_context
