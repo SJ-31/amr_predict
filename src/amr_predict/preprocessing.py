@@ -324,13 +324,15 @@ class SeqPreprocessor:
             acc, i = 0, 0
             split_to = len(record) - self.max_length
             while acc <= split_to:
-                current = record[acc : acc + self.max_length]
+                start = max(0, acc - self.upstream_context)
+                stop = min(len(record), acc + self.max_length + self.downstream_context)
+                current = record[start:stop]
                 val: dict = self._sample_dict(
                     sample=sample,
                     record=current,
                     seqindex=i,
-                    start=acc,
-                    stop=acc + self.max_length,
+                    start=start,
+                    stop=stop,
                 )
                 vals.append(val)
                 acc += self.max_length
