@@ -37,7 +37,7 @@ class SeqEmbedder:
         self.method: EMBEDDING_METHODS = method
         self.kwargs: dict = kwargs
 
-    def __call__(self, dataset: Dataset | None = None) -> Dataset:
+    def __call__(self, dataset: Dataset | None) -> Dataset:
         if self.method not in {"kmer", "feature_presence"} and dataset is None:
             raise ValueError("The selected method requires a preprocessed dataset")
         if self.method == "seqLens":
@@ -47,9 +47,33 @@ class SeqEmbedder:
         elif self.method == "kmer":
             return self._kmer_embed(**self.kwargs)
         elif self.method == "feature_presence":
-            raise ValueError("Not implemented yet")
+            return self._feature_presence_embed(**self.kwargs)
         else:
             raise ValueError("Given method not supported!")
+
+    def _embed_from_files(
+        self,
+        id_col,
+        directory: Path,
+        metadata: Path | None,
+        accepted_suffixes: tuple,
+        key: str,
+        embed_fn: Callable,
+    ) -> Dataset:
+        dfs = [
+            embed_fn(f) for f in directory.iterdir() if f.suffix in accepted_suffixes
+        ]
+        df = pl.concat(dfs, how="diagonal_relaxed").fill_null(0)
+        feature_cols = df.drop(id_col).columns
+        if metadata is not None:
+            meta = read_tabular(metadata)
+            df = df.join(meta, on=id_col)
+        arr = np.array(df.select(feature_cols))
+        variance = arr.var(axis=0)
+        arr = arr[:, variance != 0]
+        dct = df.drop(feature_cols).to_dict()
+        dct[key] = arr
+        return Dataset.from_dict(dct).with_format("torch")
 
     def _kmer_embed(
         self,
@@ -81,20 +105,62 @@ class SeqEmbedder:
                 )
             return counts
 
-        dfs = [
-            count_kmers(f) for f in fastas.iterdir() if f.suffix in accepted_suffixes
-        ]
-        df = pl.concat(dfs, how="diagonal_relaxed").fill_null(0)
-        kmer_cols = df.drop("sample").columns
-        if metadata is not None:
-            meta = read_tabular(metadata)
-            df = df.join(meta, on=id_col)
-        arr = np.array(df.select(kmer_cols))
-        variance = arr.var(axis=0)
-        arr = arr[:, variance != 0]
-        dct = df.drop(kmer_cols).to_dict()
-        dct[key] = arr
-        return Dataset.from_dict(dct).with_format("torch")
+        return self._embed_from_files(
+            id_col=id_col,
+            directory=fastas,
+            metadata=metadata,
+            accepted_suffixes=(".fasta", ".fna", ".fa"),
+            key=key,
+            embed_fn=count_kmers,
+        )
+
+    def _feature_presence_embed(
+        self,
+        fasta_annotations: Path,
+        feature_cols: str | list[str],
+        feature_filter: tuple | dict = (),
+        id_col: str = "sample",
+        metadata: Path | None = None,
+        key: str = "x",
+        read_kws: dict | None = None,
+    ):
+        read_kws = read_kws or {}
+
+        def helper(file: Path) -> pl.DataFrame:
+            df: pl.DataFrame = read_tabular(file, **read_kws)
+            if feature_filter and isinstance(feature_filter, dict):
+                df = (
+                    df.with_columns(
+                        *[
+                            pl.col(k).is_in(v).alias(f"_has_{k}")
+                            for k, v in feature_filter.items()
+                        ]
+                    )
+                    .filter(pl.any_horizontal(cs.starts_with("_has")))
+                    .drop(cs.starts_with("_has"))
+                )
+            elif feature_filter:
+                df = df.filter(pl.col(feature_cols).is_in(feature_filter))
+            df = (
+                df.select(feature_cols)
+                .with_columns(pl.lit(file.stem).alias(id_col))
+                .unpivot(index=id_col)
+                .filter(pl.col("value").is_not_null())
+                .with_columns(pl.lit(1).alias("tmp"))
+                .drop("variable")
+                .unique("value")
+                .pivot("value", values="tmp")
+            )
+            return df
+
+        return self._embed_from_files(
+            id_col=id_col,
+            directory=fasta_annotations,
+            metadata=metadata,
+            accepted_suffixes=(".tsv", ".csv"),
+            key=key,
+            embed_fn=helper,
+        )
 
     def _evo2_embed(
         self,
