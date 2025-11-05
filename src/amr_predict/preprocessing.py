@@ -470,7 +470,7 @@ class SeqDataset:
     @staticmethod
     def save_from_fastas(
         fastas: Path | str,
-        savepath: Path,
+        savepath: Path | None,
         metadata: Path | None = None,
         mcols: Sequence | None = None,
         id_col: str = "sample",
@@ -482,7 +482,7 @@ class SeqDataset:
         seq_stop: str = "stop",
         max_length: int = 512,
         **kwargs,
-    ) -> None:
+    ) -> None | Dataset:
         """Construct a dataset from fasta files and metadata,
         saving to a parquet dataset for future use
 
@@ -512,7 +512,7 @@ class SeqDataset:
             max_length=max_length,
             **kwargs,
         )
-        dataset = Dataset.from_generator(spp.gen)
+        dataset: Dataset = Dataset.from_generator(spp.gen)
         if metadata:
             meta = read_tabular(metadata).rename({id_col: "sample"}).unique("sample")
             if mcols is not None:
@@ -545,4 +545,6 @@ class SeqDataset:
                 dataset = concatenate_datasets([dataset, entries_within], axis=1)
             except NoDataError:
                 print("No sequence metadata provided")
+        if savepath is None:
+            return dataset
         dataset.save_to_disk(dataset_path=savepath)
