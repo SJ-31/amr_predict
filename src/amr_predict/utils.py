@@ -20,6 +20,8 @@ from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader
 
+CACHE_OPTIONS: TypeAlias = Literal["train_loss", "val_acc", "val_loss", "train_acc"]
+
 # * Utility functions
 
 TASK_TYPES: TypeAlias = Literal["classification", "regression"]
@@ -419,8 +421,6 @@ def train_test_from_dict(df: pl.DataFrame, spec: dict) -> tuple[np.ndarray, np.n
 
 
 # * Classes
-
-
 @dataclass
 class ModuleConfig:
     def __init__(
@@ -429,45 +429,31 @@ class ModuleConfig:
         optimizer_fn: Callable | None = None,
         scheduler_fn: Callable | None = None,
         scheduler_config: dict | None = None,
-        cache: str | None | Sequence = None,
+        cache: tuple[CACHE_OPTIONS] | CACHE_OPTIONS | None = None,
         record_norm: bool = False,
         dropout_p: float = 0.2,
         init_device: str = "cpu",
         n_tasks: int = 1,
-        n_classes: list[int] | None = None,
+        n_classes: tuple[int] = (1,),
         task_type: TASK_TYPES = "regression",
-        **kwargs,
+        task_names: tuple | None = None,
+        task_weights: Tensor | None = None,
+        **kws,
     ) -> None:
-        """
-        Parameters
-        ----------
-        task_weights : Tensor | Sequence | None
-            task_weights
-        log_norm : bool
-            Whether to log the gradient norm
-        cache : str | Sequence None
-            Module attributes to cache e.g. for logging
-        scaler : TorchScaler
-            Fitted (ideally on entire train set) scaler that will apply transformation
-            to each batch prior to training
-        kwargs : Model-specific kwargs, stored in a dict
-        task_names : Sequence
-            For supervised models, a sequence of task keys with which to access the target
-            variables from the dataset during training
-        targets : Tensor of targets that the model will observe during training
-        """
         self.n_tasks: int = n_tasks
         self.record_norm: bool = record_norm
         self.record: bool = record_metrics
         self._init_device: torch.device = torch.device(init_device)
+        self.task_names: tuple = task_names or ()
         self.optimizer_fn: Callable | None = optimizer_fn
-        self.n_classes: list[int] | None = n_classes
+        self.n_classes: tuple[int] = n_classes
         self.scheduler_fn: Callable | None = scheduler_fn
         self.scheduler_config: dict | None = scheduler_config
         self.dropout_p: float = dropout_p
-        self.cache: str | Sequence | None = cache
+        self.cache: CACHE_OPTIONS | tuple[CACHE_OPTIONS] | None = cache
         self.task_type: TASK_TYPES = task_type
-        self.kwargs: dict = kwargs
+        self.task_weights: Tensor | None = task_weights
+        self.kws: dict = kws
 
     @property
     def init_device(self) -> torch.device:

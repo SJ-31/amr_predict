@@ -1,0 +1,11 @@
+pretrained:
+  seqlens: "omicseye/seqLens_4096_512_46M-Mp"
+  evo2: ""
+models:
+  baseline:
+  mlp:
+    kws:
+      hidden_dim: 128
+      num_layers: 2
+    trainer: # TODO: allow specification of model-specific trainer
+

@@ -4,8 +4,9 @@ import os
 from pathlib import Path
 
 import amr_predict.evaluation as ae
+import lightning as L
 import polars as pl
-from amr_predict.models import Baseline
+from amr_predict.models import MLP, Baseline
 from amr_predict.utils import (
     TASK_TYPES,
     ModuleConfig,
@@ -24,6 +25,7 @@ except ImportError:
 
 RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
+MODEL_ENV: dict = smk.config["models"]
 os.environ["HF_HOME"] = smk.config["huggingface"]
 
 RCONFIG["validation_kws"]["seed"] = RNG
@@ -63,8 +65,8 @@ if smk.rule in {"cross_validate", "holdout"}:
         obs: pl.DataFrame | None = (
             dataset.remove_columns("x").to_polars() if smk.rule == "holdout" else None
         )
+        ttype: TASK_TYPES
         for ttype, task_names in smk.config["tasks"].items():
-            ttype: TASK_TYPES
             if not task_names:
                 continue
             if ttype == "classification":
@@ -75,31 +77,42 @@ if smk.rule in {"cross_validate", "holdout"}:
                 in_features, n_classes = dataset[x_key][:].shape[1], None
                 bmodel = XGBRegressor
             mconf = ModuleConfig(
-                task_type=ttype, n_classes=n_classes, n_tasks=len(task_names)
+                task_type=ttype,
+                n_classes=n_classes,
+                n_tasks=len(task_names),
+                task_names=task_names,
             )
             for mname in RCONFIG["models"]:
                 outfile = f"{smk.params["outdir"]}/{mname}/{dname}_{ttype}.csv"
+                model_kws: dict = MODEL_ENV[mname].get("kws")
+                model_kws = model_kws or {}
+                trainer_kws = MODEL_ENV[mname].get("trainer")
+                trainer_kws = trainer_kws or smk.config.get("trainer", {})
                 if mname == "baseline":
                     model = Baseline(
-                        task_names=task_names,
                         x_key=x_key,
                         device=smk.params["device"],
                         model=bmodel,
                         conf=mconf,
+                        **model_kws,
                     )
                     valid_dset = None
                     validation_kws = None
-                else:
-                    raise NotImplementedError()
+                    trainer: L.Trainer | None = None
+                elif mname == "mlp":
+                    model = MLP(
+                        in_features=in_features, x_key=x_key, conf=mconf, **model_kws
+                    )
+                    trainer = L.Trainer(**trainer_kws)
                 if smk.rule == "cross_validate":
-                    eva = ae.Evaluator(model=model, how="cv")
+                    eva = ae.Evaluator(model=model, how="cv", trainer=trainer)
                     result: pl.DataFrame = eva.cv(
                         dataset,
                         validation_kws=validation_kws,  # No need when using baseline
                         **RCONFIG["k_fold"],
                     )
                 elif smk.rule == "holdout":
-                    eva = ae.Evaluator(model=model, how="holdout")
+                    eva = ae.Evaluator(model=model, how="holdout", trainer=trainer)
                     result = holdout_helper(
                         dataset=dataset, eva=eva, obs=obs, validation=valid_dset
                     )

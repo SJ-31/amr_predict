@@ -1,6 +1,9 @@
 include: "Snakefile"
 
 
+configfile: "models.yaml"
+
+
 from pathlib import Path
 
 OUTDIRS = {
