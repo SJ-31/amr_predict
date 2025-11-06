@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import polars as pl
+import polars.selectors as cs
 import yaml
 from amr_predict.utils import discretize_resistance, read_tabular
 from pyhere import here
@@ -27,4 +28,6 @@ for name, dset_spec in spec["metadata"].items():
         df = df.drop(to_drop)
     metas.append(df.with_columns(pl.lit(name).alias("dataset")))
 
-meta: pl.DataFrame = pl.concat(metas, how="diagonal_relaxed")
+meta: pl.DataFrame = pl.concat(metas, how="diagonal_relaxed").select(
+    "sample", "dataset", cs.exclude(["sample", "dataset"])
+)
