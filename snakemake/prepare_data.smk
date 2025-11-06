@@ -1,4 +1,6 @@
 from pathlib import Path
+from typing import get_args
+from amr_predict.preprocessing import EMBEDDING_METHODS
 
 
 include: "Snakefile"
@@ -34,20 +36,28 @@ DATA_OUTS = {
         # 3. Sequences pooled into genome-level representations
     )
 }
-pooling_methods = config["pool_embeddings"]["methods"]
-
+pooling_methods = [
+    d.get("name", d["method"]) for d in config["pool_embeddings"]["methods"]
+]
 
 PLOT_OUT = f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation"
 POOLED_PLOTS = expand(
     "{o}/{d}-{p}.png", o=PLOT_OUT, d=PREPROCESSING.keys(), p=pooling_methods
 )
 
+POOLED_ALREADY = [
+    d
+    for d, k in PREPROCESSING.items()
+    if k.get("method") in get_args(EMBEDDING_METHODS)
+]
+TO_POOL = [d for d in PREPROCESSING.keys() if d not in POOLED_ALREADY]
+
 
 def get_pooled_out(as_dir: bool = False):
     expanded = expand(
         "{o}/{d}-{p}",
         o=DATA_OUTS["P"],
-        d=PREPROCESSING.keys(),
+        d=TO_POOL,
         p=pooling_methods,
     )
     if as_dir:
@@ -58,8 +68,9 @@ def get_pooled_out(as_dir: bool = False):
 rule all:
     input:
         POOLED_PLOTS,
-        embedded=[f"{DATA_OUTS["E"]}/{d}" for d in PREPROCESSING.keys()],
+        embedded=[f"{DATA_OUTS["E"]}/{d}" for d in TO_POOL],
         pooled=get_pooled_out(),
+        other_pooled=[f"{DATA_OUTS['P']}/{d}" for d in POOLED_ALREADY],
         meta=f"{PROCESSED}/{DATE}/seq_metadata.csv",
 
 
@@ -72,11 +83,13 @@ rule get_seq_metadata:
 
 rule make_text_datasets:
     output:
-        [directory(f"{DATA_OUTS["S"]}/{d}") for d in PREPROCESSING.keys()],
+        [directory(f"{DATA_OUTS['S']}/{d}") for d in TO_POOL],
+        [directory(f"{DATA_OUTS['P']}/{d}") for d in POOLED_ALREADY],
     input:
         rules.get_seq_metadata.output,
     params:
         outdir=DATA_OUTS["S"],
+        outdir_pooled=DATA_OUTS["P"],
         preprocessing=PREPROCESSING,
     script:
         "scripts/prepare_data.py"
@@ -87,8 +100,9 @@ rule make_embedded_datasets:
         rules.make_text_datasets.output,
     params:
         outdir=DATA_OUTS["E"],
+        ignore=POOLED_ALREADY,
     output:
-        [directory(f"{DATA_OUTS['E']}/{d}") for d in PREPROCESSING.keys()],
+        [directory(f"{DATA_OUTS['E']}/{d}") for d in TO_POOL],
     script:
         "scripts/prepare_data.py"
 

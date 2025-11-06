@@ -68,7 +68,7 @@ class SeqPooler:
         self.kws: dict = kws
 
     def apply_whitelist(self, dataset: Dataset) -> Dataset:
-        return dataset.filter(lambda x: x[self.whitelist] in self.feature_whitelist)
+        return dataset.filter(lambda x: x[self.whitelist_col] in self.feature_whitelist)
 
     def _finalize_dataset(
         self,

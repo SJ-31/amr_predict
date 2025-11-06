@@ -2,12 +2,14 @@
 genomes: "../data/remote/genomes/jia"
 
 pool_embeddings:
-  methods: ["mean", "sum", "similarity"] # [2025-10-27 Mon] swe caused bus error
+  methods:
+    - method: mean
+    - method: sum
+    - method: similarity
+  # [2025-10-27 Mon] swe caused bus error
   obs_keep:
     ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC", "CST", "MIN"]
   key: "x"
-  discretize:
-    cols: ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC", "MIN"]
 
 tasks:
   classification: ["GEN_class", "MIN_class"]
