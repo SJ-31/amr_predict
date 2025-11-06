@@ -127,12 +127,12 @@ def join_within(
 
 
 def discretize_resistance(
-    dataset: Dataset,
+    dataset: Dataset | pl.DataFrame,
     cols: Sequence,
     susceptible: float = 0.3,
     resistant: float = 0.8,
     suffix: str = "",
-) -> Dataset:
+) -> Dataset | pl.DataFrame:
     """Discretize continuous resistance scores
     e.g. AST into one of three categories, using quantiles
 
@@ -147,7 +147,8 @@ def discretize_resistance(
     cols : Sequence
         columns to consider
     """
-    df: pl.DataFrame = dataset.to_polars().select(cols)
+    was_df = isinstance(dataset, pl.DataFrame)
+    df: pl.DataFrame = dataset.to_polars().select(cols) if not was_df else dataset
     exprs = (
         pl.when(pl.col(col) < pl.col(col).quantile(susceptible))
         .then(pl.lit("susceptible"))
@@ -157,13 +158,20 @@ def discretize_resistance(
         .alias(col)
         for col in cols
     )
-    df = df.with_columns(*exprs)
-    if not suffix:
+    tmp = df.with_columns(*exprs)
+    if not suffix and not was_df:
         dataset = dataset.remove_columns(cols)
-    for col in cols:
-        n = f"{col}_{suffix}" if suffix else col
-        dataset = dataset.add_column(n, df[col])
-    return dataset
+    elif not suffix:
+        return tmp
+    if not was_df:
+        for col in cols:
+            n = f"{col}_{suffix}" if suffix else col
+            dataset = dataset.add_column(n, tmp[col])
+        return dataset
+    return pl.concat(
+        [df, tmp.select(cols).rename({c: f"{c}_{suffix}" for c in cols})],
+        how="horizontal",
+    )
 
 
 def add_intergenic(
