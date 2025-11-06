@@ -303,7 +303,6 @@ elif smk.rule == "make_embedded_datasets":
 # * Pool
 elif smk.rule == "pool_embeddings":
     methods: list[dict] = RCONFIG.pop("methods")
-    discretization = RCONFIG.pop("discretize")
     for embedding_ds in smk.input:
         inpath = Path(embedding_ds)
         for spec in methods:
@@ -321,7 +320,6 @@ elif smk.rule == "pool_embeddings":
                     **spec_kws,
                 )
                 pooled = sp(inpath)
-                pooled = discretize_resistance(pooled, **discretization)
                 pooled.save_to_disk(dataset_path=savepath)
             else:
                 pooled = load_as(savepath)
