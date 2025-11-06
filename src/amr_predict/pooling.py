@@ -184,3 +184,53 @@ class SeqPooler:
         if mean:
             summed = torch.mul(summed, mask.sum(axis=1).reshape(-1, 1))
         return summed
+
+# ** Basic autoencoder
+
+
+class AePooling(BaseNN):
+    def __init__(
+        self,
+        out_features: int | None = None,
+        x_key: str = "x",
+        y_key: str = "original",
+        encoder_depth: int = 2,
+        decoder_depth: int = 2,
+        activation: nn.Module = nn.ReLU,
+        conf: ModuleConfig | None = None,
+    ) -> None:
+        super().__init__(in_features=0, x_key=x_key, conf=conf)
+        self.task_names = [y_key]
+        # self.pooling_weights: nn.Parameter = nn.Parameter(torch.)
+        # TODO: probably want to review what's good here
+        self.encoder: nn.ModuleList = nn.ModuleList()
+        self.decoder: nn.ModuleList = nn.ModuleList()
+        for _ in range(encoder_depth):
+            self.encoder.append(nn.LazyLinear(out_features=out_features))
+            self.encoder.append(activation())
+
+        for _ in range(decoder_depth):
+            self.decoder.append(nn.LazyLinear(out_features=out_features))
+            self.decoder.append(activation())
+
+    @override
+    def forward(self, X: Tensor) -> Tensor:
+        # Batched has shape (batch, n_seqs, embedding_dim)
+        encoded: Tensor = self.encoder(X)
+        return encoded.mean(axis=1)
+        # Or should it be
+        # return torch.einsum("abc,bc->ac", batch, self.pooling_weights)
+
+    def criterion(
+        self,
+        y_pred,
+        y_true,
+        context: str | None = None,
+        batch: dict | None = None,
+        **kwargs,
+    ):
+        as_before = torch.nn.functional.pad(
+            y_pred.unsqueeze(1), (0, 0, 0, self.embedding_size), value=1
+        )
+        decoded = self.pooler.decoder(as_before)
+        return nn.functional.mse_loss(input=decoded, target=batch[self.x_key])

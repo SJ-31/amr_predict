@@ -104,18 +104,20 @@ class BaseNN(L.LightningModule):
         self.x_key: str = x_key
         self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
         self.n_tasks: int = self.conf.n_tasks
-        self._metrics: nn.ModuleList
+        self.metric_loggers: nn.ModuleList
         self.supervised: bool = True
         self.task_type: TASK_TYPES = self.conf.task_type
         self.n_classes: tuple[int] = (
             (1,) if self.task_type == "regression" else self.conf.n_classes
         )
         if self.conf.record and self.task_type == "classification":
-            self._metrics = nn.ModuleList(
+            self.metric_loggers = nn.ModuleList(
                 [Accuracy(task="multiclass", num_classes=n) for n in self.n_classes]
             )
         elif self.conf.record:
-            self._metrics = nn.ModuleList([MeanSquaredError(num_outputs=self.n_tasks)])
+            self.metric_loggers = nn.ModuleList(
+                [MeanSquaredError(num_outputs=self.n_tasks)]
+            )
 
         if self.conf.task_names is None:
             self.task_names: Sequence[str] = [str(i) for i in range(self.n_tasks)]
@@ -224,7 +226,7 @@ class BaseNN(L.LightningModule):
     def _score_regression(
         self, output: Tensor | tuple[Tensor], y_true: Tensor, prefix: str
     ) -> None:
-        scores = self._metrics[0](output, y_true)
+        scores = self.metric_loggers[0](output, y_true)
         for name, score in zip(self.task_names, scores):
             self.log(f"{prefix}_mse_{name}", score)
         self._try_cache_to(f"{prefix}_mse", scores.mean())
@@ -247,12 +249,12 @@ class BaseNN(L.LightningModule):
             for i, (name, y_true, pred) in enumerate(
                 zip(self.task_names, self.iter_cols(y_true), self.iter_cols(preds))
             ):
-                acc = self._metrics[i](pred, y_true)
+                acc = self.metric_loggers[i](pred, y_true)
                 accs.append(acc)
                 self.log(f"{prefix}_acc_{name}", acc)
             self._try_cache_to(f"{prefix}_acc", torch.tensor(accs).mean())
         else:
-            acc = self._metrics[0](preds, y_true)
+            acc = self.metric_loggers[0](preds, y_true)
             self.log(f"{prefix}_acc_step", acc)
             self._try_cache_to(f"{prefix}_acc", acc)
 
