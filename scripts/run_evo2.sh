@@ -4,6 +4,7 @@
 # ARG_OPTIONAL_BOOLEAN([cpu])
 # ARG_OPTIONAL_BOOLEAN([gpu])
 # ARG_OPTIONAL_BOOLEAN([shell])
+# ARG_OPTIONAL_SINGLE([download],[d],[Path to download file])
 # ARG_HELP([<The general help message of my script>])
 # ARGBASH_GO()
 # needed because of Argbash --> m4_ignore([
@@ -19,7 +20,7 @@ die() {
 }
 
 begins_with_short_option() {
-    local first_option all_short_options='h'
+    local first_option all_short_options='dh'
     first_option="${1:0:1}"
     test "$all_short_options" = "${all_short_options/$first_option/}" && return 1 || return 0
 }
@@ -28,10 +29,12 @@ begins_with_short_option() {
 _arg_cpu="off"
 _arg_gpu="off"
 _arg_shell="off"
+_arg_download=
 
 print_help() {
     printf '%s\n' "<The general help message of my script>"
-    printf 'Usage: %s [--(no-)cpu] [--(no-)gpu] [--(no-)shell] [-h|--help]\n' "$0"
+    printf 'Usage: %s [--(no-)cpu] [--(no-)gpu] [--(no-)shell] [-d|--download <arg>] [-h|--help]\n' "$0"
+    printf '\t%s\n' "-d, --download: Path to download file (no default)"
     printf '\t%s\n' "-h, --help: Prints help"
 }
 
@@ -50,6 +53,17 @@ parse_commandline() {
         --no-shell | --shell)
             _arg_shell="on"
             test "${1:0:5}" = "--no-" && _arg_shell="off"
+            ;;
+        -d | --download)
+            test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+            _arg_download="$2"
+            shift
+            ;;
+        --download=*)
+            _arg_download="${_key##--download=}"
+            ;;
+        -d*)
+            _arg_download="${_key##-d}"
             ;;
         -h | --help)
             print_help
@@ -78,9 +92,18 @@ parse_commandline "$@"
 # For example:
 
 sif="/data/project/sirasris_shared/genomic_evo2.sif"
-script="/data/home/shannc/amr_predict/bin/evo_prob_pred_Gene.py"
+script="/data/home/shannc/amr_predict/scripts/evo_prob_pred_Gene.py"
+model_size="7b"
 
-if [[ "${_arg_cpu}" == "on" ]]; then
+if [[ -n "${_arg_download}" ]]; then
+    srun --qos=gpu20gh \
+        --partition=gpu \
+        --gres=gpu:3g.20gb:1 \
+        singularity exec "${sif}" evo2_convert_to_nemo2 \
+        --model-path "hf://arcinstitute/savanna_evo2_${model_size}_base" \
+        --model-size "${model_size}" \
+        --output-dir "${_arg_download}"
+elif [[ "${_arg_cpu}" == "on" ]]; then
     echo "srun with cpu"
     srun --qos=cpu24h \
         singularity exec "${sif}" python "${script}" "${@}"
@@ -99,3 +122,6 @@ fi
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^
 
 # ] <-- needed because of Argbash
+
+echo $LDFLAGS
+echo $CPPFLAGS
