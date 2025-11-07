@@ -20,9 +20,6 @@ if TEST:
     config["sample_metadata"]["file"] = f"{config["data"]["meta"]}/jia_samples.tsv"
     config["sample_metadata"]["id_col"] = "Accession"
     config["pool_embeddings"].update({"obs_keep": ["AMK", "GEN", "IPM", "CRO"]})
-    config["pool_embeddings"]["discretize"].update(
-        {"cols": ["AMK", "GEN", "IPM", "CRO"]}
-    )
 
 PREPROCESSING = config["preprocessing"]
 DATA_OUTS = {
@@ -41,9 +38,6 @@ pooling_methods = [
 ]
 
 PLOT_OUT = f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation"
-POOLED_PLOTS = expand(
-    "{o}/{d}-{p}.png", o=PLOT_OUT, d=PREPROCESSING.keys(), p=pooling_methods
-)
 
 POOLED_ALREADY = [
     d
@@ -51,6 +45,7 @@ POOLED_ALREADY = [
     if k.get("method") in get_args(EMBEDDING_METHODS)
 ]
 TO_POOL = [d for d in PREPROCESSING.keys() if d not in POOLED_ALREADY]
+POOLED_PLOTS = expand("{o}/{d}-{p}.png", o=PLOT_OUT, d=TO_POOL, p=pooling_methods)
 
 
 def get_pooled_out(as_dir: bool = False):
