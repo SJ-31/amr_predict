@@ -14,7 +14,7 @@ import pandas as pd
 import plotnine as gg
 import polars as pl
 import scanpy as sc
-from amr_predict.metrics import nn_proportions, nps
+from amr_predict.metrics import nn_proportions
 from amr_predict.plotting import plot_adata
 from amr_predict.utils import load_as
 from fastcluster import linkage, pdist

@@ -8,7 +8,7 @@ from typing import Literal, get_args
 import plotnine as gg
 import polars as pl
 import torch
-from amr_predict.utils import discretize_resistance, load_as
+from amr_predict.utils import load_as
 from datasets import Dataset
 from scipy import stats
 from snakemake.script import snakemake as smk

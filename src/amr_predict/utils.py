@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader
 
 CACHE_OPTIONS: TypeAlias = Literal["train_loss", "val_acc", "val_loss", "train_acc"]
 
+
 # * Utility functions
 
 TASK_TYPES: TypeAlias = Literal["classification", "regression"]
@@ -329,6 +330,7 @@ def load_as(
     elif format == "adata":
         x_key = x_key if x_key is not None else to_keep[0]
         x = dset[x_key][:]
+        x = x.numpy() if isinstance(x, Tensor) else x
         to_keep.remove(x_key)
         obs = dset.remove_columns(x_key).select_columns(to_keep).to_pandas()
         return ad.AnnData(X=x, obs=obs)
