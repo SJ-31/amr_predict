@@ -5,10 +5,7 @@ include: "Snakefile"
 
 
 if TEST:
-    config["compare_embeddings"]["cluster_on"] = [
-        "sample",
-        "Strain",
-    ]
+    config["compare_embeddings"]["cluster_on"] = ["sample", "hamr_gene_symbol"]
     config["compare_pooled"]["cluster_on"] = ["AMK_class", "GEN_class"]
     config["compare_pooled"]["continuous"] = ["AMK", "CRO", "IPM"]
     config["compare_pooled"]["pair_distance_distribution"]["cols"] = ["AMK_class"]

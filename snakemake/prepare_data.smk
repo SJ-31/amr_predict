@@ -17,8 +17,10 @@ if TEST:
             "bakta": f"{TEST_DATA}/bakta",
         }
     )
-    config["sample_metadata"]["file"] = f"{config["data"]["meta"]}/jia_samples.tsv"
-    config["sample_metadata"]["id_col"] = "Accession"
+    config["sample_metadata"][
+        "file"
+    ] = f"{config["data"]["meta"]}/combined_sample_meta.tsv"
+    config["sample_metadata"]["id_col"] = "sample"
     config["pool_embeddings"].update({"obs_keep": ["AMK", "GEN", "IPM", "CRO"]})
 
 PREPROCESSING = config["preprocessing"]

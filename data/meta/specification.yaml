@@ -1,14 +1,14 @@
-discretize_suffix: "class"
+discretize_suffix: "class" # Suffix to add to discretized columns
 sample_col: "sample"
 
 metadata:
   jia:
     path: "jia_samples_reformatted.tsv"
     sample_col: "Accession"
-    discretize:
+    discretize: # Continuous resistance variables to discretize
       cols: ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC", "MIN"]
-      susceptible: 0.3,
-      resistant: 0.8,
+      susceptible: 0.3 # lower than this quantile is susceptible
+      resistant: 0.8 # greater than this is resistant
     to_drop:
       ["Strain", "ST Oxf", "ST Pas", "K/O typing", "City", "Collection date"]
   moradigaravand:

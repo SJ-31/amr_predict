@@ -6,20 +6,9 @@
 remote=".."
 
 # Jia run completed [2025-09-22]
-# nextflow run nf-core/funcscan \
-#     --input "./jia_samplesheet.csv" \
-#     --outdir "${remote}/output/jia_funcscan_2025-09-22" \
-#     -profile singularity \
-#     --run_arg_screening \
-#     --run_amp_screening \
-#     --run_bgc_screening \
-#     --annotation_tool bakta \
-#     --annotation_bakta_db "${remote}/datasets/bakta_db_v5.1_full" \
-#     --save_annotations true
-
 nextflow run nf-core/funcscan \
-    --input "./moradigaravand_samplesheet.csv" \
-    --outdir "${remote}/output/moradigaravand_funcscan_2025-10-24" \
+    --input "./jia_samplesheet.csv" \
+    --outdir "${remote}/output/jia_funcscan_2025-09-22" \
     -profile singularity \
     --run_arg_screening \
     --run_amp_screening \
