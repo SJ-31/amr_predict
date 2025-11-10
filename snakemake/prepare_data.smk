@@ -17,11 +17,18 @@ if TEST:
             "bakta": f"{TEST_DATA}/bakta",
         }
     )
+    config["pool_embeddings"]["methods"] = [
+        {"method": m} for m in ("mean", "sum", "similarity")
+    ]
     config["sample_metadata"][
         "file"
     ] = f"{config["data"]["meta"]}/combined_sample_meta.tsv"
     config["sample_metadata"]["id_col"] = "sample"
-    config["pool_embeddings"].update({"obs_keep": ["AMK", "GEN", "IPM", "CRO"]})
+    to_keep = [[a, f"{a}_class"] for a in ["AMK", "GEN", "IPM", "CRO"]]
+    config["pool_embeddings"].update(
+        {"obs_keep": [el for sublist in to_keep for el in sublist]}
+    )
+    del config["preprocessing"]["feature_presence_bakta"]
 
 PREPROCESSING = config["preprocessing"]
 DATA_OUTS = {

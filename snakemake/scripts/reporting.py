@@ -263,7 +263,7 @@ def covar_dist(
                 shuffled = shuffled[:-1]
             pair_mat = np.array([np.array(p) for p in batched(shuffled, 2)])
         edist = paired_distances(
-            adata.X[pair_mat[:, 0]], adata.X[pair_mat[:, 1]], distance_metric
+            adata.X[pair_mat[:, 0]], adata.X[pair_mat[:, 1]], metric=distance_metric
         )
         x = pair_mat[:, 0]
         y = pair_mat[:, 1]
@@ -366,7 +366,9 @@ if smk.rule in {"compare_embeddings", "compare_pooled"}:
     rng: Generator = np.random.default_rng(seed=smk.config["rng"])
     all_dfs = []
     for dir in smk.params["datasets"]:
-        adata: ad.AnnData = load_as(dir, "adata")
+        adata: ad.AnnData = load_as(
+            dir, "adata", x_key=smk.config["pool_embeddings"]["key"]
+        )
         adata.obs = adata.obs.replace(
             to_replace={c: np.nan for c in RCONFIG["cluster_on"]}, value="unknown"
         )
