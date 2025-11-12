@@ -5,6 +5,8 @@
 # ARG_OPTIONAL_BOOLEAN([gpu])
 # ARG_OPTIONAL_BOOLEAN([shell])
 # ARG_OPTIONAL_SINGLE([download],[d],[Path to download file])
+# ARG_OPTIONAL_SINGLE([input],[i],[Path to input file or directory])
+# ARG_OPTIONAL_SINGLE([outdir],[o],[Path to output direcotry])
 # ARG_HELP([<The general help message of my script>])
 # ARGBASH_GO()
 # needed because of Argbash --> m4_ignore([
@@ -20,7 +22,7 @@ die() {
 }
 
 begins_with_short_option() {
-    local first_option all_short_options='dh'
+    local first_option all_short_options='dioh'
     first_option="${1:0:1}"
     test "$all_short_options" = "${all_short_options/$first_option/}" && return 1 || return 0
 }
@@ -30,11 +32,15 @@ _arg_cpu="off"
 _arg_gpu="off"
 _arg_shell="off"
 _arg_download=
+_arg_input=
+_arg_outdir=
 
 print_help() {
     printf '%s\n' "<The general help message of my script>"
-    printf 'Usage: %s [--(no-)cpu] [--(no-)gpu] [--(no-)shell] [-d|--download <arg>] [-h|--help]\n' "$0"
+    printf 'Usage: %s [--(no-)cpu] [--(no-)gpu] [--(no-)shell] [-d|--download <arg>] [-i|--input <arg>] [-o|--outdir <arg>] [-h|--help]\n' "$0"
     printf '\t%s\n' "-d, --download: Path to download file (no default)"
+    printf '\t%s\n' "-i, --input: Path to input file or directory (no default)"
+    printf '\t%s\n' "-o, --outdir: Path to output direcotry (no default)"
     printf '\t%s\n' "-h, --help: Prints help"
 }
 
@@ -65,6 +71,28 @@ parse_commandline() {
         -d*)
             _arg_download="${_key##-d}"
             ;;
+        -i | --input)
+            test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+            _arg_input="$2"
+            shift
+            ;;
+        --input=*)
+            _arg_input="${_key##--input=}"
+            ;;
+        -i*)
+            _arg_input="${_key##-i}"
+            ;;
+        -o | --outdir)
+            test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+            _arg_outdir="$2"
+            shift
+            ;;
+        --outdir=*)
+            _arg_outdir="${_key##--outdir=}"
+            ;;
+        -o*)
+            _arg_outdir="${_key##-o}"
+            ;;
         -h | --help)
             print_help
             exit 0
@@ -93,35 +121,43 @@ parse_commandline "$@"
 
 sif="/data/project/sirasris_shared/genomic_evo2.sif"
 script="/data/home/shannc/amr_predict/scripts/evo_prob_pred_Gene.py"
+ckpt="/data/home/shannc/amr_predict/date/remote/cache/evo2_7b"
 model_size="7b"
 
+# QOS
+gpu_qos="40"
+if [[ "${gpu_qos}" == "40" ]]; then
+    gpu="--qos=gpu40g --partition=gpu --gres=gpu:7g.40gb:1"
+else
+    gpu="--qos=gpu20gh --partition=gpu --gres=gpu:3g.20gb:1"
+fi
+
 if [[ -n "${_arg_download}" ]]; then
-    srun --qos=gpu20gh \
-        --partition=gpu \
-        --gres=gpu:3g.20gb:1 \
-        singularity exec "${sif}" evo2_convert_to_nemo2 \
+    echo "Downloading with gpu qos ${gpu}"
+    srun ${gpu} --mem=40G \
+        singularity exec --nv "${sif}" evo2_convert_to_nemo2 \
         --model-path "hf://arcinstitute/savanna_evo2_${model_size}_base" \
         --model-size "${model_size}" \
         --output-dir "${_arg_download}"
 elif [[ "${_arg_cpu}" == "on" ]]; then
     echo "srun with cpu"
-    srun --qos=cpu24h \
-        singularity exec "${sif}" python "${script}" "${@}"
+    srun --qos=cpu24h singularity exec --nv "${sif}" python "${script}" \
+        -c "${ckpt}" -i "${_arg_input}" -o "${_arg_outdir}"
+
 elif [[ "${_arg_gpu}" == "on" ]]; then
-    echo "srun with gpu"
-    srun --qos=gpu20gh \
-        --partition=gpu \
-        --gres=gpu:3g.20gb:1 \
-        singularity exec "${sif}" python "${script}" "${@}"
+    echo "srun with gpu ${gpu}"
+    srun ${gpu} singularity exec --nv "${sif}" python "${script}" \
+        -c "${ckpt}" -i "${_arg_input}" -o "${_arg_outdir}"
+
 elif [[ "${_arg_shell}" == "on" ]]; then
-    singularity shell "${sif}"
+    singularity shell --nv "${sif}"
 else
-    singularity exec "${sif}" python "${script}" "${@}"
+    singularity exec "${sif}" python "${script}" \
+        -c "${ckpt}" -i "${_arg_input}" -o "${_arg_outdir}"
 fi
 
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^
 
-# ] <-- needed because of Argbash
-
 echo $LDFLAGS
 echo $CPPFLAGS
+# ] <-- needed because of Argbash

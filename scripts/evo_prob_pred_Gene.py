@@ -28,14 +28,9 @@ from typing import Literal, Optional
 import nemo.lightning as nl
 import torch
 from bionemo.core.data.load import load
+from bionemo.evo2.data.fasta_dataset import SimpleFastaDataset
 from bionemo.llm.lightning import LightningPassthroughPredictionMixin
 from bionemo.llm.utils.callbacks import PredictionWriter
-
-# from bionemo.evo2.data.fasta_dataset import SimpleFastaDataset
-#
-# [2025-11-06 Thu] BUG: these modules aren't available, but are required
-# from custom_fasta_dataset import CustomSimpleFastaDataset as SimpleFastaDataset
-# from evo2_config import evo2_config_for_prediction
 from lightning.pytorch import LightningDataModule
 from megatron.core import parallel_state
 from megatron.core.tensor_parallel.mappings import _gather_along_last_dim
@@ -46,8 +41,6 @@ from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenize
 from nemo.lightning import NeMoLogger
 from nemo.lightning.data import WrappedDataLoader
 from torch import Tensor
-
-exit()
 
 logging.getLogger("nemo_logger").setLevel(logging.ERROR)
 
@@ -453,36 +446,56 @@ def predict(
     )  # Finally write out the index map so we can match the predictions to the original sequences.
 
 
-MODEL_SIZE = "7b"
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--checkpoint_path", required=True)
+    parser.add_argument("-i", "--input", required=True)
+    parser.add_argument("-o", "--outdir", required=True)
+    args = vars(parser.parse_args())  # convert to dict
+    return args
 
-if MODEL_SIZE == "1b":
-    checkpoint_path = load("evo2/1b-8k-bf16:1.0")
-elif MODEL_SIZE == "7b":
-    checkpoint_path = Path(f"/bionemo-framework/scripts/nemo2_evo2_{MODEL_SIZE}_8k")
 
-if not checkpoint_path.exists():
-    raise ValueError("Model checkpoint not found")
-
-for i in os.listdir("/ProteinGym/fasta"):
-    if i.endswith(".fasta"):
-        try:
-            fasta_path = "/ProteinGym/fasta/" + i
-            json_path = "/ProteinGym/json/" + i
-            predict(
-                fasta_path=Path(fasta_path),
-                ckpt_dir=checkpoint_path,
-                tensor_parallel_size=1,
-                pipeline_model_parallel_size=1,
-                context_parallel_size=1,
-                batch_size=1,
-                output_dir=Path(evo2_config_for_prediction["output_dir"]),
-                json_output_path=Path(json_path),
-                model_size="7b",
-                ckpt_format="torch_dist",
-                prepend_bos=True,
-                output_log_prob_seqs=True,
-                log_prob_collapse_option="mean",
-            )
-        except Exception as error:
-            print(error)
-            raise
+if __name__ == "__main__":
+    args = parse_args()
+    input: Path = Path(args["input"])
+    outdir: Path = Path(args["outdir"])
+    checkpoint_path: Path = Path(args["checkpoint_path"])
+    if not checkpoint_path.exists():
+        raise ValueError("Model checkpoint not found")
+    extensions = {".fasta", ".fa", ".fna"}
+    if input.is_dir():
+        for file in input.iterdir():
+            if file.suffix in extensions:
+                json_out = outdir / f"{input.stem}.json"
+                predict(
+                    fasta_path=Path(file),
+                    ckpt_dir=checkpoint_path,
+                    tensor_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    context_parallel_size=1,
+                    batch_size=1,
+                    output_dir=outdir,
+                    json_output_path=json_out,
+                    model_size="7b",
+                    ckpt_format="torch_dist",
+                    prepend_bos=True,
+                    output_log_prob_seqs=True,
+                    log_prob_collapse_option="mean",
+                )
+    else:
+        json_out = outdir / f"{input.stem}.json"
+        predict(
+            fasta_path=input,
+            ckpt_dir=checkpoint_path,
+            tensor_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            batch_size=1,
+            output_dir=outdir,
+            json_output_path=json_out,
+            model_size="7b",
+            ckpt_format="torch_dist",
+            prepend_bos=True,
+            output_log_prob_seqs=True,
+            log_prob_collapse_option="mean",
+        )
