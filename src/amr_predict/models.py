@@ -367,10 +367,13 @@ class MLP(BaseNN):
     ):
         super().__init__(in_features=in_features, x_key=x_key, conf=conf)
         self.save_hyperparameters()
+        if hidden_dim == -1:
+            hidden_dim = in_features
         layers = []
         for _ in range(num_layers):
             layers.append(nn.Linear(in_features=in_features, out_features=hidden_dim))
             layers.append(activation())
+            layers.append(nn.BatchNorm1d(num_features=hidden_dim))
             in_features = hidden_dim
         if self.task_type == "classification":
             self.outlayer: nn.ModuleList | None = nn.ModuleList(
