@@ -5,7 +5,9 @@ from pathlib import Path
 
 import amr_predict.evaluation as ae
 import lightning as L
+import numpy as np
 import polars as pl
+import torch
 from amr_predict.models import MLP, Baseline
 from amr_predict.utils import (
     TASK_TYPES,
@@ -15,7 +17,7 @@ from amr_predict.utils import (
     load_as,
     train_test_from_dict,
 )
-from datasets import Dataset
+from datasets import Dataset, concatenate_datasets
 from xgboost import XGBClassifier, XGBRegressor
 
 try:
@@ -27,8 +29,12 @@ RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
 MODEL_ENV: dict = smk.config["models"]
 os.environ["HF_HOME"] = smk.config["huggingface"]
+torch.set_default_dtype(torch.float32)
+
 
 RCONFIG["validation_kws"]["seed"] = RNG
+DEFAULT_TRAIN = smk.config.get("trainer", {})
+DEFAULT_LOADER = smk.config.get("dataloder", {})
 
 if smk.rule == "cross_validate":
     RCONFIG["k_fold"]["random_state"] = RNG
@@ -54,6 +60,36 @@ def holdout_helper(
     return eva.holdout(split_dset, holdout_splits)
 
 
+def randomize_dset(dset: Dataset, x_key: str) -> Dataset:
+    "Generate dataset with randomized columns for testing"
+
+    dset_dict = {x_key: dset[x_key][:]}
+
+    for col in dset.column_names:
+        was_tensor: bool = False
+        if col != x_key:
+            vals = dset[col][:]
+            if torch.is_tensor(vals):
+                was_tensor = True
+                vals = vals.numpy()
+            np.random.shuffle(vals)
+            dset_dict[col] = vals if not was_tensor else torch.tensor(vals)
+    dset = Dataset.from_dict(dset_dict).with_format("torch")
+    return dset
+
+
+def modify_for_test(dataset, x_key) -> Dataset:
+    dataset = concatenate_datasets(
+        [
+            randomize_dset(dataset, x_key),
+            randomize_dset(dataset, x_key),
+            randomize_dset(dataset, x_key),
+        ]
+    )
+    dataset = dataset.map(lambda x: {x_key: x[x_key][:1000]})
+    return dataset
+
+
 if smk.rule in {"cross_validate", "holdout"}:
     x_key, sample_key = (
         smk.config["pool_embeddings"]["key"],
@@ -62,6 +98,8 @@ if smk.rule in {"cross_validate", "holdout"}:
     for dpath in smk.params["datasets"]:
         dname = Path(dpath).stem
         dataset: Dataset = load_as(dpath)
+        if smk.config.get("test"):
+            dataset = modify_for_test(dataset, x_key)
         obs: pl.DataFrame | None = (
             dataset.remove_columns("x").to_polars() if smk.rule == "holdout" else None
         )
@@ -84,10 +122,9 @@ if smk.rule in {"cross_validate", "holdout"}:
             )
             for mname in RCONFIG["models"]:
                 outfile = f"{smk.params["outdir"]}/{mname}/{dname}_{ttype}.csv"
-                model_kws: dict = MODEL_ENV[mname].get("kws")
-                model_kws = model_kws or {}
-                trainer_kws = MODEL_ENV[mname].get("trainer")
-                trainer_kws = trainer_kws or smk.config.get("trainer", {})
+                model_kws = (MODEL_ENV[mname] or {}).get("kws", {})
+                trainer_kws = (MODEL_ENV[mname] or {}).get("trainer", DEFAULT_TRAIN)
+                loader_kws = (MODEL_ENV[mname] or {}).get("dataloader", DEFAULT_LOADER)
                 if mname == "baseline":
                     model = Baseline(
                         x_key=x_key,
@@ -105,14 +142,18 @@ if smk.rule in {"cross_validate", "holdout"}:
                     )
                     trainer = L.Trainer(**trainer_kws)
                 if smk.rule == "cross_validate":
-                    eva = ae.Evaluator(model=model, how="cv", trainer=trainer)
+                    eva = ae.Evaluator(
+                        model=model, how="cv", trainer=trainer, **loader_kws
+                    )
                     result: pl.DataFrame = eva.cv(
                         dataset,
                         validation_kws=validation_kws,  # No need when using baseline
                         **RCONFIG["k_fold"],
                     )
                 elif smk.rule == "holdout":
-                    eva = ae.Evaluator(model=model, how="holdout", trainer=trainer)
+                    eva = ae.Evaluator(
+                        model=model, how="holdout", trainer=trainer, **loader_kws
+                    )
                     result = holdout_helper(
                         dataset=dataset, eva=eva, obs=obs, validation=valid_dset
                     )
