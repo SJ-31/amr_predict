@@ -86,19 +86,28 @@ def multitask_metrics2df(metrics: dict) -> pl.DataFrame:
 
 
 def multitask_all_reg(
-    pred: Tensor, y_true: Tensor, task_names: Sequence[str] | None = None
+    pred: Tensor,
+    y_true: Tensor,
+    task_names: Sequence[str] | None = None,
+    metrics: tuple = ("mse", "pearson", "spearman", "nrmse"),
 ) -> dict:
     result = {}
     if task_names is None:
         task_names = [str(i) for i in range(pred.shape[1])]
     for p, truth, task in zip(iter_cols(pred), iter_cols(y_true), task_names):
         result[task] = {}
-        result[task]["mse"] = mean_squared_error(preds=p, target=truth)
-        result[task]["spearman"] = spearman_corrcoef(preds=p, target=truth)
-        result[task]["pearson"] = pearson_corrcoef(preds=p, target=truth)
-        result[task]["nrmse"] = normalized_root_mean_squared_error(
-            preds=p, target=truth
-        )
+        for m in metrics:
+            if m == "mse":
+                score = mean_squared_error(preds=p, target=truth)
+            elif m == "spearman":
+                score = spearman_corrcoef(preds=p, target=truth)
+            elif m == "pearson":
+                score = pearson_corrcoef(preds=p, target=truth)
+            elif m == "nrmse":
+                score = normalized_root_mean_squared_error(preds=p, target=truth)
+            else:
+                raise ValueError(f"Metric {m} not supported")
+            result[task][m] = score
     return result
 
 
