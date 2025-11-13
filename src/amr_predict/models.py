@@ -276,8 +276,6 @@ class BaseNN(L.LightningModule):
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, batch=batch, context="train")
         self.log("train_loss", loss)
-        if self.conf.record and y:
-            self._score_classification(output=output, y_true=y, prefix="train")
         self._try_cache_to("train_loss", loss)
         if self.conf.record_norm:
             norm = (
