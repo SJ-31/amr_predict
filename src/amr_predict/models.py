@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 import torchmetrics as tmet
+from amr_predict.metrics import multitask_cross_entropy_loss
 from amr_predict.utils import CACHE_OPTIONS, TASK_TYPES, ModuleConfig, iter_cols
 from datasets.arrow_dataset import Dataset
 from lightning.pytorch.utilities.types import OptimizerConfig
@@ -376,13 +377,21 @@ class MLP(BaseNN):
         batch: dict | None = None,
         **kws,
     ):
+        y_true = y_true.reshape(1, -1)
         if self.conf.task_type == "regression":
-            return tmet.functional.mean_squared_error(
+            losses = tmet.functional.mean_squared_error(
                 y_pred, y_true, num_outputs=self.n_tasks
             )
-        return nn.functional.cross_entropy(
-            input=y_pred, target=y_true, weight=self.conf.task_weights
+            if self.conf.task_weights:
+                losses = losses * self.conf.task_weights
+            return losses.sum()
+        return multitask_cross_entropy_loss(
+            y_pred=y_pred,
+            y_true=y_true,
+            model=self if self.conf.record else None,
+            weights=self.conf.task_weights,
         )
 
     def forward(self, X):
+        X = X.to(torch.get_default_dtype())
         return self.nn(X)
