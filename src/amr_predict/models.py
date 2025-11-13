@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 import torchmetrics as tmet
-from amr_predict.metrics import multitask_cross_entropy_loss
+from amr_predict.metrics import multitask_all_reg, multitask_cross_entropy_loss
 from amr_predict.utils import CACHE_OPTIONS, TASK_TYPES, ModuleConfig, iter_cols
 from datasets.arrow_dataset import Dataset
 from lightning.pytorch.utilities.types import OptimizerConfig
@@ -276,7 +276,9 @@ class BaseNN(L.LightningModule):
     def training_step(self, batch, batch_idx):
         x = batch[self.x_key]
         if self.supervised:
-            y: Tensor | None = torch.hstack([batch[t] for t in self.task_names])
+            y: Tensor | None = torch.hstack(
+                [batch[t].reshape(-1, 1) for t in self.task_names]
+            )
         else:
             y = None
         output = self(x)
@@ -388,11 +390,12 @@ class MLP(BaseNN):
         batch: dict | None = None,
         **kws,
     ):
-        y_true = y_true.reshape(1, -1)
         if self.conf.task_type == "regression":
-            losses = tmet.functional.mean_squared_error(
-                y_pred, y_true, num_outputs=self.n_tasks
+            multitask_all_reg(y_pred, y_true)
+            loss_dict: dict = multitask_all_reg(
+                y_pred, y_true, task_names=self.task_names, metrics=("mse",)
             )
+            losses = torch.hstack([v["mse"] for _, v in loss_dict.items()])
             if self.conf.task_weights:
                 losses = losses * self.conf.task_weights
             return losses.sum()
