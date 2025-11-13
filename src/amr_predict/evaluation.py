@@ -38,6 +38,7 @@ class Evaluator:
         self.kws: dict = kws
 
     def _fit(self, train: Dataset, val: Dataset | None = None) -> None:
+        train = train.select_columns([self.model.x_key] + list(self.model.task_names))
         if isinstance(self.model, Baseline):
             self.model.fit(train)
         elif self.trainer is None:
