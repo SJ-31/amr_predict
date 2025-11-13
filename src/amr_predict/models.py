@@ -259,6 +259,11 @@ class BaseNN(L.LightningModule):
             self.log(f"{prefix}_acc_step", acc)
             self._try_cache_to(f"{prefix}_acc", acc)
 
+    def predict_step(self, X):
+        if isinstance(X, Dataset):
+            X = X[self.x_key][:]
+        return self(X)
+
     def predict_proba(self, X) -> Tensor | tuple:
         X = X[self.x_key][:]
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
@@ -365,7 +370,13 @@ class MLP(BaseNN):
             layers.append(nn.Linear(in_features=in_features, out_features=hidden_dim))
             layers.append(activation())
             in_features = hidden_dim
-        layers.append(nn.Linear(hidden_dim, self.n_tasks))
+        if self.task_type == "classification":
+            self.outlayer: nn.ModuleList | None = nn.ModuleList(
+                [nn.Linear(hidden_dim, n) for n in self.conf.n_classes]
+            )
+        else:
+            self.outlayer = None
+            layers.append(nn.Linear(hidden_dim, self.n_tasks))
         self.nn = nn.Sequential(*layers)
         self.conf: ModuleConfig = conf or ModuleConfig()
 
@@ -394,4 +405,8 @@ class MLP(BaseNN):
 
     def forward(self, X):
         X = X.to(torch.get_default_dtype())
-        return self.nn(X)
+        if self.task_type == "regression":
+            return self.nn(X)
+        if self.outlayer:
+            hidden = self.nn(X)
+            return tuple([o(hidden) for o in self.outlayer])

@@ -130,12 +130,11 @@ class Evaluator:
                 test_dset = dataset[test]
             self._fit(train=train_dset, val=val_dset)
             y_true: Tensor = test_dset.to_polars().select(tasks).to_torch()
-            x_test: Tensor = test_dset[self.model.x_key][:]
             if self.task_type == "regression":
-                y_pred: Tensor | tuple = self.model.predict_step(x_test)
+                y_pred: Tensor | tuple = self.model.predict_step(test_dset)
                 metrics = multitask_all_reg(y_pred, y_true, task_names=tasks)
             else:
-                y_pred = self.model.predict_proba(x_test)
+                y_pred = self.model.predict_proba(test_dset)
                 metrics = multitask_all_cls(
                     y_pred,
                     y_true,
