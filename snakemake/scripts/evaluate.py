@@ -79,13 +79,7 @@ def randomize_dset(dset: Dataset, x_key: str) -> Dataset:
 
 
 def modify_for_test(dataset, x_key) -> Dataset:
-    dataset = concatenate_datasets(
-        [
-            randomize_dset(dataset, x_key),
-            randomize_dset(dataset, x_key),
-            randomize_dset(dataset, x_key),
-        ]
-    )
+    # dataset = concatenate_datasets([dataset, dataset, dataset])
     dataset = dataset.map(lambda x: {x_key: x[x_key][:1000]})
     return dataset
 

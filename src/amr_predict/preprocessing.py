@@ -20,7 +20,6 @@ from datasets import concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from polars.exceptions import NoDataError
-from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
 from transformers.modeling_outputs import MaskedLMOutput
@@ -64,13 +63,11 @@ class SeqEmbedder:
         dfs = [
             embed_fn(f) for f in directory.iterdir() if f.suffix in accepted_suffixes
         ]
-        encoder: LabelEncoder = LabelEncoder()
         df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed").fill_null(0)
         feature_cols = df.drop(id_col).columns
         if metadata is not None:
             meta = read_tabular(metadata)
             df = df.join(meta, on=id_col)
-        df = df.with_columns(pl.Series(encoder.fit_transform(df[id_col])).alias(id_col))
         arr = np.array(df.select(feature_cols))
         variance = arr.var(axis=0)
         arr = arr[:, variance != 0]

@@ -28,6 +28,13 @@ for name, dset_spec in spec["metadata"].items():
         df = df.drop(to_drop)
     metas.append(df.with_columns(pl.lit(name).alias("dataset")))
 
-meta: pl.DataFrame = pl.concat(metas, how="diagonal_relaxed").select(
-    "sample", "dataset", cs.exclude(["sample", "dataset"])
+meta: pl.DataFrame = (
+    pl.concat(metas, how="diagonal_relaxed")
+    .select("sample", "dataset", cs.exclude(["sample", "dataset"]))
+    .with_columns(
+        cs.ends_with("_class").replace(
+            {"I": "intermediate", "S": "susceptible", "R": "resistant"}
+        )
+    )
 )
+meta.write_csv(mpath.joinpath("combined_sample_meta.tsv"), separator="\t")

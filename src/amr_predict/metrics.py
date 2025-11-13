@@ -141,7 +141,7 @@ def multitask_all_cls(
 
 
 def multitask_cross_entropy_loss(
-    y_pred: Tensor,
+    y_pred: tuple[Tensor],
     y_true: Tensor,
     weights: Tensor | None = None,
     model: L.LightningModule | None = None,

@@ -16,25 +16,27 @@ DATASETS = list(Path(f"{REMOTE}/{IN_DATE}/datasets/pooled").iterdir())
 if TEST:
     DEVICE = "cpu"
     config["tasks"]["regression"] = ["AMK", "GEN"]
+    # config["tasks"]["classification"] = ["IPM_class", "GEN_class"]
     config["cross_validate"]["k_fold"]["n_splits"] = 2
-    config["cross_validate"]["models"] = ["baseline"]
-    config["holdout"]["models"] = ["baseline"]
-    config["holdout"]["splits"] = {
-        "test1": {
-            "sample": {
-                "SAMN29490345": "EXACT",
-                "SAMN29490346": "EXACT",
-                "SAMN29490347": "EXACT",
-            }
-        },
-        "test2": {
-            "sample": {
-                "SAMN29490348": "EXACT",
-                "SAMN29490350": "EXACT",
-                "SAMN29490351": "EXACT",
-            }
-        },
-    }
+    config["cross_validate"]["models"] = ["baseline", "mlp"]
+    config["holdout"]["models"] = ["baseline", "mlp"]
+    config["holdout"]["splits"] = None
+    # config["holdout"]["splits"] = {
+    #     "test1": {
+    #         "sample": {
+    #             "SAMN29490345": "EXACT",
+    #             "SAMN29490346": "EXACT",
+    #             "SAMN29490347": "EXACT",
+    #         }
+    #     },
+    #     "test2": {
+    #         "sample": {
+    #             "SAMN29490348": "EXACT",
+    #             "SAMN29490350": "EXACT",
+    #             "SAMN29490351": "EXACT",
+    #         }
+    #     },
+    # }
 
 all_results = expand(
     "{o}/{m}/{d}_{t}.csv",
