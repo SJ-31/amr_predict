@@ -121,39 +121,40 @@ parse_commandline "$@"
 
 sif="/data/project/sirasris_shared/genomic_evo2.sif"
 script="/data/home/shannc/amr_predict/scripts/evo_prob_pred_Gene.py"
-ckpt="/data/home/shannc/amr_predict/date/remote/cache/evo2_7b"
+ckpt="/data/home/shannc/amr_predict/data/remote/cache/evo2_7b"
 model_size="7b"
 
 # QOS
 gpu_qos="40"
 if [[ "${gpu_qos}" == "40" ]]; then
-    gpu="--qos=gpu40g --partition=gpu --gres=gpu:7g.40gb:1"
+    gpu="--qos=gpu40g --partition=gpu --gres=gpu:7g.40gb:1 --c 8 --ntasks=1 --mem=64G"
 else
     gpu="--qos=gpu20gh --partition=gpu --gres=gpu:3g.20gb:1"
 fi
+binding="${ckpt}:/checkpoint,${_arg_input}:/pred_input,${_arg_outdir}:/pred_outdir"
+
+pyargs="-c /checkpoint -i /pred_input -o /pred_outdir"
 
 if [[ -n "${_arg_download}" ]]; then
     echo "Downloading with gpu qos ${gpu}"
-    srun ${gpu} --mem=40G \
+    srun ${gpu} \
         singularity exec --nv "${sif}" evo2_convert_to_nemo2 \
         --model-path "hf://arcinstitute/savanna_evo2_${model_size}_base" \
         --model-size "${model_size}" \
         --output-dir "${_arg_download}"
 elif [[ "${_arg_cpu}" == "on" ]]; then
     echo "srun with cpu"
-    srun --qos=cpu24h singularity exec --nv "${sif}" python "${script}" \
-        -c "${ckpt}" -i "${_arg_input}" -o "${_arg_outdir}"
-
+    srun --qos=cpu24h singularity exec --nv -B "${binding}" "${sif}" \
+        python "${script}" ${pyargs}
 elif [[ "${_arg_gpu}" == "on" ]]; then
     echo "srun with gpu ${gpu}"
-    srun ${gpu} singularity exec --nv "${sif}" python "${script}" \
-        -c "${ckpt}" -i "${_arg_input}" -o "${_arg_outdir}"
-
+    srun ${gpu_mem} ${gpu} singularity exec --nv -B "${binding}" \
+        "${sif}" python "${script}" ${pyargs}
 elif [[ "${_arg_shell}" == "on" ]]; then
-    singularity shell --nv "${sif}"
+    singularity shell --nv -B "${binding}" "${sif}"
 else
-    singularity exec "${sif}" python "${script}" \
-        -c "${ckpt}" -i "${_arg_input}" -o "${_arg_outdir}"
+    singularity exec --nv -B "${binding}" "${sif}" \
+        python "${script}" ${pyargs}
 fi
 
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^
