@@ -1,13 +1,14 @@
 #!/usr/bin/env ipython
 from __future__ import annotations
 
+import json
 import math
 import os
 from collections.abc import Sequence
 from pathlib import Path
 from subprocess import run
-from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import Callable, Iterator, Literal, TypeAlias
+from tempfile import TemporaryDirectory
+from typing import Callable, Literal, TypeAlias
 
 import numpy as np
 import polars as pl
@@ -164,7 +165,9 @@ class SeqEmbedder:
 
     def _evo2_embed(
         self,
+        runscript: str,
         dset: Dataset,
+        workdir: str | Path | None = None,
         text_key: str = "sequence",
     ) -> Dataset:
         dset = dset.add_column("uid", list(range(len(dset)))).sort("uid")
@@ -178,10 +181,23 @@ class SeqEmbedder:
         )
         seqs = df["seqid"].unique()
 
+        if workdir is None:
+            with TemporaryDirectory() as d:
+                workdir = Path(d)
+                for seq in seqs:
+                    self._evo2_embed_one(df, seq, workdir)
+        else:
+            for seq in seqs:
+                self._evo2_embed_one(
+                    df, seqid=seq, runscript=runscript, workdir=workdir
+                )
+        workdir = workdir if isinstance(workdir, Path) else Path(workdir)
+
         def gen():
             for seq in seqs:
-                for embedding in self._evo2_embed_one(df, seq):
-                    yield embedding
+                edf = pl.read_parquet(workdir / f"{seq}.parquet")
+                for uid, embedding in edf.rows_by_key("uid").items():
+                    yield {"embedding": embedding[0], "uid": uid}
 
         result: Dataset = Dataset.from_generator(gen)
         result = result.with_format("torch").sort("uid").remove_columns("uid")
@@ -189,18 +205,29 @@ class SeqEmbedder:
         result = concatenate_datasets([result, dset], axis=1)
         return result
 
-    def _evo2_embed_one(self, df: pl.DataFrame, cur_seq: str) -> Iterator[dict]:
-        df = df.filter(pl.col("seqid") == cur_seq)
-        result = []
-        with NamedTemporaryFile("w") as f:
-            f.write("\n".join(df["fasta"]))
-            # evo2 -i f.name -o
-            embedding_file = ""
-        # for i, g in embedding_file:
-
-        # TODO: run evo2 to convert fasta into embeddings
-        result = None
-        return result
+    def _evo2_embed_one(self, df: pl.DataFrame, runscript, seqid: str, workdir: Path):
+        """Write the fasta sequence (headers are uids) and embed with external evo2 script"""
+        target: Path = workdir.joinpath(f"{seqid}.parquet")
+        if not target.exists():
+            df = df.filter(pl.col("seqid") == seqid)
+            with TemporaryDirectory() as d:
+                outdir: Path = Path(d)
+                input = outdir.joinpath()
+                input.write_text("\n".join(df["fasta"]))
+                evo_run = run(
+                    f"sbatch --wait --parsable {runscript} -i {input} -o {outdir}"
+                )
+                evo_run.check_returncode()
+                embeddings: pl.DataFrame = pl.read_parquet(
+                    outdir / "pred_input.parquet"
+                )
+                with open("seq_idx_map.json", "rb") as f:
+                    id_map: dict = json.load(f)
+                id_df: pl.DataFrame = pl.DataFrame(
+                    {"uid": id_map.keys(), "id": id_map.values()}
+                )
+                joined = embeddings.join(id_df, on="id").drop("id")
+                joined.write_parquet(target)
 
     def _seqlens_embed(
         self,
