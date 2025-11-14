@@ -44,7 +44,7 @@ class SeqEmbedder:
         if self.method == "seqLens":
             return self._seqlens_embed(dataset, **self.kwargs)
         elif self.method == "Evo2":
-            raise ValueError("Not implemented yet")
+            return self._evo2_embed(dataset, **self.kwargs)
         elif self.method == "kmer":
             return self._kmer_embed(**self.kwargs)
         elif self.method == "feature_presence":
@@ -205,7 +205,9 @@ class SeqEmbedder:
         result = concatenate_datasets([result, dset], axis=1)
         return result
 
-    def _evo2_embed_one(self, df: pl.DataFrame, runscript, seqid: str, workdir: Path):
+    def _evo2_embed_one(
+        self, df: pl.DataFrame, runscript: str, seqid: str, workdir: Path
+    ):
         """Write the fasta sequence (headers are uids) and embed with external evo2 script"""
         target: Path = workdir.joinpath(f"{seqid}.parquet")
         if not target.exists():
@@ -433,7 +435,7 @@ class SeqPreprocessor:
         elif self.split_method == "bakta":
             filtered = anno.filter(pl.col("#Sequence Id") == record.id)
             if not filtered.is_empty():
-                filtered = split_features(
+                split_by_length = split_features(
                     filtered,
                     self.max_length,
                     "Start",
@@ -441,8 +443,10 @@ class SeqPreprocessor:
                     indicate_ends=True,
                     prefix="chunk",
                 )
-                filtered = add_intergenic(record, filtered, "Start", "Stop")
-                for i, row in enumerate(filtered.iter_rows(named=True)):
+                split_by_length = add_intergenic(
+                    record, split_by_length, "Start", "Stop"
+                )
+                for i, row in enumerate(split_by_length.iter_rows(named=True)):
                     length = row["Stop"] - row["Start"]
                     current, indices = self._get_subsequence(
                         record, row, start="chunk_Start", stop="chunk_Stop"

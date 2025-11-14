@@ -250,7 +250,7 @@ elif smk.rule == "make_text_datasets":
         if (method := kws.pop("method", None)) in get_args(EMBEDDING_METHODS):
             # Deterministic embedding methods that can process whole genomes
             # - kmer
-            # - feature_presence # TODO: need to test this one
+            # - feature_presence
             savepath = Path(f"{smk.params['outdir_pooled']}/{name}")
             if method == "kmer":
                 kws.update({"fastas": Path(CONFIG["genomes"])})
@@ -285,18 +285,35 @@ elif smk.rule == "make_text_datasets":
             )
 # * Embed
 elif smk.rule == "make_embedded_datasets":
+    method: str = smk.config["embedding"]["method"]
+    kws: dict = {}
     for seq_ds in smk.input:
         inpath = Path(seq_ds)
         if inpath.stem in smk.params["ignore"]:
             continue
         savepath = Path(smk.params["outdir"]) / inpath.stem
+        if method == "Evo2":
+            workdir = Path(f"{smk.params['outdir']}") / "_evo2_tmp"
+            workdir.mkdir(exist_ok=True)
+            kws.update(
+                {
+                    "runscript": smk.config["evo2_runscript"],
+                    "workdir": workdir,
+                }
+            )
+        elif method == "seqLens":
+            kws.update(
+                {
+                    "huggingface": CONFIG["huggingface"],
+                    "pooling": CONFIG["embedding"].get("pooling", "mean"),
+                }
+            )
         if not savepath.exists():
             dset = SeqDataset(
                 inpath,
                 embedder=SeqEmbedder(
-                    huggingface=CONFIG["huggingface"],
                     text_key="sequence",
-                    pooling=CONFIG["embedding"].get("pooling", "mean"),
+                    **kws,
                 ),
             )
             dset.embed(savepath)
