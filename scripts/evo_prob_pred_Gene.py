@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import nemo.lightning as nl
+import numpy as np
+import pandas as pd
 import torch
 from bionemo.core.data.load import load
 from bionemo.evo2.data.fasta_dataset import SimpleFastaDataset
@@ -274,6 +276,7 @@ def predict(
     ckpt_dir: str,
     output_dir: Path,
     json_output_path: Path,
+    parquet_output_path: Path,
     tensor_parallel_size: int,
     pipeline_model_parallel_size: int,
     context_parallel_size: int,
@@ -416,15 +419,16 @@ def predict(
 
     processed_prediction = None
     sequence_length = 0
+    all_embeddings = []
+    ids = []
     for i in range(len(prediction)):
+        pred = prediction[i]["embedding"].float().detach().cpu().numpy()
         if i == 0:
-            processed_prediction = (
-                prediction[i]["embedding"].float().detach().cpu().numpy()
-            )
+            processed_prediction = pred
         else:
-            processed_prediction += (
-                prediction[i]["embedding"].float().detach().cpu().numpy()
-            )
+            processed_prediction += pred
+        all_embeddings.append(pred[0])
+        ids.append(prediction[i]["seq_idx"].numpy()[0])
 
         sequence_length += (
             prediction[i]["sequence_length"].float().detach().cpu().numpy().tolist()[0]
@@ -436,9 +440,11 @@ def predict(
         "avg_embedding": processed_prediction.tolist(),
         "sequence_length": sequence_length,
     }
+    edf: pd.DataFrame = pd.DataFrame(np.array(all_embeddings)).assign(id=ids)
 
     with open(json_output_path, "w") as json_file:
         json.dump(prediction_json, json_file)
+    edf.to_parquet(parquet_output_path, index=False)
 
     print("Write files")
     dataset.write_idx_map(
@@ -467,6 +473,7 @@ if __name__ == "__main__":
         for file in input.iterdir():
             if file.suffix in extensions:
                 json_out = outdir / f"{input.stem}.json"
+                parquet_out = outdir / f"{input.stem}.parquet"
                 predict(
                     fasta_path=Path(file),
                     ckpt_dir=checkpoint_path,
@@ -476,6 +483,7 @@ if __name__ == "__main__":
                     batch_size=1,
                     output_dir=outdir,
                     json_output_path=json_out,
+                    parquet_output_path=parquet_out,
                     model_size="7b",
                     ckpt_format="torch_dist",
                     prepend_bos=True,
@@ -484,6 +492,7 @@ if __name__ == "__main__":
                 )
     else:
         json_out = outdir / f"{input.stem}.json"
+        parquet_out = outdir / f"{input.stem}.parquet"
         predict(
             fasta_path=input,
             ckpt_dir=checkpoint_path,
@@ -493,6 +502,7 @@ if __name__ == "__main__":
             batch_size=1,
             output_dir=outdir,
             json_output_path=json_out,
+            parquet_output_path=parquet_out,
             model_size="7b",
             ckpt_format="torch_dist",
             prepend_bos=True,
