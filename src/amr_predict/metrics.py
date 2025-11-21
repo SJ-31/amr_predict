@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torchmetrics.functional.classification as tmet
 from amr_predict.utils import iter_cols, vecdist
+from loguru import logger
 from numpy.random import Generator
 from scipy.stats import ecdf
 from sklearn.metrics.pairwise import paired_distances
@@ -24,6 +25,8 @@ from torchmetrics.functional.regression.mse import mean_squared_error
 from torchmetrics.functional.regression.nrmse import normalized_root_mean_squared_error
 from torchmetrics.functional.regression.pearson import pearson_corrcoef
 from torchmetrics.functional.regression.spearman import spearman_corrcoef
+
+logger.disable("amr_predict")
 
 
 def multitask_acc(
@@ -331,7 +334,9 @@ def nn_proportions(
     nn_obj: NearestNeighbors = prefit or NearestNeighbors(**kws)
     if prefit is None:
         nn_obj.fit(adata.X)
+    logger.info("Kneighbor computation started")
     distances, neighbors = nn_obj.kneighbors()
+    logger.success("Kneighbors fitted")
     df = adata.obs
     n_neighbors = neighbors.shape[1]
     tmp = {}
@@ -384,10 +389,12 @@ def nn_proportions(
         )
     if include_null:
         # Simple permutation testing
+        logger.info("Computing p-value with permutation test")
         gen = np.random.default_rng(rng)
         rand_pairs = gen.choice(
             list(range(adata.shape[0])), (null_bootstrap_rounds, 2), replace=True
         )
+        logger.info(f"{rand_pairs.shape}")
         col_df: pd.DataFrame = adata.obs.loc[:, columns]
         nulls, ecdfs = {}, {}
         observed_dist = result["nn_dist"]["mean"].mean()

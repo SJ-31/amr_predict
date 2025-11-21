@@ -140,6 +140,7 @@ if smk.rule in {"cross_validate", "holdout"}:
                     )
                     trainer = L.Trainer(**trainer_kws)
                 if smk.rule == "cross_validate":
+                    logger.info(f"Running cross validation with {mname}")
                     eva = ae.Evaluator(
                         model=model, how="cv", trainer=trainer, **loader_kws
                     )
@@ -148,11 +149,14 @@ if smk.rule in {"cross_validate", "holdout"}:
                         validation_kws=validation_kws,  # No need when using baseline
                         **RCONFIG["k_fold"],
                     )
+                    logger.success("Cross validation complete")
                 elif smk.rule == "holdout":
+                    logger.info(f"Running holdout with {mname}")
                     eva = ae.Evaluator(
                         model=model, how="holdout", trainer=trainer, **loader_kws
                     )
                     result = holdout_helper(
                         dataset=dataset, eva=eva, obs=obs, validation=valid_dset
                     )
+                    logger.success("Holdout complete")
                 result.write_csv(outfile)

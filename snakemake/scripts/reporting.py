@@ -18,6 +18,7 @@ from amr_predict.metrics import nn_proportions
 from amr_predict.plotting import plot_adata
 from amr_predict.utils import load_as
 from fastcluster import linkage, pdist
+from loguru import logger
 from numpy.random import Generator
 from plotnine.ggplot import ggplot
 from scipy.cluster.hierarchy import cut_tree
@@ -38,6 +39,9 @@ except ImportError:
 
 RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
+
+logger.enable("amr_predict")
+logger.add(smk.log[0])
 
 
 @dataclass
@@ -120,7 +124,7 @@ def safe_silhouette_score(**kwargs) -> float:
     try:
         return silhouette_score(**kwargs)
     except ValueError as e:
-        print(f"Warning: ValueError {e} in silhouette score computation")
+        logger.warning(f"Warning: ValueError {e} in silhouette score computation")
         return np.nan
 
 
@@ -154,6 +158,7 @@ def clustering_helper(adata: ad.AnnData, precomputed_dist) -> pl.DataFrame:
         hclust_assignment[hclust_assignment is None] = -1
         df.loc[:, f"hclust_{y}"] = hclust_assignment
 
+        logger.info("Start recording leiden clustering metrics")
         record_clustering_metrics(
             fn_dict=scoring_metrics,
             y_true=y_true,
@@ -162,7 +167,9 @@ def clustering_helper(adata: ad.AnnData, precomputed_dist) -> pl.DataFrame:
             name=y,
             method="leiden",
         )
+        logger.success("Leiden metrics complete")
 
+        logger.info("Start recording hclust metrics")
         record_clustering_metrics(
             fn_dict=scoring_metrics,
             y_true=y_true,
@@ -171,6 +178,7 @@ def clustering_helper(adata: ad.AnnData, precomputed_dist) -> pl.DataFrame:
             name=y,
             method="hclust",
         )
+        logger.success("Hclust metrics complete")
 
         # results["method"].append("hclust")
         # results["metric"].append("silhouette")
@@ -208,6 +216,10 @@ def compare_pair_distribution(
     kws = kws or {}
     for col in columns:
         related, unrelated = sample_pairs(adata.obs, col, **kws)
+        logger.info(f"Comparing pair distribution for column {col}")
+        logger.info(f"n = {related.shape[0]} related pairs")
+        logger.info(f"n = {unrelated.shape[0]} unrelated pairs")
+
         r1, r2 = adata.X[related[:, 0]], adata.X[related[:, 1]]
         u1, u2 = adata.X[unrelated[:, 0]], adata.X[unrelated[:, 1]]
         rel_dist = paired_distances(r1, r2, metric=distance_metric)
@@ -225,6 +237,7 @@ def compare_pair_distribution(
         results.value.append(entropy(rel_dist, unrel_dist))
         results.p_value.append(-1)
         results.name.append(col)
+        logger.success(f"Pair distribution of {col} complete")
     return pl.DataFrame(asdict(results))
 
 
@@ -255,6 +268,7 @@ def covar_dist(
         columns.append("_seq_dist_")
 
     for col in columns:
+        logger.info(f"Embedding distance correlation for column {col} started")
         if n_bootstrap is None:
             shuffled = pd.Series(np.arange(adata.shape[0])).sample(
                 frac=1, random_state=rng
@@ -265,6 +279,7 @@ def covar_dist(
         edist = paired_distances(
             adata.X[pair_mat[:, 0]], adata.X[pair_mat[:, 1]], metric=distance_metric
         )
+        logger.info("Distance computation complete")
         x = pair_mat[:, 0]
         y = pair_mat[:, 1]
         if correlate_seq_dist and col == "_seq_dist_":
@@ -275,11 +290,14 @@ def covar_dist(
         else:
             covar_dist = np.abs(df[col].iloc[x].values - df[col].iloc[y].values)
         test = spearmanr(edist, covar_dist)
+        logger.info("Spearman correlation calculated")
+        logger.info(test)
         results.method.append(distance_metric)
         results.metric.append("covariate_distance_correlation")
         results.name.append(col)
         results.value.append(test.statistic)
         results.p_value.append(test.pvalue)
+        logger.success(f"Routine for column {col} complete")
     return pl.DataFrame(asdict(results))
 
 
@@ -374,8 +392,11 @@ if smk.rule in {"compare_embeddings", "compare_pooled"}:
         )
         dfs = []
         for i in range(RCONFIG["bootstrap_rounds"]):
+            logger.info(f"Start of bootstrap round {i}")
+            logger.info(f"Running with n = {adata.shape[0]} samples")
             if n_samples := RCONFIG.get("n_samples_per"):
                 samples = rng.choice(adata.obs["sample"].unique(), size=n_samples)
+                logger.info(f"Subsampled to n = {len(samples)}")
             else:
                 samples = adata.obs["sample"].unique()
             subsampled = adata[adata.obs["sample"].isin(samples), :]
@@ -393,6 +414,7 @@ if smk.rule in {"compare_embeddings", "compare_pooled"}:
                     round=i,
                 )
                 dfs.append(cur.with_columns(dataset=pl.lit(dir.stem)))
+            logger.success(f"Bootstrap round {i} complete")
         if len(dfs) > 1:
             aggregated: pl.DataFrame = pl.concat(dfs)
             aggregated = aggregated.group_by(

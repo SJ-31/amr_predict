@@ -27,6 +27,10 @@ DATASETS = {
 }
 
 
+def default_log(rule_name):
+    return f"{LOGDIR}/compare_embeddings-{rule_name}.log"
+
+
 RESULTS = {}
 for k, v, r in zip(["S", "P"], to_compare, ["compare_embeddings", "compare_pooled"]):
     RESULTS[k] = {
@@ -61,6 +65,8 @@ rule compare_embeddings:
     output:
         metrics=RESULTS["S"]["metrics"],
         plots=RESULTS["S"]["plots"],
+    log:
+        default_log("main"),
     script:
         "scripts/reporting.py"
 
@@ -72,5 +78,7 @@ rule compare_pooled:
     output:
         metrics=RESULTS["P"]["metrics"],
         plots=RESULTS["P"]["plots"],
+    log:
+        default_log("pooled"),
     script:
         "scripts/reporting.py"

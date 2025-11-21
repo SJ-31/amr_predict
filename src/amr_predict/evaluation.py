@@ -16,10 +16,13 @@ from amr_predict.metrics import (
 from amr_predict.models import Baseline
 from amr_predict.utils import TASK_TYPES, load_as
 from datasets import Dataset, DatasetDict
+from loguru import logger
 from torch import Tensor
 from torch.utils.data import DataLoader
 
 MODEL_CLASSES: TypeAlias = L.LightningModule | Baseline | nn.Module
+
+logger.disable("amr_predict")
 
 
 class Evaluator:
@@ -40,13 +43,17 @@ class Evaluator:
     def _fit(self, train: Dataset, val: Dataset | None = None) -> None:
         train = train.select_columns([self.model.x_key] + list(self.model.task_names))
         if isinstance(self.model, Baseline):
+            logger.info("Start fit for Baseline model")
             self.model.fit(train)
+            logger.success("Fit complete")
         elif self.trainer is None:
             raise ValueError("Trainer must be provided if not using baseline model")
         else:
+            logger.info(f"Start fit for model {self.model}")
             tl = DataLoader(train, **self.kws)
             vl = DataLoader(val, **self.kws) if val is not None else val
             self.trainer.fit(self.model, train_dataloaders=tl, val_dataloaders=vl)
+            logger.success("Fit complete")
 
     def cv(
         self,
@@ -99,8 +106,9 @@ class Evaluator:
 
     def holdout(
         self,
-        dataset: Path | DatasetDict,
-        splits: dict[str, tuple[str, str, str | None | Dataset]],
+        dataset: Path | DatasetDict | Dataset,
+        splits: dict[str, tuple[str, str, str | None | Dataset]] | None = None,
+        **kws,
     ) -> pl.DataFrame:
         """Holdout evaluation on a dataset dict, possibly saved on disk
 
@@ -128,6 +136,10 @@ class Evaluator:
             else:
                 train_dset = dataset[test]
                 test_dset = dataset[test]
+            logger.info(f"Holdout on key {key}")
+            logger.info(f"Train, test shape: {train_dset.shape}, {test_dset.shape}")
+            if val_dset is not None:
+                logger.info(f"Validation set shape: {val_dset.shape}")
             self._fit(train=train_dset, val=val_dset)
             y_true: Tensor = test_dset.to_polars().select(tasks).to_torch()
             if self.task_type == "regression":
