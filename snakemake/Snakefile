@@ -21,3 +21,4 @@ REMOTE = config["remote"] if not config["test"] else config["out"]["tests"]
 OUT = config["out"]["root"] if not config["test"] else config["out"]["tests"]
 BIN = config["bin"]
 SRC = config["src"]
+LOGDIR = f"{OUT}/{DATE}/logs"

@@ -18,12 +18,16 @@ from amr_predict.utils import (
     train_test_from_dict,
 )
 from datasets import Dataset, concatenate_datasets
+from loguru import logger
 from xgboost import XGBClassifier, XGBRegressor
 
 try:
     from snakemake.script import snakemake as smk
 except ImportError:
-    smk = type("snakemake", (), {"rule": None, "config": {}})
+    smk = type("snakemake", (), {"rule": None, "config": {}, "log": [1]})
+
+logger.enable("amr_predict")
+logger.add(smk.log[0])
 
 RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]

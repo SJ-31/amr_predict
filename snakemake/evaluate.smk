@@ -13,6 +13,11 @@ OUTDIRS = {
 DEVICE = config.get("device", "cuda")
 DATASETS = list(Path(f"{REMOTE}/{IN_DATE}/datasets/pooled").iterdir())
 
+
+def default_log(rule_name):
+    return f"{LOGDIR}/evaluate-{rule_name}.log"
+
+
 if TEST:
     DEVICE = "cpu"
     config["tasks"]["regression"] = ["AMK", "GEN"]
@@ -88,6 +93,8 @@ rule cross_validate:
         datasets=DATASETS,
         device=DEVICE,
         outdir=OUTDIRS["cv"],
+    log:
+        default_log("cross_validate"),
     output:
         **RESULTS["cv"],
     script:
@@ -99,6 +106,8 @@ rule holdout:
         datasets=DATASETS,
         device=DEVICE,
         outdir=OUTDIRS["holdout"],
+    log:
+        default_log("holdout"),
     output:
         **RESULTS["holdout"],
     script:

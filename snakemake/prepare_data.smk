@@ -57,6 +57,10 @@ TO_POOL = [d for d in PREPROCESSING.keys() if d not in POOLED_ALREADY]
 POOLED_PLOTS = expand("{o}/{d}-{p}.png", o=PLOT_OUT, d=TO_POOL, p=pooling_methods)
 
 
+def default_log(rule_name):
+    return f"{LOGDIR}/prepare_data-{rule_name}.log"
+
+
 def get_pooled_out(as_dir: bool = False):
     expanded = expand(
         "{o}/{d}-{p}",
@@ -81,6 +85,8 @@ rule all:
 rule get_seq_metadata:
     output:
         rules.all.input.meta,
+    log:
+        default_log("get_seq_metadata"),
     script:
         "scripts/prepare_data.py"
 
@@ -91,6 +97,8 @@ rule make_text_datasets:
         [directory(f"{DATA_OUTS['P']}/{d}") for d in POOLED_ALREADY],
     input:
         rules.get_seq_metadata.output,
+    log:
+        default_log("make_text_datasets"),
     params:
         outdir=DATA_OUTS["S"],
         outdir_pooled=DATA_OUTS["P"],
@@ -102,6 +110,8 @@ rule make_text_datasets:
 rule make_embedded_datasets:
     input:
         rules.make_text_datasets.output,
+    log:
+        default_log("make_embedded_datasets"),
     params:
         outdir=DATA_OUTS["E"],
         ignore=POOLED_ALREADY,
@@ -117,6 +127,8 @@ rule pool_embeddings:
     params:
         outdir=DATA_OUTS["P"],
         plotdir=PLOT_OUT,
+    log:
+        default_log("pool_embeddings"),
     output:
         get_pooled_out(True),
         POOLED_PLOTS,

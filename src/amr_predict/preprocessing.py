@@ -5,8 +5,9 @@ import json
 import math
 import os
 from collections.abc import Sequence
+from itertools import batched
 from pathlib import Path
-from subprocess import run
+from subprocess import CalledProcessError, run
 from tempfile import TemporaryDirectory
 from typing import Callable, Literal, TypeAlias
 
@@ -20,6 +21,7 @@ from Bio.SeqRecord import SeqRecord
 from datasets import concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
+from loguru import logger
 from polars.exceptions import NoDataError
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
@@ -27,6 +29,8 @@ from transformers.modeling_outputs import MaskedLMOutput
 
 SPLIT_METHODS: TypeAlias = Literal["bin", "bakta"]
 EMBEDDING_METHODS: TypeAlias = Literal["seqLens", "Evo2", "kmer", "feature_presence"]
+
+logger.disable("amr_predict")
 
 
 class SeqEmbedder:
@@ -42,9 +46,9 @@ class SeqEmbedder:
         if self.method not in {"kmer", "feature_presence"} and dataset is None:
             raise ValueError("The selected method requires a preprocessed dataset")
         if self.method == "seqLens":
-            return self._seqlens_embed(dataset, **self.kwargs)
+            return self._seqlens_embed(dset=dataset, **self.kwargs)
         elif self.method == "Evo2":
-            return self._evo2_embed(dataset, **self.kwargs)
+            return self._evo2_embed(dset=dataset, **self.kwargs)
         elif self.method == "kmer":
             return self._kmer_embed(**self.kwargs)
         elif self.method == "feature_presence":
@@ -521,8 +525,8 @@ class SeqPreprocessor:
                         infer_schema_length=None,
                     )
                 except FileNotFoundError:
-                    print(
-                        f"WARNING: bakta file {id}_bakta.tsv not found! Skipping this sample"
+                    logger.warning(
+                        f"bakta file {id}_bakta.tsv not found! Skipping this sample"
                     )
                     anno = None
             else:
@@ -630,7 +634,7 @@ class SeqDataset:
                 entries_within = Dataset.from_polars(entries_within.drop(to_drop))
                 dataset = concatenate_datasets([dataset, entries_within], axis=1)
             except NoDataError:
-                print("No sequence metadata provided")
+                logger.warning("No sequence metadata provided")
         if savepath is None:
             return dataset
         dataset.save_to_disk(dataset_path=savepath)

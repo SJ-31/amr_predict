@@ -10,6 +10,7 @@ import polars as pl
 import torch
 from amr_predict.utils import load_as
 from datasets import Dataset
+from loguru import logger
 from scipy import stats
 from snakemake.script import snakemake as smk
 
@@ -20,6 +21,9 @@ from amr_predict.preprocessing import EMBEDDING_METHODS, SeqDataset, SeqEmbedder
 
 CONFIG: dict = smk.config
 RCONFIG: dict = smk.config.get(smk.rule)
+
+logger.enable("amr_predict")
+logger.add(sink=smk.log[0])
 
 # * Utilities
 
@@ -251,6 +255,7 @@ elif smk.rule == "make_text_datasets":
             # Deterministic embedding methods that can process whole genomes
             # - kmer
             # - feature_presence
+            logger.info(f"Begin processing data with {method}")
             savepath = Path(f"{smk.params['outdir_pooled']}/{name}")
             if method == "kmer":
                 kws.update({"fastas": Path(CONFIG["genomes"])})
@@ -269,6 +274,7 @@ elif smk.rule == "make_text_datasets":
             )
             dataset = sem(None)
             dataset.save_to_disk(dataset_path=savepath)
+            logger.success(f"Finished proceessing with {method}")
         else:
             if kws["split_method"] == "bakta":
                 anno = Path(CONFIG["seq_metadata"]["bakta"])
@@ -293,12 +299,13 @@ elif smk.rule == "make_embedded_datasets":
             continue
         savepath = Path(smk.params["outdir"]) / inpath.stem
         if method == "Evo2":
-            workdir = Path(f"{smk.params['outdir']}") / "_evo2_tmp"
+            workdir = Path(f"{smk.params['outdir']}") / f".{inpath.stem}_evo2_cache"
             workdir.mkdir(exist_ok=True)
             kws.update(
                 {
                     "runscript": smk.config["evo2_runscript"],
                     "workdir": workdir,
+                    "batch_size": smk.config["embedding"].get("batch_size", 10),
                 }
             )
         elif method == "seqLens":
@@ -309,14 +316,17 @@ elif smk.rule == "make_embedded_datasets":
                 }
             )
         if not savepath.exists():
+            logger.info(f"Embedding dataset `{inpath.stem}` started")
             dset = SeqDataset(
                 inpath,
                 embedder=SeqEmbedder(
+                    method=method,
                     text_key="sequence",
                     **kws,
                 ),
             )
             dset.embed(savepath)
+            logger.success(f"Embedding dataset `{inpath.stem}` complete")
 # * Pool
 elif smk.rule == "pool_embeddings":
     methods: list[dict] = RCONFIG.pop("methods")
@@ -330,6 +340,7 @@ elif smk.rule == "pool_embeddings":
             savepath = Path(smk.params["outdir"]) / f"{inpath.stem}-{method}"
             figpath = Path(smk.params["plotdir"]) / f"{inpath.stem}-{method}.png"
             if not savepath.exists():
+                logger.info(f"Pooling for {inpath.stem} with method `{method}` started")
                 sp: StaticPooler = StaticPooler(
                     method=method,
                     sample_metadata=smk.config["sample_metadata"]["file"],
@@ -338,6 +349,7 @@ elif smk.rule == "pool_embeddings":
                 )
                 pooled = sp(inpath)
                 pooled.save_to_disk(dataset_path=savepath)
+                logger.success("Pooling complete")
             else:
                 pooled = load_as(savepath)
             original = load_as(inpath)
