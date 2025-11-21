@@ -65,6 +65,7 @@ class SeqEmbedder:
         key: str,
         embed_fn: Callable,
         pattern: str | None = None,
+        var_quantile_threshold: float = 0.25,
     ) -> Dataset:
         to_iter = directory.glob(pattern) if pattern else directory.iterdir()
         dfs = [embed_fn(f) for f in to_iter if f.suffix in accepted_suffixes]
@@ -74,8 +75,12 @@ class SeqEmbedder:
             meta = read_tabular(metadata)
             df = df.join(meta, on=id_col)
         arr = np.array(df.select(feature_cols))
-        variance = arr.var(axis=0)
-        arr = arr[:, variance != 0]
+        variance: np.ndarray = arr.var(axis=0)
+        arr = arr[
+            :,
+            (variance != 0)
+            | (variance >= np.quantile(variance, var_quantile_threshold)),
+        ]
         dct = df.drop(feature_cols).to_dict()
         dct[key] = arr
         return Dataset.from_dict(dct).with_format("torch")
@@ -87,6 +92,7 @@ class SeqEmbedder:
         metadata: Path | None = None,
         k: int = 5,
         key: str = "x",
+        **kws,
     ) -> Dataset:
         """Process sample-level fasta files so that each sample is represented
         by a feature vector of kmer counts
@@ -117,6 +123,7 @@ class SeqEmbedder:
             accepted_suffixes=(".fasta", ".fna", ".fa"),
             key=key,
             embed_fn=count_kmers,
+            **kws,
         )
 
     def _feature_presence_embed(
@@ -129,6 +136,7 @@ class SeqEmbedder:
         key: str = "x",
         read_kws: dict | None = None,
         metadata_pattern: str | None = None,
+        **kws,
     ):
         read_kws = read_kws or {}
 
@@ -171,6 +179,7 @@ class SeqEmbedder:
             key=key,
             embed_fn=helper,
             pattern=metadata_pattern,
+            **kws,
         )
 
     def _evo2_embed(
@@ -571,7 +580,7 @@ class SeqPreprocessor:
                         separator="\t",
                         skip_rows=5,
                         infer_schema_length=None,
-                    )
+                    ).with_columns(pl.col("#Sequence Id").cast(pl.String))
                 except FileNotFoundError:
                     logger.warning(
                         f"bakta file {id}_bakta.tsv not found! Skipping this sample"
