@@ -169,65 +169,107 @@ class SeqEmbedder:
 
     def _evo2_embed(
         self,
-        runscript: str,
         dset: Dataset,
+        runscript: str,
         workdir: str | Path | None = None,
         text_key: str = "sequence",
+        batch_size: int = 10,
     ) -> Dataset:
         dset = dset.add_column("uid", list(range(len(dset)))).sort("uid")
+        tmp: TemporaryDirectory | None = None
         df: pl.DataFrame = dset.to_polars().with_columns(
             (
-                ">"
-                + pl.concat_str(
-                    [pl.col("uid"), pl.col(text_key)], separator="\n"
-                ).alias("fasta")
-            )
+                ">" + pl.concat_str([pl.col("uid"), pl.col(text_key)], separator="\n")
+            ).alias("fasta")
         )
         seqs = df["seqid"].unique()
+        logger.info(f"{df.shape[0]} sequences to embed")
+
+        def embed_seqs(wd) -> list[str]:
+            batches = []
+            for i, seq_set in enumerate(batched(seqs, n=batch_size)):
+                bname = f"batch_{i}"
+                if len(seq_set) != batch_size:
+                    logger.info(
+                        f"Embedding batch with of different size: {len(seq_set)}"
+                    )
+                self._evo2_embed_batch(
+                    df,
+                    seqids=seq_set,
+                    workdir=wd,
+                    batch_name=bname,
+                    runscript=runscript,
+                )
+                batches.append(bname)
+            return batches
 
         if workdir is None:
-            with TemporaryDirectory() as d:
-                workdir = Path(d)
-                for seq in seqs:
-                    self._evo2_embed_one(df, seq, workdir)
-        else:
-            for seq in seqs:
-                self._evo2_embed_one(
-                    df, seqid=seq, runscript=runscript, workdir=workdir
-                )
+            tmp = TemporaryDirectory()
+            workdir = Path(tmp.name)
+
+        batches = embed_seqs(workdir)
         workdir = workdir if isinstance(workdir, Path) else Path(workdir)
 
         def gen():
-            for seq in seqs:
-                edf = pl.read_parquet(workdir / f"{seq}.parquet")
+            for b in batches:
+                edf = pl.read_parquet(workdir / f"{b}.parquet")
                 for uid, embedding in edf.rows_by_key("uid").items():
                     yield {"embedding": embedding[0], "uid": uid}
 
         result: Dataset = Dataset.from_generator(gen)
         result = result.with_format("torch").sort("uid").remove_columns("uid")
-        dset = dset.remove(text_key)
+        dset = dset.remove_columns(text_key)
         result = concatenate_datasets([result, dset], axis=1)
+        if tmp is not None:
+            tmp.cleanup()
         return result
 
-    def _evo2_embed_one(
-        self, df: pl.DataFrame, runscript: str, seqid: str, workdir: Path
+    def _evo2_embed_batch(
+        self,
+        df: pl.DataFrame,
+        runscript: str,
+        seqids: tuple[str],
+        batch_name: str,
+        workdir: Path,
     ):
         """Write the fasta sequence (headers are uids) and embed with external evo2 script"""
-        target: Path = workdir.joinpath(f"{seqid}.parquet")
+        target: Path = workdir.joinpath(f"{batch_name}.parquet")
+        if len(df["uid"].unique()) != len(df["fasta"].unique()):
+            raise ValueError(
+                "The number of unique sequence ids doesn't match the number of fasta representations"
+            )
         if not target.exists():
-            df = df.filter(pl.col("seqid") == seqid)
+            df = df.filter(pl.col("seqid").is_in(seqids))
             with TemporaryDirectory() as d:
                 outdir: Path = Path(d)
-                input = outdir.joinpath()
+                input = outdir.joinpath("input.fasta")
                 input.write_text("\n".join(df["fasta"]))
                 evo_run = run(
-                    f"sbatch --wait --parsable {runscript} -i {input} -o {outdir}"
+                    f"sbatch --wait --parsable {runscript} -i {input} -o {outdir}",
+                    shell=True,
+                    capture_output=True,
                 )
+                jobid = evo_run.stdout.decode().strip()
+                outfile = Path(f"slurm-{jobid}.out")
+                logger.warning(f"{jobid=}")
                 evo_run.check_returncode()
-                embeddings: pl.DataFrame = pl.read_parquet(
-                    outdir / "pred_input.parquet"
-                )
-                with open("seq_idx_map.json", "rb") as f:
+                if outfile.exists():
+                    stdout = outfile.read_text()
+                    outfile.unlink()
+                else:
+                    stdout = (
+                        "Slurm stdout file not found. Did you delete it by accident?"
+                    )
+                try:
+                    embeddings: pl.DataFrame = pl.read_parquet(
+                        outdir / "pred_input.parquet"
+                    )
+                except FileNotFoundError:
+                    logger.debug(
+                        f"Evo2 failed to generate predictions\n-- BEGIN STDOUT -- \n{stdout}\n -- END STDOUT --"
+                    )
+                    raise CalledProcessError("Evo2 failed to generate predictions")
+                with open(outdir / "seq_idx_map.json", "rb") as f:
                     id_map: dict = json.load(f)
                 id_df: pl.DataFrame = pl.DataFrame(
                     {"uid": id_map.keys(), "id": id_map.values()}
