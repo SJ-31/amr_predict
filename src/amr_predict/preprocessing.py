@@ -130,7 +130,8 @@ class SeqEmbedder:
         self,
         fasta_annotations: Path,
         feature_cols: str | list[str],
-        feature_filter: tuple | dict = (),
+        feature_whitelist: tuple | dict = (),
+        feature_blacklist: tuple | dict = (),
         id_col: str = "sample",
         metadata: Path | None = None,
         key: str = "x",
@@ -146,19 +147,22 @@ class SeqEmbedder:
             except ComputeError as e:
                 logger.exception(f"Failed to read file {file}")
                 raise e
-            if feature_filter and isinstance(feature_filter, dict):
-                df = (
-                    df.with_columns(
-                        *[
-                            pl.col(k).is_in(v).alias(f"_has_{k}")
-                            for k, v in feature_filter.items()
-                        ]
+            for fspec, is_blacklist in zip(
+                (feature_whitelist, feature_blacklist), (False, True)
+            ):
+                if fspec and isinstance(fspec, dict):
+                    expr = [
+                        pl.col(k).is_in(v).alias(f"_has_{k}") for k, v in fspec.items()
+                    ]
+                    if is_blacklist:
+                        expr = [e.not_() for e in expr]
+                    df = (
+                        df.with_columns(*expr)
+                        .filter(pl.any_horizontal(cs.starts_with("_has")))
+                        .drop(cs.starts_with("_has"))
                     )
-                    .filter(pl.any_horizontal(cs.starts_with("_has")))
-                    .drop(cs.starts_with("_has"))
-                )
-            elif feature_filter:
-                df = df.filter(pl.col(feature_cols).is_in(feature_filter))
+                elif fspec:
+                    df = df.filter(pl.col(feature_cols).is_in(fspec))
             df = (
                 df.select(feature_cols)
                 .with_columns(pl.lit(file.stem).alias(id_col))
