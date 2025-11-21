@@ -122,6 +122,18 @@ class Evaluator:
         DataFrame of evaluation results
         """
         results: list[pl.DataFrame] = []
+        if splits is None and isinstance(dataset, Dataset):
+            if "valid_size" in kws:
+                tmp = dataset.train_test_split(test_size=kws["valid_size"])
+                del kws["valid_size"]
+                validation = tmp["test"]
+                dataset = tmp["train"]
+            else:
+                validation = None
+            print("Using automatic split")
+            dataset = dataset.train_test_split(**kws)
+            splits = {"auto": ("train", "test", validation)}
+
         tasks = self.model.task_names
         for key, (train, test, val) in splits.items():
             if isinstance(val, str) and isinstance(dataset, Path):
