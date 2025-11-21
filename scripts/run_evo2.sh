@@ -123,6 +123,8 @@ sif="/data/project/sirasris_shared/genomic_evo2.sif"
 script="/data/home/shannc/amr_predict/scripts/evo_prob_pred_Gene.py"
 ckpt="/data/home/shannc/amr_predict/data/remote/cache/evo2_7b"
 model_size="7b"
+cache="/data/home/shannc/amr_predict/data/remote/cache/nemo"
+export BIONEMO_CACHE_DIR="${cache}"
 
 # QOS
 gpu_qos="40"

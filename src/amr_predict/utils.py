@@ -138,6 +138,8 @@ def discretize_resistance(
 ) -> Dataset | pl.DataFrame:
     """Discretize continuous resistance scores
     e.g. AST into one of three categories, using quantiles
+    WARNING: it's AST are already discrete, and categorizing them into resistant,
+    susceptible is species- and antimicrobial-specific
 
     Parameters
     ----------

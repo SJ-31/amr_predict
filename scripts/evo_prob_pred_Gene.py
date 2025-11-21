@@ -20,7 +20,6 @@
 import argparse
 import json
 import logging
-import os
 import tempfile
 from pathlib import Path
 from typing import Literal, Optional
@@ -29,7 +28,6 @@ import nemo.lightning as nl
 import numpy as np
 import pandas as pd
 import torch
-from bionemo.core.data.load import load
 from bionemo.evo2.data.fasta_dataset import SimpleFastaDataset
 from bionemo.llm.lightning import LightningPassthroughPredictionMixin
 from bionemo.llm.utils.callbacks import PredictionWriter
