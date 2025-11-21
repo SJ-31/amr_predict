@@ -156,7 +156,9 @@ def format_hamronization(
         "input_sequence_id": seqid_col,
     }
     to_rename.update({w: f"{prefix}_{w}" for w in wanted_cols})
-    hamr = pl.read_csv(file, separator="\t", raise_if_empty=False)
+    hamr = pl.read_csv(
+        file, separator="\t", raise_if_empty=False, infer_schema_length=None
+    )
     if hamr.is_empty():
         return hamr
     else:
@@ -237,7 +239,7 @@ if smk.rule == "get_seq_metadata":
     if seq_meta.get("ampcombi"):
         dfs.append(format_ampcombi(seq_meta["ampcombi"], **rename_kws))
     if dfs:
-        df: pl.DataFrame = pl.concat(dfs, how="diagonal")
+        df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed")
         df.write_csv(smk.output[0])
     else:
         pl.DataFrame().write_csv(smk.output[0])
@@ -263,7 +265,8 @@ elif smk.rule == "make_text_datasets":
                 kws.update(
                     {
                         "fasta_annotations": Path(CONFIG["seq_metadata"]["bakta"]),
-                        "read_kws": {"skip_rows": 5},
+                        "read_kws": {"comment_prefix": "# "},
+                        "metadata_pattern": "*_bakta.tsv",
                     }
                 )
             sem = SeqEmbedder(

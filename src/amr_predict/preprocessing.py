@@ -22,7 +22,7 @@ from datasets import concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
-from polars.exceptions import NoDataError
+from polars.exceptions import ComputeError, NoDataError
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
 from transformers.modeling_outputs import MaskedLMOutput
@@ -64,10 +64,10 @@ class SeqEmbedder:
         accepted_suffixes: tuple,
         key: str,
         embed_fn: Callable,
+        pattern: str | None = None,
     ) -> Dataset:
-        dfs = [
-            embed_fn(f) for f in directory.iterdir() if f.suffix in accepted_suffixes
-        ]
+        to_iter = directory.glob(pattern) if pattern else directory.iterdir()
+        dfs = [embed_fn(f) for f in to_iter if f.suffix in accepted_suffixes]
         df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed").fill_null(0)
         feature_cols = df.drop(id_col).columns
         if metadata is not None:
@@ -128,11 +128,16 @@ class SeqEmbedder:
         metadata: Path | None = None,
         key: str = "x",
         read_kws: dict | None = None,
+        metadata_pattern: str | None = None,
     ):
         read_kws = read_kws or {}
 
         def helper(file: Path) -> pl.DataFrame:
-            df: pl.DataFrame = read_tabular(file, **read_kws)
+            try:
+                df: pl.DataFrame = read_tabular(file, **read_kws)
+            except ComputeError as e:
+                logger.exception(f"Failed to read file {file}")
+                raise e
             if feature_filter and isinstance(feature_filter, dict):
                 df = (
                     df.with_columns(
@@ -165,6 +170,7 @@ class SeqEmbedder:
             accepted_suffixes=(".tsv", ".csv"),
             key=key,
             embed_fn=helper,
+            pattern=metadata_pattern,
         )
 
     def _evo2_embed(
