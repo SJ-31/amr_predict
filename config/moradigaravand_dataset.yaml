@@ -1,0 +1,36 @@
+# configfile overrides for the Moradigaravand dataset
+genomes: "../data/remote/genomes/moradigaravand"
+
+embedding:
+  method: "seqLens"
+
+pool_embeddings:
+  methods:
+    - method: mean
+    - method: sum
+    - method: similarity
+  obs_keep:
+    [
+      "GEN_class",
+      "CTZ_class",
+      "CTX_class",
+      "AMP_class",
+      "AMX_class",
+      "AMC_class",
+      "TZP_class",
+      "CXM_class",
+      "CIP_class",
+    ]
+  key: "x"
+
+tasks:
+  classification: ["GEN_class", "AMP_class"]
+
+sample_metadata:
+  file: "../data/meta/combined_sample_meta.tsv"
+  id_col: "sample"
+seq_metadata:
+  hamronization: "../data/remote/output/moradigaravand_funcscan_2025-10-24/reports/hamronization_summarize/hamronization_combined_report.tsv" # hamronization summary tsv
+  combgc: "../data/remote/output/moradigaravand_funcscan_2025-10-24/reports/combgc" # combgc directory
+  bakta: "../data/remote/output/moradigaravand_funcscan_2025-10-24/annotation/bakta/all" # bakta directory
+  ampcombi: "../data/remote/output/moradigaravand_funcscan_2025-10-24/reports/ampcombi2/Ampcombi_summary.tsv"
