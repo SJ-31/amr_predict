@@ -1,8 +1,21 @@
+# -*- eval: (jinx-mode -1) -*-
 * moradigaravand_samples.tsv
 *Relative Path:* =data/meta/moradigaravand_samples.tsv=
 *Date Added:* <2025-10-24 Fri>
 *Source:* [[https://pmc.ncbi.nlm.nih.gov/articles/PMC6310291/#pcbi.1006258.s010][S1 Table]]
-Isolate metadata from the 2018 study [[https://pmc.ncbi.nlm.nih.gov/articles/PMC6310291/#notes1][Prediction of antibiotic resistance in Escherichia coli from large-scale pan-genome data - PMC]] by Morardigaravand et. al
+Isolate metadata from the 2018 study [[https://pmc.ncbi.nlm.nih.gov/articles/PMC6310291/#notes1][Prediction of antibiotic resistance in Escherichia coli from large-scale pan-genome data - PMC]] by Morardigaravand et. al. Tested concentrations using EUCAST
++ Acronyms
+  * penicillin: ampicillin (AMP, C.B. (clinical breakpoint): 6μg/ml)
+  * cephalosporins: cefuroxime (CXM, C.B.: 8μg/ml)
+  * cefotaxime (CTX, C.B.: 4μg/ml)
+  * cephalothin (CET, C.B.: 20μg/ml)
+  * ceftazidime (CTZ, C.B.: 0.25μg/ml))
+  * aminoglycosides (gentamicin (GEN, C.B.: 4μg/ml)
+  * tobramycin (TBM, C.B.: 8μg/ml))
+  * fluoroquinolones (ciprofloxacin (CIP, C.B.: 1μg/ml))
+  * amoxicillin-clavulanate (AMC)
+  * amoxicillin (AMX)
+  * trimethoprim (TMP)
 * jia_sample_mapping.tsv
 *Relative Path:* =data/meta/jia_sample_mapping.tsv=
 *Date Added:* <2025-09-22 Mon>
@@ -12,7 +25,18 @@ TSV file mapping Jia sample Assembly accessions to their BioSample accessions. F
 *Relative Path:* =data/meta/jia_samples.tsv=
 *Date Added:* <2025-09-22 Mon>
 *Source:* [[https://pmc.ncbi.nlm.nih.gov/articles/PMC11619347/#s2][Paper supplemental data]]
-Sample metadata from [[https://pmc.ncbi.nlm.nih.gov/articles/PMC11619347/#s5-2][Jia et al.]], extracted from the supplemental data word document
+Sample metadata from [[https://pmc.ncbi.nlm.nih.gov/articles/PMC11619347/#s5-2][Jia et al.]], extracted from the supplemental data word document.  Tested concentrations using EUCAST
++ Acronyms
+  * imipenem (IPM)
+  * meropenem (MEM)
+  * gentamicin (GEN)
+  * amikacin (AMK)
+  * cefepime (FEP)
+  * ceftriaxone (CRO)
+  * ceftazidime (CAZ)
+  * minocycline (MIN)
+  * tigecycline (TGC)
+  * colistin (CST)
 * BVBRC_genome_amr.csv
 *Relative Path:* =data/raw/BVBRC_genome_amr.csv=
 *Date Added:* <2025-09-04 Thu>
