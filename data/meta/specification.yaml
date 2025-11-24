@@ -6,27 +6,60 @@ metadata:
     path: "jia_samples_reformatted.tsv"
     sample_col: "Accession"
     discretize: # Continuous resistance variables to discretize
-      cols: ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC", "MIN"]
+      cols:
+        [
+          "amikacin",
+          "gentamicin",
+          "imipenem",
+          "meropenem",
+          "ceftriaxone",
+          "ceftazidime",
+          "cefepime",
+          "tigecycline",
+          "minocycline",
+        ]
       susceptible: 0.3 # lower than this quantile is susceptible
       resistant: 0.8 # greater than this is resistant
     to_drop:
       ["Strain", "ST Oxf", "ST Pas", "K/O typing", "City", "Collection date"]
+    rename:
+      "IPM": "imipenem"
+      "MEM": "meropenem"
+      "GEN": "gentamicin"
+      "AMK": "amikacin"
+      "FEP": "cefepime"
+      "CRO": "ceftriaxone"
+      "CAZ": "ceftazidime"
+      "MIN": "minocycline"
+      "TGC": "tigecycline"
+      "CST": "colistin"
   moradigaravand:
     path: "moradigaravand_samples.tsv"
     sample_col: "ENA.Accession.Number"
-    to_drop: ["Isolate", "Lane.accession", "Sequecning Status", "Year"]
+    to_drop: ["Isolate", "Lane.accession", "Sequecning Status", "Year", "TZP"]
     add_class_suffix:
       [
-        "CTZ",
-        "CTX",
-        "AMP",
-        "AMX",
-        "AMC",
-        "TZP",
-        "CXM",
-        "CET",
-        "GEN",
-        "TBM",
-        "TMP",
-        "CIP",
+        "ceftazidime",
+        "cefotaxime",
+        "ampicillin",
+        "amoxicillin",
+        "amoxicillin_clavulanate",
+        "cefoxime",
+        "cephalothin",
+        "gentamicin",
+        "tobramycin",
+        "trimethoprim",
+        "ciprofloxacin",
       ]
+    rename:
+      "AMP": "ampicillin"
+      "CXM": "cefoxime"
+      "CTX": "cefotaxime"
+      "CET": "cephalothin"
+      "CTZ": "ceftazidime"
+      "GEN": "gentamicin"
+      "TBM": "tobramycin"
+      "CIP": "ciprofloxacin"
+      "AMC": "amoxicillin_clavulanate"
+      "AMX": "amoxicillin"
+      "TMP": "trimethoprim"

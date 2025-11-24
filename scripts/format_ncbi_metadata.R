@@ -20,7 +20,7 @@ bsample_map <- read_csv(here(
   "meta",
   "biosample_mapping_2025-11-21.csv"
 )) |>
-  filter(!is.na(BioSample))
+  filter(!is.na(BioSample) & !is.na(Run))
 
 ast <- read_tsv(here("data", "raw", "asts.tsv"))
 
@@ -43,11 +43,11 @@ n_samples <- length(utb$BioSample)
 log_info("Number of samples with data: {n_samples}")
 
 mic_values <- joined |>
-  select(BioSample, ScientificName, MIC, Antibiotic) |>
+  select(BioSample, Run, ScientificName, MIC, Antibiotic) |>
   pivot_wider(
     names_from = Antibiotic,
     values_from = MIC,
-    id_cols = c(BioSample, ScientificName),
+    id_cols = c(BioSample, Run, ScientificName),
     values_fn = first,
   )
 
@@ -69,7 +69,7 @@ final <- inner_join(
 
 null_description <- colSums(is.na(select(
   mic_values,
-  -c(BioSample, ScientificName)
+  -c(BioSample, Run, ScientificName)
 ))) |>
   sort() |>
   as.data.frame() |>

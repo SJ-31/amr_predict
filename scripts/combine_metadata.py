@@ -15,11 +15,14 @@ with open(mpath.joinpath("specification.yaml"), "rb") as f:
 
 dsuffix: str = spec["discretize_suffix"]
 
+
 metas: list[pl.DataFrame] = []
 for name, dset_spec in spec["metadata"].items():
     df: pl.DataFrame = read_tabular(mpath.joinpath(dset_spec["path"]))
     if scol := dset_spec.get("sample_col"):
         df = df.rename({scol: spec["sample_col"]})
+    if new_names := dset_spec.get("rename"):
+        df = df.rename(new_names)
     if make_discrete := dset_spec.get("discretize"):
         df = discretize_resistance(df, suffix=dsuffix, **make_discrete)
     if class_cols := dset_spec.get("add_class_suffix"):
@@ -33,7 +36,13 @@ meta: pl.DataFrame = (
     .select("sample", "dataset", cs.exclude(["sample", "dataset"]))
     .with_columns(
         cs.ends_with("_class").replace(
-            {"I": "intermediate", "S": "susceptible", "R": "resistant"}
+            {
+                "I": "intermediate",
+                "S": "susceptible",
+                "R": "resistant",
+                "not defined": None,
+                "suceptible-dose dependent": "suceptible_dose_dependent",
+            }
         )
     )
 )
