@@ -1,0 +1,5 @@
+outs:
+- md5: a8f36e9b96e240769f2962c60ddee049
+  size: 22321843
+  hash: md5
+  path: ncbi_all_samples.tsv

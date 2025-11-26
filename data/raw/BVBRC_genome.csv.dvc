@@ -1,0 +1,5 @@
+outs:
+- md5: 55fba6de0ddff62d0a84f409d7b204c4
+  size: 25990942
+  hash: md5
+  path: BVBRC_genome.csv
