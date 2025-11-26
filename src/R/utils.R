@@ -76,8 +76,78 @@ confounding_score_multi <- function(df, cols) {
   )
 }
 
-# Very confounding score low as expected
+# Very low confounding_score as expected
 ## test <- data.frame(
 ##   A = sample(c("a", "b", "c"), 1000, replace = TRUE),
 ##   B = sample(c(1, 2, 3), 1000, replace = TRUE)
 ## )
+
+get_biosample_attrs <- function(ids, file = NULL) {
+  if (is.null(file)) {
+    concat <- paste0(ids, collapse = ",")
+    args <- c("-db", "biosample", "-id", concat, "-format", "native")
+    call <- system2("efetch", args, stdout = TRUE)
+  } else {
+    call <- read_lines(file)
+  }
+  i <- 0
+  entry_indices <- map_dbl(call, \(x) {
+    if (str_detect(x, "^[0-9]+: ")) {
+      i <<- i + 1
+      0
+    } else {
+      i
+    }
+  })
+  entries <- split(call, entry_indices) |> discard_at(\(x) x == "0")
+  lapply(entries, \(para) {
+    find_acc <- keep(para, \(x) str_detect(x, "^Accession:"))
+    acc <- str_extract(find_acc, "^Accession: (.*)\tID: [0-9]+$", group = 1)
+    attributes <- str_trim(keep(
+      para,
+      \(x) str_detect(str_trim(x), "^/.*=\".*\"")
+    ))
+    a_names <- str_extract(attributes, "^/(.*)=.*", group = 1) |>
+      str_replace_all(" ", "_")
+    a_values <- str_extract(attributes, ".*=\"(.*)\"", group = 1)
+    to_list <- as.list(a_values) |> `names<-`(a_names)
+    tb <- tryCatch(expr = as_tibble(to_list), error = \(cnd) {
+      warning(glue(
+        "Detected duplicated column names in the following section\n{names(to_list)}"
+      ))
+      print(para)
+      as_tibble(to_list, .name_repair = "unique")
+    })
+    mutate(tb, acc = acc)
+  }) |>
+    bind_rows()
+}
+
+get_bioproject_titles <- function(ids) {
+  concat <- paste0(ids, collapse = ",")
+  args <- c("-db", "bioproject", "-id", concat, "-format", "native")
+  call <- system2("efetch", args, stdout = TRUE)
+  i <- 1
+  entry_indices <- map_dbl(call, \(x) {
+    if (x == "") {
+      i <<- i + 1
+      0
+    } else {
+      i
+    }
+  })
+  entries <- split(call, entry_indices) |> discard_at(\(x) x == "0")
+  lapply(entries, \(para) {
+    title <- str_remove(para[1], "^[0-9]+\\. ")
+    find_acc <- keep(para, \(x) str_detect(x, "^BioProject Accession:"))
+    acc <- str_remove(find_acc, "^BioProject Accession: ")
+    org_mask <- str_detect(para, "^Organism: ")
+    if (any(org_mask)) {
+      organism <- str_remove(para[org_mask], "^Organism: ")
+    } else {
+      organism <- NA
+    }
+    tibble(acc = acc, title = title, organism = organism)
+  }) |>
+    bind_rows()
+}

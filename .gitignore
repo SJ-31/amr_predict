@@ -4,7 +4,6 @@
 # exclude data from source control by default
 /data/temp
 /data/processed
-/data/raw
 /tests/data/*
 
 # Other
@@ -15,3 +14,6 @@
 /data/remote
 /results/
 /data/meta/biosample_mapping.log
+/data/meta/ast_bioproject_titles.tsv
+/data/meta/combined_sample_meta.tsv
+/data/meta/genome_trakr_bsample.tsv
