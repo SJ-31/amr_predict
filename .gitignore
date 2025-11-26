@@ -11,9 +11,12 @@
 *.snakemake*
 *__pycache__
 /.stfolder/
+*slurm-*.out*
 /data/remote
 /results/
 /data/meta/biosample_mapping.log
 /data/meta/ast_bioproject_titles.tsv
 /data/meta/combined_sample_meta.tsv
 /data/meta/genome_trakr_bsample.tsv
+/snakemake/tmp.kmc_pre
+/snakemake/tmp.kmc_suf

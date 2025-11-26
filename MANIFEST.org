@@ -1,4 +1,15 @@
 # -*- eval: (jinx-mode -1) -*-
+* biosample_attributes.tsv
+*Relative Path:* =data/meta/biosample_attributes.tsv=
+*Date Added:* <2025-11-26 Wed>
+*Source:* Custom —  =scripts/format_ncbi_metadata.R=
+Attributes for the biosample accessions in =biosample_mapping_2025-11-21.csv=, obtained by parsing output of efetch using =get_biosample_attrs= in =src/utils.R=. Required because some of these metadata are not provided in the AST browser or in the mapping file
+
+* ADB_all_compounds.csv
+*Relative Path:* =data/meta/ADB_all_compounds.csv=
+*Date Added:* <2025-11-26 Wed>
+*Source:* [[https://antibioticdb.com/index.jsp][AntibioticDB]]
+All compounds in the AntibioticDB database, downloaded [2025-11-26 Wed]
 * moradigaravand_samples.tsv
 *Relative Path:* =data/meta/moradigaravand_samples.tsv=
 *Date Added:* <2025-10-24 Fri>
