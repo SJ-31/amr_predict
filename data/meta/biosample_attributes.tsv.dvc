@@ -1,0 +1,5 @@
+outs:
+- md5: 17c0f2823cd59f79e633384e2c42334c
+  size: 17640683
+  hash: md5
+  path: biosample_attributes.tsv
