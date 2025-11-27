@@ -18,6 +18,12 @@ AM_classes: # Compounds/combinations not present in ADB. Combinations use ADB no
   ticarcillin-clavulanic acid: "beta-lactam (carboxypenicillin) + beta-lactamase inhibitor (clavam, bicyclic beta-lactam without a penicillin or cephalosporin nucleus)"
   quinupristin-dalfopristin: "streptogramin"
 
+AM_of_interest:
+  - "beta-lactam \\(cephalosporin, third generation\\)"
+  - "carbapenem"
+  - "fluoroquinolone"
+  - "macrolide"
+
 AM_groups:
   # ESKAPEE:
   #   - eScientificName: "Enterococcus faecium"
