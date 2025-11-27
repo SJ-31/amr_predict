@@ -19,14 +19,50 @@ AM_classes: # Compounds/combinations not present in ADB. Combinations use ADB no
   quinupristin-dalfopristin: "streptogramin"
 
 AM_groups:
-  ESKAPEE:
-    - ScientificName: "Enterococcus faecium"
-      vancomycin_class: "resistant"
-    - ScientificName: "Staphylococcus aureus"
-      resistant: ["Beta-lactam (penicillin)", "", ""]
+  # ESKAPEE:
+  #   - eScientificName: "Enterococcus faecium"
+  #     vancomycin_class: "resistant"
+  #   - ScientificName: "Staphylococcus aureus"
+  #     resistant: ["Beta-lactam (penicillin)", "", ""]
+  # 2024 WHO Bacterial Priority Pathogens List
   WHO_critical:
-    - ScientificName: "Acinetobacter baumannii"
-      resistant_re: ["carbapenem"]
-    -
+    - exact:
+        order: "Enterobacterales"
+      drug_class_re: "beta-lactam \\(cephalosporin, third generation\\)"
+    - exact:
+        order: "Enterobacterales"
+      drug_class_re: "carbapenem"
+    - exact:
+        species: "Acinetobacter baumannii"
+      drug_class_re: "carbapenem"
   WHO_high:
+    - exact:
+        genus: "Shigella"
+      drug_class_re: "fluoroquinolone"
+    - exact:
+        # For this dataset, encompasses typhoidal and non-typhoidal fluoroquinolone-resistant Salmonella
+        species: "Salmonella enterica"
+      drug_class_re: "fluoroquinolone"
+    - exact:
+        species: "Enterococcus faecium"
+      drug_name: "vancomycin"
+    - exact:
+        species: "Pseudomonas aeruginosa"
+      drug_class_re: "carbapenem"
+    - exact:
+        species: "Neisseria gonorrhoeae"
+      drug_class_re:
+        ["beta-lactam \\(cephalosporin, third generation\\)", "fluoroquinolone"]
+    - exact:
+        species: "Staphylococcus aureus"
+      drug_name: "methicillin"
   WHO_medium:
+    - exact:
+        species: ["Streptococcus pneumoniae", "Streptococcus pyogenes"]
+      drug_class_re: "macrolide"
+    - exact:
+        species: "Haemophilus influenzae"
+      drug_name: "ampicillin"
+    - exact:
+        species: "Streptococcus agalactiae"
+      drug_name: "beta-lactam \\(penicillin\\)"
