@@ -90,7 +90,8 @@ format_main <- function(lst) {
     mic_values,
     amr_phenotype,
     by = join_by(x$BioSample == y$BioSample_class)
-  )
+  ) |>
+    distinct(BioSample, .keep_all = TRUE)
 
   null_description <- colSums(is.na(select(
     mic_values,
@@ -321,58 +322,101 @@ present_am <- local({
 })
 
 ## ** Label AM groups
+# %%
 
-# ESKAPE pathogens
-# TODO: it's actually ESKAPEE
 dclass2names <- group_by(present_am, drug_class) |>
-  summarise(drug_name = list(drug_name))
+  summarise(drug_name = list(drug_name)) |>
+  filter(!is.na(drug_class))
+
+
+drug_class_lookups <- sapply(
+  am_custom$AM_of_interest,
+  \(x) {
+    filter(dclass2names, str_detect(drug_class, x)) |>
+      pluck("drug_name") |>
+      unlist()
+  },
+  USE.NAMES = TRUE,
+  simplify = FALSE
+)
 
 samples <- formatted$samples$BioSample
 amr_groups <- list()
+group_tracker <- list()
 for (group in names(am_custom$AM_groups)) {
-  org_group <- am_custom$AM_groups[[group]]
-  mask <- lapply(org_group, \(spec) {
+  org_groups <- am_custom$AM_groups[[group]]
+  mask <- lapply(seq_along(org_groups), \(i) {
+    spec <- org_groups[[i]]
     tmatch <- spec$exact
     unit <- names(tmatch)
     tax_lookup <- setNames(project_meta[[unit]], project_meta$`#biosample`)
     taxon_match <- tax_lookup[samples] %in% tmatch[[unit]]
     if (!is.null(spec$drug_name)) {
-      relevant_drugs <- paste0(spec$drug_name, "_class")
+      relevant_drugs <- spec$drug_name
     } else {
-      regexps <- spec$drug_class_re
-      rel <- dclass2names |>
-        filter(reduce(
-          sapply(regexps, \(re) str_detect(drug_class, re)),
-          \(x, y) x | y
-        ))
-      if (nrow(rel) == 0) {
-        return(rep(FALSE, nrow(formatted$samples)))
-      } else {
-        relevant_drugs <- rel$drug_name |>
-          unlist() |>
-          paste0("_class")
-      }
+      relevant_drugs <- lapply(
+        spec$drug_class_re,
+        \(x) drug_class_lookups[[x]]
+      ) |>
+        unlist()
     }
     relevant_drugs <- keep(
       relevant_drugs,
       \(x) x %in% colnames(formatted$samples)
     )
+    if (length(relevant_drugs) == 0) {
+      return(rep(FALSE, nrow(formatted$samples)))
+    }
+    relevant_drugs <- paste0(relevant_drugs, "_class")
     m <- formatted$samples |>
       mutate(mask = if_any(relevant_drugs, \(x) x == "resistant")) |>
       pluck("mask")
+    group_tracker[[glue("{group}_{i}")]] <<- formatted$samples$BioSample[
+      m & taxon_match
+    ]
     m & taxon_match
   }) |>
     reduce(\(x, y) x | y)
-  amr_groups[[group]] <- formatted$samples$BioSample[mask]
+  amr_groups[[group]] <- formatted$samples$BioSample[mask] |> discard(is.na)
 }
 
+# Check overlap
+intersections <- list()
+tmp <- apply(combn(names(group_tracker), 2), 2, \(col) {
+  g1 <- col[1]
+  g2 <- col[2]
+  inter <- intersect(group_tracker[[g1]], group_tracker[[g2]])
+  intersection <- length(inter)
+  log_info("intersection between {g1} {g2}: {intersection}")
+  intersections[[glue("{g1}_{g2}")]] <<- project_meta |>
+    filter(`#biosample` %in% inter) |>
+    select(`#biosample`, genus, order, species)
+})
+intersections <- discard(intersections, \(x) nrow(x) == 0)
+# NOTE: there is potentially overlap between the WHO groups
+# because it's possible for a given pathogen to meet the criteria of multiple groups
+# based on their resistance classes.
+# EX: A Shigella sample that is resistant to a fluoroquinolone drug,
+# but is also resistant to a third-gen beta-lactam would meet the criteria for WHO
+# critical and WHO high
+
+# %%
+
+crit <- project_meta |> filter(`#biosample` %in% amr_groups$WHO_critical)
 
 ## * Subsampling
 
 # Samples from GenomeTrakr, which comprises multiple laboratories
 gtrak <- bproject_counts |> filter(str_detect(title, "GenomeTrakr"))
 
+# TODO: subsample evenly from the big 3 projects.
 kept_ids <- c()
 
-# TODO: subsample evenly from the big 3 projects.
-# Only add add samples from smaller projects if they are species of interest
+# Add all samples that are species of interest
+for (g in amr_groups) {
+  kept_ids <- c(kept_ids, sample(g, size = 500))
+}
+## kept_ids <- c(
+##   kept_ids,
+##   unique(formatted$samples$BioSample %in% unlist(amr_groups, use.names = FALSE))
+## )
