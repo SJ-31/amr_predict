@@ -144,7 +144,16 @@ project_meta <- read_tsv(ast_file) |>
     species = ncbi_taxid2rank(TaxID, "species")[
       TaxID
     ],
+    subspecies = ncbi_taxid2rank(TaxID, "subspecies")[
+      TaxID
+    ],
+    genus = ncbi_taxid2rank(TaxID, "genus")[
+      TaxID
+    ],
     order = ncbi_taxid2rank(TaxID, "order")[
+      TaxID
+    ],
+    family = ncbi_taxid2rank(TaxID, "family")[
       TaxID
     ]
   )
@@ -290,7 +299,10 @@ am_cat <- read_csv(here("data", "meta", "ADB_all_compounds.csv")) |>
         .default = drug_name
       )
     ),
-    drug_class = str_remove(str_to_lower(drug_class), "drug combination: ")
+    drug_class = str_trim(str_remove(
+      str_to_lower(drug_class),
+      "drug combination: "
+    ))
   )
 
 present_am <- local({
@@ -310,10 +322,50 @@ present_am <- local({
 
 ## ** Label AM groups
 
-# TODO: do this in the file ~/Bio_SDD/amr_predict/config/amr_groups.yaml
-# Use `present_am`
 # ESKAPE pathogens
 # TODO: it's actually ESKAPEE
+dclass2names <- group_by(present_am, drug_class) |>
+  summarise(drug_name = list(drug_name))
+
+samples <- formatted$samples$BioSample
+amr_groups <- list()
+for (group in names(am_custom$AM_groups)) {
+  org_group <- am_custom$AM_groups[[group]]
+  mask <- lapply(org_group, \(spec) {
+    tmatch <- spec$exact
+    unit <- names(tmatch)
+    tax_lookup <- setNames(project_meta[[unit]], project_meta$`#biosample`)
+    taxon_match <- tax_lookup[samples] %in% tmatch[[unit]]
+    if (!is.null(spec$drug_name)) {
+      relevant_drugs <- paste0(spec$drug_name, "_class")
+    } else {
+      regexps <- spec$drug_class_re
+      rel <- dclass2names |>
+        filter(reduce(
+          sapply(regexps, \(re) str_detect(drug_class, re)),
+          \(x, y) x | y
+        ))
+      if (nrow(rel) == 0) {
+        return(rep(FALSE, nrow(formatted$samples)))
+      } else {
+        relevant_drugs <- rel$drug_name |>
+          unlist() |>
+          paste0("_class")
+      }
+    }
+    relevant_drugs <- keep(
+      relevant_drugs,
+      \(x) x %in% colnames(formatted$samples)
+    )
+    m <- formatted$samples |>
+      mutate(mask = if_any(relevant_drugs, \(x) x == "resistant")) |>
+      pluck("mask")
+    m & taxon_match
+  }) |>
+    reduce(\(x, y) x | y)
+  amr_groups[[group]] <- formatted$samples$BioSample[mask]
+}
+
 
 ## * Subsampling
 
