@@ -125,9 +125,6 @@ bioprojects <- read_existing(
 
 formatted <- read_existing(paths, format_main, read_fn = read_tsv)
 
-# TODO: organism group might easier to work with than species
-# TODO: figure out a sampling procedure for project
-
 project_meta <- read_tsv(ast_file) |>
   distinct(`#BioSample`, .keep_all = TRUE) |>
   filter(`#BioSample` %in% formatted$samples$BioSample) |>
@@ -186,8 +183,6 @@ bproject_counts <- as.data.frame(table(project_meta$BioProject)) |>
 # - Unify all NARMS projects as one because AST is centralized
 # - Rename Vet-LIRN projects to enable grouping by site of collection and sequencing rather than by species
 # - Leave GenomeTrakr as is because they provide no detailed data on collection
-
-# TODO: Get collection date...
 
 bsample_attributes <- read_existing(
   here("data", "meta", "biosample_attributes.tsv"),
@@ -401,8 +396,6 @@ intersections <- discard(intersections, \(x) nrow(x) == 0)
 # critical and WHO high
 
 # %%
-
-crit <- project_meta |> filter(`#biosample` %in% amr_groups$WHO_critical)
 
 ## * Subsampling
 

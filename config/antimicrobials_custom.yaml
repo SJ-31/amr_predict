@@ -1,5 +1,3 @@
-# Also see the WHO priority list at https://www.thelancet.com/cms/10.1016/j.lanmic.2024.07.010/attachment/8e466d11-c7f8-4242-966e-400b405a324b/mmc1.pdf
-
 AM_classes: # Compounds/combinations not present in ADB. Combinations use ADB nomenclature
   ampicillin-sulbactam: "beta-lactam (penicillin) + beta-lactamase inhibitor"
   piperacillin-tazobactam: "beta-lactam (ureidopenicillin) + beta-lactamase inhibitor (penicillanic acid sulfone)"
