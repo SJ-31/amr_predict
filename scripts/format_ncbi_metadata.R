@@ -3,8 +3,13 @@ suppressMessages({
   library(here)
   library(glue)
   library(logger)
+  library(taxizedb)
   source(here("src", "R", "utils.R"))
 })
+
+tdb_cache$cache_path_set(
+  full_path = here("data", "remote", "cache", "taxizedb")
+)
 
 log_path <- here("data", "meta", "biosample_mapping.log")
 if (file.exists(log_path)) {
@@ -135,8 +140,15 @@ project_meta <- read_tsv(ast_file) |>
   mutate(
     year = year(date),
     isolation_source = str_to_lower(isolation_source) |>
-      str_replace_all("[ -]", "_")
+      str_replace_all("[ -]", "_"),
+    species = ncbi_taxid2rank(TaxID, "species")[
+      TaxID
+    ],
+    order = ncbi_taxid2rank(TaxID, "order")[
+      TaxID
+    ]
   )
+
 
 bproject_counts <- as.data.frame(table(project_meta$BioProject)) |>
   as_tibble() |>
@@ -217,10 +229,6 @@ bsample_attributes$collection_year <- lapply(
   }
 ) |>
   unlist()
-
-## ** Reconcile taxonomy
-
-project_meta
 
 ## ** Unify sample handling
 
@@ -303,6 +311,7 @@ present_am <- local({
 ## ** Label AM groups
 
 # TODO: do this in the file ~/Bio_SDD/amr_predict/config/amr_groups.yaml
+# Use `present_am`
 # ESKAPE pathogens
 # TODO: it's actually ESKAPEE
 

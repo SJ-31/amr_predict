@@ -151,3 +151,23 @@ get_bioproject_titles <- function(ids) {
   }) |>
     bind_rows()
 }
+
+ncbi_taxid2rank <- function(taxids, rank = "kingdom", as_name = TRUE) {
+  lapply(classification(unique(taxids), db = "ncbi"), \(x) {
+    lookup <- dplyr::filter(x, rank == !!rank)
+    if (nrow(lookup) > 1) {
+      print(lookup)
+      stop("should be one")
+    }
+    nrows <- nrow(lookup)
+    is_na <- is.na(nrows)
+    if (is_na || nrows == 0) {
+      NA
+    } else if (as_name) {
+      lookup$name
+    } else {
+      lookup$id
+    }
+  }) |>
+    unlist()
+}
