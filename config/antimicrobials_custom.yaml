@@ -1,0 +1,32 @@
+# Also see the WHO priority list at https://www.thelancet.com/cms/10.1016/j.lanmic.2024.07.010/attachment/8e466d11-c7f8-4242-966e-400b405a324b/mmc1.pdf
+
+AM_classes: # Compounds/combinations not present in ADB. Combinations use ADB nomenclature
+  ampicillin-sulbactam: "beta-lactam (penicillin) + beta-lactamase inhibitor"
+  piperacillin-tazobactam: "beta-lactam (ureidopenicillin) + beta-lactamase inhibitor (penicillanic acid sulfone)"
+  cefotaxime-clavulanic acid: "beta-lactam (cephalosporin, third generation) + beta-lactamase inhibitor (clavam, bicyclic beta-lactam without a penicillin or cephalosporin nucleus)"
+  ceftazidime-clavulanic acid: "beta-lactam (cephalosporin) + beta-lactamase inhibitor (clavam, bicyclic beta-lactam without a penicillin or cephalosporin nucleus)"
+  amphotericin b: "antifungal"
+  anidulafungin: "antifungal"
+  caspofungin: "antifungal"
+  micafungin: "antifungal"
+  fluconazole: "antifungal"
+  voriconazole: "antifungal"
+  isavuconazole: "antifungal"
+  itraconazole: "antifungal"
+  imipenem-edta-pa: "beta-lactam (carbapenem) + small molecule antibacterial agent"
+  ceftazidime-avibactam: "beta-lactam (cephalosporin) + beta-lactamase inhibitor (non-beta-lactam beta-lactamase inhibitor, diazabicyclooctane [dbo])"
+  ticarcillin-clavulanic acid: "beta-lactam (carboxypenicillin) + beta-lactamase inhibitor (clavam, bicyclic beta-lactam without a penicillin or cephalosporin nucleus)"
+  quinupristin-dalfopristin: "streptogramin"
+
+AM_groups:
+  ESKAPEE:
+    - ScientificName: "Enterococcus faecium"
+      vancomycin_class: "resistant"
+    - ScientificName: "Staphylococcus aureus"
+      resistant: ["Beta-lactam (penicillin)", "", ""]
+  WHO_critical:
+    - ScientificName: "Acinetobacter baumannii"
+      resistant_re: ["carbapenem"]
+    -
+  WHO_high:
+  WHO_medium:
