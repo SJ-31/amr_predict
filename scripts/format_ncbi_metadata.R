@@ -131,10 +131,11 @@ formatted <- read_existing(paths, format_main, read_fn = read_tsv)
 project_meta <- read_tsv(ast_file) |>
   distinct(`#BioSample`, .keep_all = TRUE) |>
   filter(`#BioSample` %in% formatted$samples$BioSample) |>
-  rename_with(\(x) str_to_lower(x) |> str_replace_all(" ", "_")) |>
+  rename_with(\(x) str_replace_all(str_to_lower(x), " ", "_")) |>
+  rename(BioSample = "#biosample") |>
   inner_join(
     read_csv(srr_map_file),
-    by = join_by(x$`#biosample` == y$BioSample)
+    by = join_by(BioSample)
   ) |>
   inner_join(bioprojects, by = join_by(x$BioProject == y$acc)) |>
   mutate(
@@ -219,7 +220,7 @@ bsample_attributes <- read_existing(
   here(META, "biosample_attributes.tsv"),
   \(f) {
     chunk_size <- 2000
-    v <- project_meta$`#biosample`
+    v <- project_meta$BioSample
     splits <- split(v, ceiling(seq_along(v) / chunk_size))
     attr <- lapply(splits, \(chunk) {
       get_biosample_attrs(chunk)
@@ -244,8 +245,8 @@ for (r in repeated) {
 }
 bsample_attributes <- inner_join(
   bsample_attributes,
-  select(project_meta, c(`#biosample`, title)),
-  by = join_by(x$acc == y$`#biosample`)
+  select(project_meta, c(BioSample, title)),
+  by = join_by(x$acc == y$BioSample)
 )
 
 ## ** Add collection dates
@@ -309,6 +310,10 @@ cols_remove <- c(
   "mic_(mg/l)",
   "resistance_phenotype",
   "testing_standard",
+  "organism",
+  "organism_group",
+  "scientific_name",
+  "source",
   "vendor"
 )
 wanted_attributes <- c(
@@ -322,7 +327,7 @@ wanted_attributes <- c(
 project_meta <- inner_join(
   project_meta,
   select(bsample_attributes, c(acc, all_of(wanted_attributes))),
-  by = join_by(x$`#biosample` == y$acc)
+  by = join_by(x$BioSample == y$acc)
 ) |>
   mutate(
     umbrella_project = case_match(
@@ -395,6 +400,7 @@ present_am <- local({
 })
 
 ## ** Label AM groups
+
 # %%
 
 dclass2names <- group_by(present_am, drug_class) |>
@@ -422,7 +428,7 @@ for (group in names(am_custom$AM_groups)) {
     spec <- org_groups[[i]]
     tmatch <- spec$exact
     unit <- names(tmatch)
-    tax_lookup <- setNames(project_meta[[unit]], project_meta$`#biosample`)
+    tax_lookup <- setNames(project_meta[[unit]], project_meta$BioSample)
     taxon_match <- tax_lookup[samples] %in% tmatch[[unit]]
     if (!is.null(spec$drug_name)) {
       relevant_drugs <- spec$drug_name
@@ -462,8 +468,8 @@ tmp <- apply(combn(names(group_tracker), 2), 2, \(col) {
   intersection <- length(inter)
   log_info("intersection between {g1} {g2}: {intersection}")
   intersections[[glue("{g1}_{g2}")]] <<- project_meta |>
-    filter(`#biosample` %in% inter) |>
-    select(`#biosample`, genus, order, species)
+    filter(BioSample %in% inter) |>
+    select(BioSample, genus, order, species)
 })
 intersections <- discard(intersections, \(x) nrow(x) == 0)
 # NOTE: there is potentially overlap between the WHO groups
@@ -476,9 +482,9 @@ intersections <- discard(intersections, \(x) nrow(x) == 0)
 project_meta$interest_group <- with(
   project_meta,
   case_when(
-    `#biosample` %in% amr_groups$WHO_critical ~ "WHO_critical",
-    `#biosample` %in% amr_groups$WHO_high ~ "WHO_high",
-    `#biosample` %in% amr_groups$WHO_medium ~ "WHO_medium",
+    BioSample %in% amr_groups$WHO_critical ~ "WHO_critical",
+    BioSample %in% amr_groups$WHO_high ~ "WHO_high",
+    BioSample %in% amr_groups$WHO_medium ~ "WHO_medium",
     .default = NA
   )
 )
@@ -509,7 +515,7 @@ levels2tb <- function(
 
 project_meta <- mutate(
   project_meta,
-  interest_group = levels2tb(amr_groups)[project_meta$`#biosample`]
+  interest_group = levels2tb(amr_groups)[project_meta$BioSample]
 ) |>
   mutate(interest_group = replace_na(interest_group, "none"))
 
@@ -519,11 +525,10 @@ project_meta <- mutate(
 
 # REVIEW: you could also weight by genera
 
-final_selection <- local.env({
+final_selection <- local({
   tbs <- list()
 
-  project_meta <- distinct(project_meta, `#biosample`, .keep_all = TRUE) |>
-    select(-all_of(cols_remove))
+  project_meta <- distinct(project_meta, BioSample, .keep_all = TRUE)
 
   # Subsample evenly from the big 4 projects.
   tbs$proj_group <- project_meta |>
@@ -545,15 +550,24 @@ final_selection <- local.env({
     group_by(interest_group) |>
     slice_sample(n = 500, replace = TRUE)
 
-  kept_ids <- lapply(tbs, \(x) x$`#biosample`) |>
+  kept_ids <- lapply(tbs, \(x) x$BioSample) |>
     unlist() |>
     unique()
 
-  project_meta |> filter(`#biosample` %in% kept_ids)
+  project_meta |>
+    filter(BioSample %in% kept_ids) |>
+    relocate(
+      species,
+      subspecies,
+      genus,
+      family,
+      order,
+      .after = "BioSample"
+    )
 })
 write_tsv(final_selection, here(META, "ast_subsampled.tsv"))
 write_lines(
-  final_selection$`#biosample`,
+  final_selection$BioSample,
   here(META, "ast_subsampled_runs.txt")
 )
 
