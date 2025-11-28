@@ -7,11 +7,13 @@ suppressMessages({
   source(here("src", "R", "utils.R"))
 })
 
+META <- here("data", "meta")
+
 tdb_cache$cache_path_set(
   full_path = here("data", "remote", "cache", "taxizedb")
 )
 
-log_path <- here("data", "meta", "biosample_mapping.log")
+log_path <- here(META, "biosample_mapping.log")
 if (file.exists(log_path)) {
   file.remove(log_path)
 }
@@ -25,17 +27,17 @@ log_appender(lf)
 log_appender(lf, namespace = "tb_view")
 
 ast_file <- here("data", "raw", "asts.tsv")
-srr_map_file <- here("data", "meta", "biosample_mapping_2025-11-21.csv")
+srr_map_file <- here(META, "biosample_mapping_2025-11-21.csv")
 
 standard <- "CLSI"
 paths <- list(
-  samples = here("data", "meta", "ncbi_all_samples.tsv"),
+  samples = here(META, "ncbi_all_samples.tsv"),
   null_description = here(
     "data",
     "meta",
     "ncbi_all_antibiotic_null_counts.tsv"
   ),
-  taxon_counts = here("data", "meta", "ncbi_all_taxon_counts.tsv")
+  taxon_counts = here(META, "ncbi_all_taxon_counts.tsv")
 )
 
 format_main <- function(lst) {
@@ -111,10 +113,11 @@ format_main <- function(lst) {
     write_tsv(lst$taxon_counts)
   write_tsv(final, lst$samples)
   write_tsv(null_description, lst$null_description)
+  lst
 }
 
 bioprojects <- read_existing(
-  here("data", "meta", "ast_bioproject_titles.tsv"),
+  here(META, "ast_bioproject_titles.tsv"),
   \(f) {
     x <- get_bioproject_titles(unique(project_meta$BioProject))
     write_tsv(x, f)
@@ -213,7 +216,7 @@ project_meta$isolation_source_broad <- with(
 
 
 bsample_attributes <- read_existing(
-  here("data", "meta", "biosample_attributes.tsv"),
+  here(META, "biosample_attributes.tsv"),
   \(f) {
     chunk_size <- 2000
     v <- project_meta$`#biosample`
@@ -227,6 +230,7 @@ bsample_attributes <- read_existing(
   },
   read_tsv
 )
+
 repeated <- c("project_name", "isolate", "isolation_source")
 for (r in repeated) {
   bsample_attributes <- unite(
@@ -291,9 +295,26 @@ bsample_attributes$umbrella_project <- with(
 
 ## ** Re-join with all metadata
 
+cols_remove <- c(
+  "AssemblyName",
+  "Query",
+  "ReleaseDate",
+  "SampleType",
+  "ScientificName",
+  "antibiotic",
+  "create_date",
+  "disk_diffusion_(mm)",
+  "isolate",
+  "isolation_type",
+  "mic_(mg/l)",
+  "resistance_phenotype",
+  "testing_standard",
+  "vendor"
+)
 wanted_attributes <- c(
-  "collection_date",
+  "collection_year",
   "sequenced_by",
+  "umbrella_project",
   "serovar",
   "serotype",
   "strain"
@@ -314,7 +335,9 @@ project_meta <- inner_join(
       "PRJNA417863" ~ "GenomeTrakr_Canada",
       .default = umbrella_project
     )
-  )
+  ) |>
+  select(-all_of(cols_remove))
+
 
 ## * Antibiotic categorization
 
@@ -322,7 +345,7 @@ project_meta <- inner_join(
 
 am_custom <- yaml::read_yaml(here("config", "antimicrobials_custom.yaml"))
 
-am_cat <- read_csv(here("data", "meta", "ADB_all_compounds.csv")) |>
+am_cat <- read_csv(here(META, "ADB_all_compounds.csv")) |>
   rename_with(\(x) str_replace_all(str_to_lower(x), " ", "_")) |>
   mutate(
     drug_name = str_to_lower(
@@ -450,21 +473,91 @@ intersections <- discard(intersections, \(x) nrow(x) == 0)
 # but is also resistant to a third-gen beta-lactam would meet the criteria for WHO
 # critical and WHO high
 
+project_meta$interest_group <- with(
+  project_meta,
+  case_when(
+    `#biosample` %in% amr_groups$WHO_critical ~ "WHO_critical",
+    `#biosample` %in% amr_groups$WHO_high ~ "WHO_high",
+    `#biosample` %in% amr_groups$WHO_medium ~ "WHO_medium",
+    .default = NA
+  )
+)
+
+
+#' Convert a list of names->vector_of_ids (where ids may be duplicated)
+#' into a mapping vector names->ids
+#'
+#' @param factor_list A list where names are levels of a factor,
+#' and the values are identifiers
+#' e.g. for a factor with levels A,B,C:
+#' list(A = c("i1", "i42", "i97"), B = c("i12", "i554"), C = "i07")
+#' @param unique_fn Function to reconcile ids assigned to multiple levels
+#' @return
+#'  A vector mapping ids to their levels
+levels2tb <- function(
+  factor_list,
+  unique_fn = first
+) {
+  tb <- lmap(factor_list, \(n) {
+    as_tibble_col(n[[1]], column_name = names(n)) |> pivot_longer(names(n))
+  }) |>
+    bind_rows() |>
+    group_by(value) |>
+    summarise(name = unique_fn(name))
+  with(tb, setNames(name, value))
+}
+
+project_meta <- mutate(
+  project_meta,
+  interest_group = levels2tb(amr_groups)[project_meta$`#biosample`]
+) |>
+  mutate(interest_group = replace_na(interest_group, "none"))
+
 # %%
 
 ## * Subsampling
 
-# Samples from GenomeTrakr, which comprises multiple laboratories
-gtrak <- bproject_counts |> filter(str_detect(title, "GenomeTrakr"))
+# REVIEW: you could also weight by genera
 
-# TODO: subsample evenly from the big 3 projects.
-kept_ids <- c()
+final_selection <- local.env({
+  tbs <- list()
 
-# Add all samples that are species of interest
-## for (g in amr_groups) {
-##   kept_ids <- c(kept_ids, sample(g, size = 500))
-## }
-## kept_ids <- c(
-##   kept_ids,
-##   unique(formatted$samples$BioSample %in% unlist(amr_groups, use.names = FALSE))
-## )
+  project_meta <- distinct(project_meta, `#biosample`, .keep_all = TRUE) |>
+    select(-all_of(cols_remove))
+
+  # Subsample evenly from the big 4 projects.
+  tbs$proj_group <- project_meta |>
+    filter(!is.na(umbrella_project)) |>
+    group_by(umbrella_project, genus) |>
+    slice_sample(prop = 0.2)
+
+  # TODO: determine cutoffs at which to label samples as "majority", "minority" etc.
+  ## genus_counts <-
+  ## project_meta$genus_representation <-
+
+  # If genus has less than 100 samples, will take all of them
+  tbs$minority_genera <- project_meta |>
+    group_by(genus) |>
+    filter(n() <= 100)
+
+  # Add samples from groups of interest
+  tbs$interest <- project_meta |>
+    group_by(interest_group) |>
+    slice_sample(n = 500, replace = TRUE)
+
+  kept_ids <- lapply(tbs, \(x) x$`#biosample`) |>
+    unlist() |>
+    unique()
+
+  project_meta |> filter(`#biosample` %in% kept_ids)
+})
+write_tsv(final_selection, here(META, "ast_subsampled.tsv"))
+write_lines(
+  final_selection$`#biosample`,
+  here(META, "ast_subsampled_runs.txt")
+)
+
+confounding_score_multi(
+  final_selection,
+  c("interest_group", "genus", "umbrella_project", "collection_year")
+)
