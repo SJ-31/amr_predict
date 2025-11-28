@@ -176,8 +176,43 @@ bproject_counts <- as.data.frame(table(project_meta$BioProject)) |>
 
 # TODO: when downloading, first check if a fasta assembly is available on the ncbi
 
-# TODO: recode the isolation source, making it consistent across projects
-# or could just change all the NARMS as "retail_meat"
+source_pat <- yaml::read_yaml(here("config", "amr_isolation_recoding.yaml"))
+
+re_paste <- function(vec) {
+  regex(paste(vec, collapse = "|"), TRUE)
+}
+
+project_meta$isolation_source_broad <- with(
+  project_meta,
+  case_when(
+    str_detect(isolation_source, re_paste(source_pat$animal)) ~ "animal",
+    str_detect(isolation_source, re_paste(source_pat$gi)) ~ "gi_fecal",
+    str_detect(isolation_source, re_paste(source_pat$resp)) ~ "respiratory",
+    str_detect(isolation_source, re_paste(source_pat$eye)) ~ "eye",
+    str_detect(isolation_source, re_paste(source_pat$skin)) ~
+      "skin/soft_tissue",
+    str_detect(isolation_source, re_paste(source_pat$accessory)) ~
+      "skin_accessory",
+    str_detect(isolation_source, re_paste(source_pat$wound)) ~ "wound",
+    str_detect(isolation_source, re_paste(source_pat$fluid)) ~
+      "sterile_body_fluid",
+    str_detect(isolation_source, re_paste(source_pat$tissue)) ~ "tissue/organ",
+    str_detect(isolation_source, re_paste(source_pat$urogen)) ~ "urogenital",
+    str_detect(isolation_source, re_paste(source_pat$surgical)) ~
+      "surgical/implant",
+    str_detect(isolation_source, re_paste(source_pat$joint)) ~
+      "joint/orthopedic",
+    str_detect(isolation_source, re_paste(source_pat$food_animal)) ~
+      "animal_product",
+    str_detect(isolation_source, re_paste(source_pat$food_plant)) ~
+      "plant_product",
+    str_detect(isolation_source, re_paste(source_pat$env)) ~ "environmental",
+    str_detect(isolation_source, re_paste(source_pat$unknown)) ~ "unknown",
+    is.na(isolation_source) ~ NA,
+    .default = "unknown"
+  )
+)
+
 
 # Recoding rules for umbrella projects
 # - Unify all NARMS projects as one because AST is centralized
@@ -268,7 +303,7 @@ project_meta <- inner_join(
 am_custom <- yaml::read_yaml(here("config", "antimicrobials_custom.yaml"))
 
 am_cat <- read_csv(here("data", "meta", "ADB_all_compounds.csv")) |>
-  rename_with(\(x) str_to_lower(x) |> str_replace_all(" ", "_")) |>
+  rename_with(\(x) str_replace_all(str_to_lower(x), " ", "_")) |>
   mutate(
     drug_name = str_to_lower(
       case_match(
