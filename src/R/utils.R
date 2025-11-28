@@ -50,29 +50,33 @@ confounding_score <- function(obj, x, y) {
     normalized <- dev_sum / max_val
     list(
       avg = mean(normalized),
-      cont = as.data.frame(sort(normalized)) |> `colnames<-`("score")
+      cont = as.data.frame(sort(normalized)) |> `colnames<-`("score"),
+      t = tab
     )
   }
   x_v_y <- helper(x, y)
   y_v_x <- helper(y, x)
   avg <- mean(c(x_v_y$avg, y_v_x$avg))
-  list(avg = avg, x_cols = x_v_y$cont, y_cols = y_v_x$cont)
+  list(avg = avg, x_cols = x_v_y$cont, y_cols = y_v_x$cont, table = x_v_y$t)
 }
 
 confounding_score_multi <- function(df, cols) {
   pairs <- combn(cols, 2)
+  tables <- list()
   between_pairs <- apply(pairs, 2, \(x) {
     name <- glue("{x[1]}_{x[2]}")
     res <- confounding_score(df, x[1], x[2])
     val <- list()
     val[[name]] <- res
+    tables[[name]] <<- res$table
     val
   }) |>
     purrr::list_flatten()
 
   list(
     avg = mean(map_dbl(between_pairs, \(x) x$avg)),
-    pairs = between_pairs
+    pairs = between_pairs,
+    tables = tables
   )
 }
 
@@ -170,4 +174,27 @@ ncbi_taxid2rank <- function(taxids, rank = "kingdom", as_name = TRUE) {
     }
   }) |>
     unlist()
+}
+
+#' Convert a list of names->vector_of_ids (where ids may be duplicated)
+#' into a mapping vector names->ids
+#'
+#' @param factor_list A list where names are levels of a factor,
+#' and the values are identifiers
+#' e.g. for a factor with levels A,B,C:
+#' list(A = c("i1", "i42", "i97"), B = c("i12", "i554"), C = "i07")
+#' @param unique_fn Function to reconcile ids assigned to multiple levels
+#' @return
+#'  A vector mapping ids to their levels
+levels2tb <- function(
+  factor_list,
+  unique_fn = first
+) {
+  tb <- lmap(factor_list, \(n) {
+    as_tibble_col(n[[1]], column_name = names(n)) |> pivot_longer(names(n))
+  }) |>
+    bind_rows() |>
+    group_by(value) |>
+    summarise(name = unique_fn(name))
+  with(tb, setNames(name, value))
 }
