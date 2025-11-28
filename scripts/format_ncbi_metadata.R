@@ -536,9 +536,17 @@ final_selection <- local({
     group_by(umbrella_project, genus) |>
     slice_sample(prop = 0.2)
 
-  # TODO: determine cutoffs at which to label samples as "majority", "minority" etc.
-  ## genus_counts <-
-  ## project_meta$genus_representation <-
+  tax_counts <- table(project_meta$species)
+  tax_quantiles <- quantile(tax_counts, c(0.6, 0.9)) # Counts are highly skewed
+  tax_representation <- case_when(
+    tax_counts >= tax_quantiles["90%"] ~ "majority",
+    tax_counts < tax_quantiles["60%"] ~ "minority",
+    .default = "intermediate",
+  ) |>
+    `names<-`(names(tax_counts))
+  project_meta$species_representation <- tax_representation[
+    project_meta$species
+  ]
 
   # If genus has less than 100 samples, will take all of them
   tbs$minority_genera <- project_meta |>
@@ -567,7 +575,7 @@ final_selection <- local({
 })
 write_tsv(final_selection, here(META, "ast_subsampled.tsv"))
 write_lines(
-  final_selection$BioSample,
+  final_selection$Run,
   here(META, "ast_subsampled_runs.txt")
 )
 
