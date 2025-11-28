@@ -134,9 +134,7 @@ project_meta <- read_tsv(ast_file) |>
     by = join_by(x$`#biosample` == y$BioSample)
   ) |>
   inner_join(bioprojects, by = join_by(x$BioProject == y$acc)) |>
-  rename(date = "ReleaseDate") |>
   mutate(
-    year = year(date),
     isolation_source = str_to_lower(isolation_source) |>
       str_replace_all("[ -]", "_"),
     species = ncbi_taxid2rank(TaxID, "species")[
@@ -214,11 +212,6 @@ project_meta$isolation_source_broad <- with(
 )
 
 
-# Recoding rules for umbrella projects
-# - Unify all NARMS projects as one because AST is centralized
-# - Rename Vet-LIRN projects to enable grouping by site of collection and sequencing rather than by species
-# - Leave GenomeTrakr as is because they provide no detailed data on collection
-
 bsample_attributes <- read_existing(
   here("data", "meta", "biosample_attributes.tsv"),
   \(f) {
@@ -272,29 +265,56 @@ bsample_attributes$collection_year <- lapply(
 
 ## ** Unify sample handling
 
-vet_lirn <- filter(bsample_attributes, str_detect(title, "Vet-LIRN"))
-gtrakr_narms <- bsample_attributes |>
-  filter(str_detect(project_name, "GenomeTrakr; NARMS")) |>
-  pluck("acc")
+# Recoding rules for umbrella projects
+# - Unify all NARMS projects as one because AST is centralized
+# - Rename Vet-LIRN projects to enable grouping by site of collection and sequencing rather than by species
+# - Leave GenomeTrakr as is because they provide no detailed data on collection
 
-## TODO: unfinished [2025-11-27 Thu]
-## project_meta$sample_handling <- case_when(
-##   project_meta$`#biosample` %in% vet_lirn$acc ~
-##     paste0("Vet-LIRN", vet_lirn$sequenced_by, vet_lirn$collected_by),
-##   str_detect(project_meta$title, "NARMS") ~
-##     str_extract(project_meta$title, "(.* NARMS) .*", group = 1),
-##   project_meta$`#biosample` %in% gtrakr_narms ~ "CVM NARMS",
-##   .default = project_meta$title
-## )
+bsample_attributes$ast_by <- with(
+  bsample_attributes,
+  case_when(
+    str_detect(project_name, "GenomeTrakr.*NARMS") ~ "NARMS",
+    str_detect(title, "NARMS") ~ "NARMS",
+    .default = collected_by
+  )
+)
+bsample_attributes$umbrella_project <- with(
+  bsample_attributes,
+  case_when(
+    str_detect(project_name, "GenomeTrakr.*NARMS") ~ "NARMS",
+    str_detect(title, "NARMS") ~ "NARMS",
+    str_detect(title, "Vet-LIRN") ~ "Vet-LIRN",
+    str_detect(title, "GenomeTrakr") ~ "GenomeTrakr",
+    .default = NA
+  )
+)
 
 ## ** Re-join with all metadata
 
-wanted_attributes <- c("collection_date")
+wanted_attributes <- c(
+  "collection_date",
+  "sequenced_by",
+  "serovar",
+  "serotype",
+  "strain"
+)
 project_meta <- inner_join(
   project_meta,
   select(bsample_attributes, c(acc, all_of(wanted_attributes))),
   by = join_by(x$`#biosample` == y$acc)
-)
+) |>
+  mutate(
+    umbrella_project = case_match(
+      BioProject,
+      "PRJNA600010" ~ "GenomeTrakr_Canada",
+      "PRJNA966974" ~ "GenomeTrakr_Canada",
+      "PRJNA1148950" ~ "GenomeTrakr_Canada",
+      "PRJNA454819" ~ "GenomeTrakr_Canada",
+      "PRJNA435747" ~ "GenomeTrakr_Canada",
+      "PRJNA417863" ~ "GenomeTrakr_Canada",
+      .default = umbrella_project
+    )
+  )
 
 ## * Antibiotic categorization
 
@@ -441,9 +461,9 @@ gtrak <- bproject_counts |> filter(str_detect(title, "GenomeTrakr"))
 kept_ids <- c()
 
 # Add all samples that are species of interest
-for (g in amr_groups) {
-  kept_ids <- c(kept_ids, sample(g, size = 500))
-}
+## for (g in amr_groups) {
+##   kept_ids <- c(kept_ids, sample(g, size = 500))
+## }
 ## kept_ids <- c(
 ##   kept_ids,
 ##   unique(formatted$samples$BioSample %in% unlist(amr_groups, use.names = FALSE))
