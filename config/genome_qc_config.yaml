@@ -1,0 +1,37 @@
+paths: # Multiple entries supported for all. Will be automatically detected
+  kraken2: [] # Can be directory containing per-sample reports. Reports are expected to be named <SAMPLE_NAME>.kraken2.report.txt"
+  kraken2_expected_taxids: # A tsv file mapping sample names to the taxids that they should be compared to
+  quast: []
+
+kraken2:
+  min_percent_expected: # Minimum percent of reads from sample matching to their expected taxid
+  max_percent_other: # Maximum percent percent of reads from sample matching to other taxids at the same taxonomic level
+
+# All values for quast can either be numeric which is interpreted as samples must have value higher
+# than the config value to be accepted
+#
+# Or a tuple of [<operator>, value] defining allowed samples e.g.
+# EX: N50 = ['>', 90] means accept samples with N50 > 90
+quast:
+  "# contigs (>= 0 bp)": null
+  "# contigs (>= 1000 bp)": null
+  "# contigs (>= 5000 bp)": null
+  "# contigs (>= 10000 bp)": null
+  "# contigs (>= 25000 bp)": null
+  "# contigs (>= 50000 bp)": null
+  "Total length (>= 0 bp)": null
+  "Total length (>= 1000 bp)": null
+  "Total length (>= 5000 bp)": null
+  "Total length (>= 10000 bp)": null
+  "Total length (>= 25000 bp)": null
+  "Total length (>= 50000 bp)": null
+  "# contigs": null
+  "Largest contig": null
+  "Total length": null
+  "GC (%)": null
+  "N50": null
+  "N90": null
+  "auN": null
+  "L50": null
+  "L90": null
+  "# N's per 100 kbp": null
