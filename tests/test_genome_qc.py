@@ -199,11 +199,11 @@ def test_fastani_q2r(make_file_spec, make_conf):
 def test_filter_kraken(make_file_spec, make_conf):
     exp_tax = make_file_spec(
         [
-            "ERR434259.kraken2.report.txt",
-            "ERR434260.kraken2.report.txt",
-            "ERR434261.kraken2.report.txt",
-            "ERR434262.kraken2.report.txt",
-            "ERR434263.kraken2.report.txt",
+            "ERR434259",
+            "ERR434260",
+            "ERR434261",
+            "ERR434262",
+            "ERR434263",
         ],
         [562] * 5,
         first="sample",
@@ -211,7 +211,7 @@ def test_filter_kraken(make_file_spec, make_conf):
     )
     paths = {
         "kraken2": [
-            here(NF_OUT, "moradigaravand_2025-10-06/Kraken2", f)
+            str(here(NF_OUT, "moradigaravand_2025-10-06/Kraken2", f))
             for f in [
                 "ERR434259.kraken2.report.txt",
                 "ERR434260.kraken2.report.txt",
@@ -222,10 +222,14 @@ def test_filter_kraken(make_file_spec, make_conf):
         ],
         "kraken2_expected_taxids": exp_tax,
     }
-    filters = {"min_percent_expected": 0.2, "max_percent_other": 0.1}
-    config = make_conf("config", {"paths": paths, "kraken": filters})
-    command = f"{SCRIPT} {config} --output {OUT.joinpath("qc_kraken2_filter.txt")}"
+    filters = {"min_percent_expected": 20, "max_percent_other": 0.1}
+    config = make_conf("config", {"paths": paths, "kraken2": filters})
+    o = OUT.joinpath("qc_kraken2_filter.txt")
+    command = f"{SCRIPT} {config} --output {o}"
     check_py_script(command)
+    passing = {"ERR434260", "ERR434261"}
+    received = set(o.read_text().splitlines())
+    assert passing == received
 
 
 def test_file_quast(make_conf):

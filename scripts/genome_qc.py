@@ -48,7 +48,7 @@ DEFAULTS: dict = {
         "L90": None,
         "# N's per 100 kbp": None,
     },
-    "kraken2": {"min_percent_expected": 0.5, "max_percent_other": 0.2},
+    "kraken2": {"min_percent_expected": 2, "max_percent_other": 0.3},
 }
 
 
