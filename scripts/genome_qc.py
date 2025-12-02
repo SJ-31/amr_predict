@@ -1,18 +1,18 @@
 #!/usr/bin/env ipython
 
+# TODO: add pytest for this
 # TODO: you can use the methods of https://www.nature.com/articles/s41598-025-24333-9#Sec2 for inspiration
-# And also review QC metrics used by the ncbi
-# Quast from bacass will provide N50, genome fraction, number of contigs etc.
-# Can do ANI with https://github.com/ParBLiSS/FastANI
-# TODO: will also need to filter samples by QC metrics after you've downloaded and assembled them.
-# Mainly check assembly metrics cause the submitters will hopefully have handled raw reads
-# TODO: when downloading, first check if a fasta assembly is available on the ncbi
-# TODO: interpret output of quast and of kraken2. Cli interface has option to do ANI
 import operator
+import re
+import subprocess as sp
+from functools import reduce
 from pathlib import Path
 
 import polars as pl
 import yaml
+
+AVAILABLE_QC = ("kraken2", "quast", "fcs", "fastani")
+AVAILABLE_WRAPPERS = ("fcs", "fastani")
 
 OMAP: dict = {
     "==": operator.eq,
@@ -55,6 +55,105 @@ def get_spec(name: str, config: dict) -> dict:
     conf = config.get(name, DEFAULTS.get(name))
     valid = {k: v for k, v in conf.items() if v is not None}
     return valid
+
+
+def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
+    if "mapping" not in config:
+        raise ValueError("`mapping` must be given for fastANI")
+    maps: dict[str, pl.DataFrame] = {}
+    command = "fastANI "
+    for k, v in config.items():
+        if k != "mapping":
+            command += f"--{k} {v}"
+
+    def run_fastani(command, outfile, group: pl.DataFrame, group_name) -> pl.DataFrame:
+        rl = outdir.joinpath(f"{group_name}_refs.txt")
+        ql = outdir.joinpath(f"{group_name}_queries.txt")
+        outfile = outdir.joinpath(f"{group_name}_result.tsv")
+        rl.write_text("\n".join(group["reference"].first()))
+        ql.write_text("\n".join(group["query"]))
+        for path, flag in zip([ql, rl], ["--ql", "--rl"]):
+            if path is not None:
+                command += f" {flag} {path}"
+        command += f" --output {outfile}"
+        proc = sp.run(command, shell=True)
+        proc.check_returncode()
+        return pl.read_csv(
+            outfile,
+            separator="\t",
+            new_columns=(
+                "query",
+                "reference",
+                "ANI",
+                "bidirectional_fragments",
+                "total_query_fragments",
+            ),
+        )
+
+    dfs = []
+    for path, headers in zip(
+        ["query2reference", "query2taxid", "taxid2reference"],
+        (("query", "reference"), ("query", "taxid"), None),
+    ):
+        if p := config["mapping"].get(path):
+            if headers is not None:
+                maps[path] = pl.read_csv(p, separator="\t", new_columns=headers)
+            else:
+                with open(p, "r") as f:
+                    tmp = yaml.safe_load(f)
+                    maps[path] = pl.DataFrame(
+                        {"taxid": tmp.keys(), "reference": tmp.values()}
+                    )
+    if (q2r := maps.get("query2reference")) is None or (
+        (q2t := maps.get("query2taxid")) is None
+        and (t2r := maps.get("taxid2reference")) is None
+    ):
+        raise ValueError(
+            "Either `query2reference` or both `query2taxid` and `taxid2reference` must be given"
+        )
+    if not outdir.exists():
+        outdir.mkdir()
+    if q2t is not None and t2r is not None:
+        merged = q2t.join(t2r, on="taxid")
+        for taxid, group in merged.group_by("taxid"):
+            df = run_fastani(command=command, group_name=taxid, group=group)
+            dfs.append(df)
+    if q2r is not None:
+        for i, (_, group) in enumerate(
+            q2r.group_by("query").agg("reference").group_by("reference")
+        ):
+            df = run_fastani(command=command, group_name=f"group_{i}", group=group)
+            dfs.append(df)
+    return pl.concat(dfs).with_columns(
+        pl.col("query").str.replace(".?(fasta|fna|faa|fa)(.gz)?", "").alias("sample")
+    )
+
+
+def fcs_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
+    with open(config["fasta-input"], "r") as f:
+        samples = f.read().splitlines()
+    dfs = []
+    image = config.get("image")
+    container_type = config.get("container-engine", "singularity")
+    taxonomy = config.get("taxonomy", "prok")
+    taxonomy_flag = "--prok" if taxonomy == "prok" else "--euk"
+    if not image and container_type == "singularity":
+        raise ValueError("`image` must be defined if using singularity")
+    command = f" --container-type {container_type} --image {image} {taxonomy_flag}"
+    if not outdir.exists():
+        outdir.mkdir()
+    for s in samples:
+        cur_out = outdir.joinpath(s)
+        cur_command = f"--fasta-input {s} --output-dir {cur_out} {command}"
+        proc = sp.run(f"run_fcsadaptor.sh {cur_command}", shell=True)
+        proc.check_returncode()
+        sample = re.sub(".?(fasta|fna|faa|fa)(.gz)?", "", s)
+        df = pl.read_csv(
+            cur_out.joinpath("fcs_adaptor_report.txt"), separator="\t"
+        ).with_columns(pl.lit(sample).alias("sample"))
+        if df.shape[0] > 1:
+            dfs.append(df)
+    return pl.concat(dfs)
 
 
 def filter_w_operators(
@@ -108,12 +207,14 @@ def filter_kraken2(sample2exptax: dict, spec: dict, path: Path) -> list:
                 f"The expected taxon for sample {sample} (file {file}) is not present in the sample->taxid mapping"
             )
         at_expected = df.filter(pl.col("taxid") == expected_tax)
-        if at_expected["p_reads_covered"].item() < min_percent_exp:
-            return
-        rank = at_expected["rank"].item()
-        others = df.filter(pl.col("rank") == rank & pl.col("taxid") != expected_tax)
-        if any(others["p_reads_covered"] > max_percent_other):
-            return
+        if min_percent_exp is not None:
+            if at_expected["p_reads_covered"].item() < min_percent_exp:
+                return
+        if max_percent_other is not None:
+            rank = at_expected["rank"].item()
+            others = df.filter(pl.col("rank") == rank & pl.col("taxid") != expected_tax)
+            if any(others["p_reads_covered"] > max_percent_other):
+                return
         passed.append(sample)
 
     if path.is_dir():
@@ -131,26 +232,84 @@ def parse_args():
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "-r",
+        "--run",
+        default=None,
+        help="Run a wrapper for a QC program. Currently supported: fcs",
+        action="store",
+    )
+    parser.add_argument(
         "config",
         required=True,
         help="Config file specifying QC thresholds and file paths",
         action="store",
     )
-    parser.add_argument("-o", "--output", help="Path to output file", default=None)
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Path to output",
+        default=None,
+    )
+    parser.add_argument(
+        "-d",
+        "--outdir",
+        default=None,
+        help="A directory to save sample-specific output for the QC wrappers. Required for `--run`",
+        action="store",
+    )
     args = vars(parser.parse_args())  # convert to dict
     return args
 
-
-test = "/home/shannc/Bio_SDD/stem_synology/chula_mount/shannc/repos/amr_predict/output/moradigaravand_2025-10-06/QUAST/report/report.tsv"
 
 if __name__ == "__main__":
     args = parse_args()
     with open(args["config"], "r") as f:
         conf: dict = yaml.safe_load(f)
+
+    if (to_run := args.get("run")) in AVAILABLE_WRAPPERS:
+        run_conf = conf.get("run")
+        if not run_conf:
+            raise ValueError("No run configuration provided")
+        if not run_conf.get(to_run):
+            raise ValueError(f"Configuration for `{to_run}` not found in config")
+        if to_run == "fcs":
+            summary = fcs_wrapper(outdir=args["outdir"], config=run_conf[to_run])
+        elif to_run == "fastani":
+            summary = fastani_wrapper(outdir=args["outdir"], config=run_conf[to_run])
+        summary.write_csv(args["output"], separator="\t")
+        exit(0)
     paths = conf.get("paths")
     if not paths:
         raise ValueError("No paths to qc files provided in config")
-    # if kraken2 := paths.get("kraken2"):
-    # if isinstance(kraken2, list):
-    #     for
-    # else:
+    passing: dict = {}
+    for qc in AVAILABLE_QC:
+        if not (paths := paths.get(qc)):
+            continue
+        passing[qc] = []
+        if qc == "kraken2":
+            expected_tax_file = paths.get("kraken2_expected_taxids")
+            if not expected_tax_file:
+                raise ValueError(
+                    "`kraken2_expected_taxids` field must not be empty to filter with kraken2"
+                )
+            tax_df = pl.read_csv(
+                expected_tax_file, separator="\t", new_columns=["sample", "taxid"]
+            )
+            tax_mapping = dict(zip(tax_df["sample"], tax_df["taxid"]))
+        spec = get_spec(qc, config=conf)
+        if not isinstance(paths, list):
+            paths[qc] = [paths]
+        for f in paths:
+            if qc == "kraken2":
+                passed = filter_kraken2(tax_mapping, spec, path=Path(f))
+            elif qc == "quast":
+                passed = filter_quast(spec, Path(f))
+            passing[qc].extend(passed)
+        intersection = list(
+            reduce(lambda x, y: x & y, [set(v) for v in passing.values()])
+        )
+        if out := args["output"]:
+            with open(out, "w") as o:
+                o.write("\n".join(intersection))
+        else:
+            print("\n".join(intersection))

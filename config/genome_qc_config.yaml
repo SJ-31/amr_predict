@@ -3,6 +3,23 @@ paths: # Multiple entries supported for all. Will be automatically detected
   kraken2_expected_taxids: # A tsv file mapping sample names to the taxids that they should be compared to
   quast: []
 
+run:
+  fcs: # Aside from `fasta-input`, values are the same as they are in the cli versions
+    fasta-input: # text file listing genomes, one on each line
+    image:
+    taxonomy:
+    container-engine:
+  fastani:
+    mapping:
+      query2reference: # tsv file mapping query files to references they should use
+      query2taxid: # tsv file mapping query files to NCBI taxids
+      taxid2reference: # yaml file with taxids as top-level keys and reference files as values. Each query file with the given taxid will only be compared to the corresponding references defined here
+      # Other k, v pairs are fastANI long flags
+    kmer: 16
+    threads: 1
+    fragLen: 3000
+    maxRatioDiff: 10.0
+
 kraken2:
   min_percent_expected: # Minimum percent of reads from sample matching to their expected taxid
   max_percent_other: # Maximum percent percent of reads from sample matching to other taxids at the same taxonomic level
