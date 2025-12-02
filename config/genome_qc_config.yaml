@@ -2,6 +2,8 @@ paths: # Multiple entries supported for all. Will be automatically detected
   kraken2: [] # Can be directory containing per-sample reports. Reports are expected to be named <SAMPLE_NAME>.kraken2.report.txt"
   kraken2_expected_taxids: # A tsv file mapping sample names to the taxids that they should be compared to
   quast: []
+  fastani: []
+  fcs: []
 
 run:
   fcs: # Aside from `fasta-input`, values are the same as they are in the cli versions
@@ -52,3 +54,9 @@ quast:
   "L50": null
   "L90": null
   "# N's per 100 kbp": null
+
+fastani:
+  # tuples of [<operator>, value] e.g. [">", 90]
+  ani_avg: null
+  ani_all: null
+  ani_any: null

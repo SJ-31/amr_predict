@@ -244,3 +244,18 @@ def test_file_quast(make_conf):
     received = set(out.read_text().splitlines())
     assert "ERR434265.scaffolds" in received
     assert "ERR434259.scaffolds" not in received
+
+
+def test_filter_fani(make_conf):
+    config = make_conf(
+        "config",
+        {
+            "paths": {"fastani": str(OUT.joinpath("fastani.tsv"))},
+            "fastani": {"ani_any": [">", 98], "ani_avg": [">", 97.6]},
+        },
+    )
+    out = OUT.joinpath("fastani_filtered.txt")
+    command = f"{SCRIPT} {config} --output {out}"
+    check_py_script(command)
+    received = set(out.read_text().splitlines())
+    assert received == {"ERR434263", "SAMN29490346", "ERR434262"}

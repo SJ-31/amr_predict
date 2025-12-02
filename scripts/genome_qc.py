@@ -1,6 +1,5 @@
 #!/usr/bin/env ipython
 
-# TODO: you can use the methods of https://www.nature.com/articles/s41598-025-24333-9#Sec2 for inspiration
 import operator
 import re
 import subprocess as sp
@@ -10,7 +9,7 @@ from pathlib import Path
 import polars as pl
 import yaml
 
-AVAILABLE_QC = ("kraken2", "quast", "fcs", "fastani")
+AVAILABLE_QC = ("kraken2", "quast", "fastani")
 AVAILABLE_WRAPPERS = ("fcs", "fastani")
 
 SEQ_RE: str = ".?(fasta|fna|faa|fa)(.gz)?"
@@ -53,6 +52,7 @@ DEFAULTS: dict = {
 
 
 def get_spec(name: str, config: dict) -> dict:
+    """Return specification for filter method NAME after removing mappings with nulls"""
     conf = config.get(name, DEFAULTS.get(name))
     valid = {k: v for k, v in conf.items() if v is not None}
     return valid
@@ -166,7 +166,14 @@ def fcs_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
     if dfs:
         return pl.concat(dfs)
     return pl.DataFrame(
-        {"#accession": [], "length": [], "action": [], "range": [], "name": []}
+        {
+            "#accession": [],
+            "length": [],
+            "action": [],
+            "range": [],
+            "name": [],
+            "sample": [],
+        }
     )
 
 
@@ -184,6 +191,23 @@ def filter_w_operators(
     if all:
         return df.filter(pl.all_horizontal(*exprs))
     return df.filter(pl.any_horizontal(*exprs))
+
+
+def filter_fastani(spec: dict, file: Path) -> list:
+    df = pl.read_csv(file, separator="\t")
+    exprs = []
+    for k, v in spec.items():
+        operator, value = v
+        op = OMAP[operator]
+        if k == "ani_avg":
+            exprs.append(op(pl.col("ANI").mean(), value).alias(k))
+        elif k == "ani_all":
+            exprs.append(op(pl.col("ANI"), value).all().alias(k))
+        elif k == "ani_any":
+            exprs.append(op(pl.col("ANI"), value).any().alias(k))
+    agg = df.group_by("sample").agg(*exprs)
+    filtered = agg.filter(pl.all_horizontal(*spec.keys()))
+    return list(filtered["sample"])
 
 
 def filter_quast(spec: dict, file: Path) -> list:
@@ -330,6 +354,8 @@ if __name__ == "__main__":
                 passed = filter_kraken2(tax_mapping, spec, path=Path(f))
             elif qc == "quast":
                 passed = filter_quast(spec, Path(f))
+            elif qc == "fastani":
+                passed = filter_fastani(spec, Path(f))
             passing[qc].extend(passed)
     intersection = list(reduce(lambda x, y: x & y, [set(v) for v in passing.values()]))
     if out := args["output"]:
