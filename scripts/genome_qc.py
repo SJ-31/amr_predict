@@ -214,6 +214,14 @@ def filter_kraken2(sample2exptax: dict, spec: dict, path: Path) -> list:
                 "taxid",
                 "name",
             ],
+            schema={
+                "p_reads_covered": pl.Float64,
+                "n_reads_covered": pl.Int64,
+                "n_reads_direct": pl.Int64,
+                "rank": pl.String,
+                "taxid": pl.Int64,
+                "name": pl.String,
+            },
         )
         # TODO: maybe want to add a version that uses n_reads
         expected_tax = sample2exptax.get(sample)
@@ -227,7 +235,9 @@ def filter_kraken2(sample2exptax: dict, spec: dict, path: Path) -> list:
                 return
         if max_percent_other is not None:
             rank = at_expected["rank"].item()
-            others = df.filter(pl.col("rank") == rank & pl.col("taxid") != expected_tax)
+            others = df.filter(
+                (pl.col("rank") == rank) & (pl.col("taxid") != expected_tax)
+            )
             if any(others["p_reads_covered"] > max_percent_other):
                 return
         passed.append(sample)
@@ -294,16 +304,14 @@ if __name__ == "__main__":
             )
         summary.write_csv(args["output"], separator="\t")
         exit(0)
-    paths = conf.get("paths")
-    if not paths:
+    path_map: dict = conf.get("paths")
+    if not path_map:
         raise ValueError("No paths to qc files provided in config")
     passing: dict = {}
     for qc in AVAILABLE_QC:
-        if not (paths := paths.get(qc)):
-            continue
         passing[qc] = []
         if qc == "kraken2":
-            expected_tax_file = paths.get("kraken2_expected_taxids")
+            expected_tax_file = path_map.get("kraken2_expected_taxids")
             if not expected_tax_file:
                 raise ValueError(
                     "`kraken2_expected_taxids` field must not be empty to filter with kraken2"
@@ -312,9 +320,12 @@ if __name__ == "__main__":
                 expected_tax_file, separator="\t", new_columns=["sample", "taxid"]
             )
             tax_mapping = dict(zip(tax_df["sample"], tax_df["taxid"]))
+        paths = path_map.get(qc)
+        if not paths:
+            continue
         spec = get_spec(qc, config=conf)
         if not isinstance(paths, list):
-            paths[qc] = [paths]
+            paths = [paths]
         for f in paths:
             if qc == "kraken2":
                 passed = filter_kraken2(tax_mapping, spec, path=Path(f))
