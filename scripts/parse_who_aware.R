@@ -18,9 +18,16 @@ aware <- lapply(data, \(node) {
   indications <- xml_find_all(node, ".//span[@class='indication-text']") |>
     xml_text() |>
     paste0(collapse = ";")
-  group <- xml_find_all(node, ".//span[@class]") |>
+  never_listed <- xml_find_all(node, ".//div[@class='never-listed-status']")
+  group <- xml_find_all(node, ".//span[@class='group']") |>
     xml_text() |>
     str_remove(" group")
-  tibble(name = name, group = group, indications = indications)
+  tibble(
+    name = name,
+    group = group,
+    indications = indications,
+    essential = length(never_listed) == 0
+  )
 }) |>
-  bind_rows()
+  bind_rows() |>
+  distinct()
