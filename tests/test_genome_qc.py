@@ -12,9 +12,11 @@ from pyhere import here
 
 logger.add(here("tests", "genome_qc.log"))
 
+NF_OUT: Path = here("data", "remote", "output")
 GENOMES: Path = here("data", "remote", "genomes")
 REF = GENOMES.joinpath("reference")
 OUT: Path = here("results", "tests")
+SCRIPT = here("scripts", "genome_qc.py")
 
 A_BAUMANNI = [
     str(GENOMES.joinpath("jia", f))
@@ -128,9 +130,10 @@ def test_fcs(make_file_spec, make_conf):
     )
     logger.info(Path(config).exists())
     logger.info(Path(inputs).exists())
-    logger.info(Path(inputs).read_text())
     out = OUT.joinpath("fcs")
-    command = f"{here("scripts", "genome_qc.py")} {config} --run fcs --outdir {out} --output {OUT.joinpath("fcs.tsv")}"
+    command = (
+        f"{SCRIPT} {config} --run fcs --outdir {out} --output {OUT.joinpath("fcs.tsv")}"
+    )
     check_py_script(command)
 
 
@@ -168,7 +171,7 @@ def test_fastani_q2t(make_file_spec, make_conf):
         }
     )
     out = OUT.joinpath("fastani")
-    command = f"{here("scripts", "genome_qc.py")} {config} --run fastani --outdir {out} --output {OUT.joinpath("fastani.tsv")}"
+    command = f"{SCRIPT} {config} --run fastani --outdir {out} --output {OUT.joinpath("fastani.tsv")}"
     check_py_script(command)
 
 
@@ -191,9 +194,47 @@ def test_fastani_q2r(make_file_spec, make_conf):
         }
     )
     out = OUT.joinpath("fastani_q2r")
-    command = f"{here("scripts", "genome_qc.py")} {config} --run fastani --outdir {out} --output {OUT.joinpath("fastani_q2r.tsv")}"
+    command = f"{SCRIPT} {config} --run fastani --outdir {out} --output {OUT.joinpath("fastani_q2r.tsv")}"
     check_py_script(command)
 
 
-# def test_filtering():
-#     config = {"kraken2": [], "kraken2_expected_taxids": []}
+def test_filter_kraken(make_file_spec, make_conf):
+    exp_tax = make_file_spec(
+        [
+            "ERR434259.kraken2.report.txt",
+            "ERR434260.kraken2.report.txt",
+            "ERR434261.kraken2.report.txt",
+            "ERR434262.kraken2.report.txt",
+            "ERR434263.kraken2.report.txt",
+        ],
+        [562] * 5,
+        first="sample",
+        second="taxid",
+    )
+    paths = {
+        "kraken2": [
+            here(NF_OUT, "moradigaravand_2025-10-06/Kraken2", f)
+            for f in [
+                "ERR434259.kraken2.report.txt",
+                "ERR434260.kraken2.report.txt",
+                "ERR434261.kraken2.report.txt",
+                "ERR434262.kraken2.report.txt",
+                "ERR434263.kraken2.report.txt",
+            ]
+        ],
+        "kraken2_expected_taxids": exp_tax,
+    }
+    filters = {"min_percent_expected": 0.2, "max_percent_other": 0.1}
+    config = make_conf({"paths": paths, "kraken": filters})
+    command = f"{SCRIPT} {config} --output {OUT.joinpath("qc_kraken2_filter.txt")}"
+    check_py_script(command)
+
+
+def test_file_quast(make_conf):
+    paths = {
+        "quast": here(NF_OUT, "moradigaravand_2025-10-06/QUAST/report/report.tsv"),
+    }
+    filters = {"# contigs": ["<", 100], "Total length": [">", 5000000]}
+    config = make_conf({"paths": paths, "quast": filters})
+    command = f"{SCRIPT} {config} --output {OUT.joinpath("qc_quast_filter.txt")}"
+    check_py_script(command)
