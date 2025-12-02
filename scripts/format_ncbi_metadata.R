@@ -173,11 +173,6 @@ bproject_counts <- as.data.frame(table(project_meta$BioProject)) |>
 # CVM: Center for Veterinary Medicine
 # FSIS: Food Safety and Inspection Service
 
-# TODO: will also need to filter samples by QC metrics after you've downloaded and assembled them.
-# Mainly check assembly metrics cause the submitters will hopefully have handled raw reads
-
-# TODO: when downloading, first check if a fasta assembly is available on the ncbi
-
 source_pat <- yaml::read_yaml(here("config", "amr_isolation_recoding.yaml"))
 
 re_paste <- function(vec) {
@@ -399,6 +394,10 @@ present_am <- local({
     )
 })
 
+## ** Add AWARE labeling
+
+# TODO: add this
+
 ## ** Label AM groups
 
 # %%
@@ -488,30 +487,6 @@ project_meta$interest_group <- with(
     .default = NA
   )
 )
-
-
-#' Convert a list of names->vector_of_ids (where ids may be duplicated)
-#' into a mapping vector names->ids
-#'
-#' @param factor_list A list where names are levels of a factor,
-#' and the values are identifiers
-#' e.g. for a factor with levels A,B,C:
-#' list(A = c("i1", "i42", "i97"), B = c("i12", "i554"), C = "i07")
-#' @param unique_fn Function to reconcile ids assigned to multiple levels
-#' @return
-#'  A vector mapping ids to their levels
-levels2tb <- function(
-  factor_list,
-  unique_fn = first
-) {
-  tb <- lmap(factor_list, \(n) {
-    as_tibble_col(n[[1]], column_name = names(n)) |> pivot_longer(names(n))
-  }) |>
-    bind_rows() |>
-    group_by(value) |>
-    summarise(name = unique_fn(name))
-  with(tb, setNames(name, value))
-}
 
 project_meta <- mutate(
   project_meta,
