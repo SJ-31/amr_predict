@@ -7,7 +7,7 @@ import os
 from collections.abc import Sequence
 from itertools import batched
 from pathlib import Path
-from subprocess import CalledProcessError, run
+from subprocess import run
 from tempfile import TemporaryDirectory
 from typing import Callable, Literal, TypeAlias
 
@@ -59,7 +59,7 @@ class SeqEmbedder:
     def _embed_from_files(
         self,
         id_col,
-        directory: Path,
+        path: Path,
         metadata: Path | None,
         accepted_suffixes: tuple,
         key: str,
@@ -67,9 +67,12 @@ class SeqEmbedder:
         pattern: str | None = None,
         var_quantile_threshold: float = 0.25,
     ) -> Dataset:
-        to_iter = directory.glob(pattern) if pattern else directory.iterdir()
-        dfs = [embed_fn(f) for f in to_iter if f.suffix in accepted_suffixes]
-        df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed").fill_null(0)
+        if path.is_dir():
+            to_iter = path.glob(pattern) if pattern else path.iterdir()
+            dfs = [embed_fn(f) for f in to_iter if f.suffix in accepted_suffixes]
+            df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed").fill_null(0)
+        else:
+            df = embed_fn(path).fill_null(0)
         feature_cols = df.drop(id_col).columns
         if metadata is not None:
             meta = read_tabular(metadata)
@@ -118,7 +121,7 @@ class SeqEmbedder:
 
         return self._embed_from_files(
             id_col=id_col,
-            directory=fastas,
+            path=fastas,
             metadata=metadata,
             accepted_suffixes=(".fasta", ".fna", ".fa"),
             key=key,
@@ -140,6 +143,7 @@ class SeqEmbedder:
         **kws,
     ):
         read_kws = read_kws or {}
+        is_annotations_dir: bool = fasta_annotations.is_dir()
 
         def helper(file: Path) -> pl.DataFrame:
             try:
@@ -163,10 +167,12 @@ class SeqEmbedder:
                     )
                 elif fspec:
                     df = df.filter(pl.col(feature_cols).is_in(fspec))
+            if is_annotations_dir:
+                df = df.select(feature_cols).with_columns(
+                    pl.lit(file.stem).alias(id_col)
+                )
             df = (
-                df.select(feature_cols)
-                .with_columns(pl.lit(file.stem).alias(id_col))
-                .unpivot(index=id_col)
+                df.unpivot(index=id_col)
                 .filter(pl.col("value").is_not_null())
                 .with_columns(pl.lit(1).alias("tmp"))
                 .drop("variable")
@@ -177,7 +183,7 @@ class SeqEmbedder:
 
         return self._embed_from_files(
             id_col=id_col,
-            directory=fasta_annotations,
+            path=fasta_annotations,
             metadata=metadata,
             accepted_suffixes=(".tsv", ".csv"),
             key=key,
@@ -287,7 +293,7 @@ class SeqEmbedder:
                     logger.debug(
                         f"Evo2 failed to generate predictions\n-- BEGIN STDOUT -- \n{stdout}\n -- END STDOUT --"
                     )
-                    raise CalledProcessError("Evo2 failed to generate predictions")
+                    raise ValueError("Evo2 failed to generate predictions")
                 with open(outdir / "seq_idx_map.json", "rb") as f:
                     id_map: dict = json.load(f)
                 id_df: pl.DataFrame = pl.DataFrame(
