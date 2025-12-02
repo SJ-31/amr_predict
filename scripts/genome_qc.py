@@ -104,7 +104,6 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
             else:
                 with open(p, "r") as f:
                     tmp = yaml.safe_load(f)
-                    print(tmp)
                     maps[path] = pl.DataFrame(
                         {"taxid": tmp.keys(), "reference": tmp.values()}
                     )
@@ -309,6 +308,9 @@ if __name__ == "__main__":
         raise ValueError("No paths to qc files provided in config")
     passing: dict = {}
     for qc in AVAILABLE_QC:
+        paths = path_map.get(qc)
+        if not paths:
+            continue
         passing[qc] = []
         if qc == "kraken2":
             expected_tax_file = path_map.get("kraken2_expected_taxids")
@@ -320,9 +322,6 @@ if __name__ == "__main__":
                 expected_tax_file, separator="\t", new_columns=["sample", "taxid"]
             )
             tax_mapping = dict(zip(tax_df["sample"], tax_df["taxid"]))
-        paths = path_map.get(qc)
-        if not paths:
-            continue
         spec = get_spec(qc, config=conf)
         if not isinstance(paths, list):
             paths = [paths]
@@ -332,11 +331,9 @@ if __name__ == "__main__":
             elif qc == "quast":
                 passed = filter_quast(spec, Path(f))
             passing[qc].extend(passed)
-        intersection = list(
-            reduce(lambda x, y: x & y, [set(v) for v in passing.values()])
-        )
-        if out := args["output"]:
-            with open(out, "w") as o:
-                o.write("\n".join(intersection))
-        else:
-            print("\n".join(intersection))
+    intersection = list(reduce(lambda x, y: x & y, [set(v) for v in passing.values()]))
+    if out := args["output"]:
+        with open(out, "w") as o:
+            o.write("\n".join(intersection))
+    else:
+        print("\n".join(intersection))

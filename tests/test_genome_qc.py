@@ -234,9 +234,13 @@ def test_filter_kraken(make_file_spec, make_conf):
 
 def test_file_quast(make_conf):
     paths = {
-        "quast": here(NF_OUT, "moradigaravand_2025-10-06/QUAST/report/report.tsv"),
+        "quast": str(here(NF_OUT, "moradigaravand_2025-10-06/QUAST/report/report.tsv")),
     }
     filters = {"# contigs": ["<", 100], "Total length": [">", 5000000]}
     config = make_conf("config", {"paths": paths, "quast": filters})
-    command = f"{SCRIPT} {config} --output {OUT.joinpath("qc_quast_filter.txt")}"
+    out = OUT.joinpath("qc_quast_filter.txt")
+    command = f"{SCRIPT} {config} --output {out}"
     check_py_script(command)
+    received = set(out.read_text().splitlines())
+    assert "ERR434265.scaffolds" in received
+    assert "ERR434259.scaffolds" not in received
