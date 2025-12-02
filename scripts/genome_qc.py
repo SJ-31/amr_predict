@@ -1,6 +1,5 @@
 #!/usr/bin/env ipython
 
-# TODO: add pytest for this
 # TODO: you can use the methods of https://www.nature.com/articles/s41598-025-24333-9#Sec2 for inspiration
 import operator
 import re
@@ -13,6 +12,8 @@ import yaml
 
 AVAILABLE_QC = ("kraken2", "quast", "fcs", "fastani")
 AVAILABLE_WRAPPERS = ("fcs", "fastani")
+
+SEQ_RE: str = ".?(fasta|fna|faa|fa)(.gz)?"
 
 OMAP: dict = {
     "==": operator.eq,
@@ -125,7 +126,7 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
             df = run_fastani(command=command, group_name=f"group_{i}", group=group)
             dfs.append(df)
     return pl.concat(dfs).with_columns(
-        pl.col("query").str.replace(".?(fasta|fna|faa|fa)(.gz)?", "").alias("sample")
+        pl.col("query").str.replace(SEQ_RE, "").alias("sample")
     )
 
 
@@ -134,23 +135,31 @@ def fcs_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
         samples = f.read().splitlines()
     dfs = []
     image = config.get("image")
-    container_type = config.get("container-engine", "singularity")
+    engine = config.get("container-engine", "singularity")
     taxonomy = config.get("taxonomy", "prok")
     taxonomy_flag = "--prok" if taxonomy == "prok" else "--euk"
-    if not image and container_type == "singularity":
+    if not image and engine == "singularity":
         raise ValueError("`image` must be defined if using singularity")
-    command = f" --container-type {container_type} --image {image} {taxonomy_flag}"
+    command = f" --container-engine {engine} --image {image} {taxonomy_flag}"
     if not outdir.exists():
         outdir.mkdir()
     for s in samples:
-        cur_out = outdir.joinpath(s)
-        cur_command = f"--fasta-input {s} --output-dir {cur_out} {command}"
-        proc = sp.run(f"run_fcsadaptor.sh {cur_command}", shell=True)
-        proc.check_returncode()
-        sample = re.sub(".?(fasta|fna|faa|fa)(.gz)?", "", s)
-        df = pl.read_csv(
-            cur_out.joinpath("fcs_adaptor_report.txt"), separator="\t"
-        ).with_columns(pl.lit(sample).alias("sample"))
+        sample = re.sub(SEQ_RE, "", s)
+        cur_out = outdir.joinpath(sample)
+        report = cur_out.joinpath("fcs_adaptor_report.txt")
+        if not report.exists():
+            cur_out.mkdir()
+            cur_command = f"--fasta-input {s} --output-dir {cur_out} {command}"
+            proc = sp.run(
+                f"run_fcsadaptor.sh {cur_command}", shell=True, capture_output=True
+            )
+            try:
+                proc.check_returncode()
+            except sp.CalledProcessError as e:
+                raise e
+        df = pl.read_csv(report, separator="\t").with_columns(
+            pl.lit(sample).alias("sample")
+        )
         if df.shape[0] > 1:
             dfs.append(df)
     return pl.concat(dfs)
@@ -240,7 +249,6 @@ def parse_args():
     )
     parser.add_argument(
         "config",
-        required=True,
         help="Config file specifying QC thresholds and file paths",
         action="store",
     )
@@ -273,9 +281,11 @@ if __name__ == "__main__":
         if not run_conf.get(to_run):
             raise ValueError(f"Configuration for `{to_run}` not found in config")
         if to_run == "fcs":
-            summary = fcs_wrapper(outdir=args["outdir"], config=run_conf[to_run])
+            summary = fcs_wrapper(outdir=Path(args["outdir"]), config=run_conf[to_run])
         elif to_run == "fastani":
-            summary = fastani_wrapper(outdir=args["outdir"], config=run_conf[to_run])
+            summary = fastani_wrapper(
+                outdir=Path(args["outdir"]), config=run_conf[to_run]
+            )
         summary.write_csv(args["output"], separator="\t")
         exit(0)
     paths = conf.get("paths")
