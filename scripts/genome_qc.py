@@ -126,7 +126,7 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
             df = run_fastani(command=command, group_name=f"group_{i}", group=group)
             dfs.append(df)
     return pl.concat(dfs).with_columns(
-        pl.col("query").str.replace(SEQ_RE, "").alias("sample")
+        pl.col("query").str.replace(SEQ_RE, "").str.replace(".*/", "").alias("sample")
     )
 
 
@@ -144,7 +144,7 @@ def fcs_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
     if not outdir.exists():
         outdir.mkdir()
     for s in samples:
-        sample = re.sub(SEQ_RE, "", s)
+        sample = re.sub(SEQ_RE, "", Path(s).stem)
         cur_out = outdir.joinpath(sample)
         report = cur_out.joinpath("fcs_adaptor_report.txt")
         if not report.exists():
@@ -153,6 +153,7 @@ def fcs_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
             proc = sp.run(
                 f"run_fcsadaptor.sh {cur_command}", shell=True, capture_output=True
             )
+            print(proc.stdout.decode())
             try:
                 proc.check_returncode()
             except sp.CalledProcessError as e:
@@ -162,7 +163,11 @@ def fcs_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
         )
         if df.shape[0] > 1:
             dfs.append(df)
-    return pl.concat(dfs)
+    if dfs:
+        return pl.concat(dfs)
+    return pl.DataFrame(
+        {"#accession": [], "length": [], "action": [], "range": [], "name": []}
+    )
 
 
 def filter_w_operators(
