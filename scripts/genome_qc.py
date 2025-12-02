@@ -108,10 +108,8 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
                     maps[path] = pl.DataFrame(
                         {"taxid": tmp.keys(), "reference": tmp.values()}
                     )
-    if (q2r := maps.get("query2reference")) is None and (
-        (q2t := maps.get("query2taxid")) is None
-        or (t2r := maps.get("taxid2reference")) is None
-    ):
+    q2t, t2r = maps.get("query2taxid"), maps.get("taxid2reference")
+    if (q2r := maps.get("query2reference")) is None and (q2t is None or t2r is None):
         raise ValueError(
             "Either `query2reference` or both `query2taxid` and `taxid2reference` must be given"
         )
