@@ -236,8 +236,8 @@ def test_file_quast(make_conf):
     paths = {
         "quast": str(here(NF_OUT, "moradigaravand_2025-10-06/QUAST/report/report.tsv")),
     }
-    filters = {"# contigs": ["<", 100], "Total length": [">", 5000000]}
-    config = make_conf("config", {"paths": paths, "quast": filters})
+    filters = [["# contigs", "<", 100], ["Total length", ">", 5000000]]
+    config = make_conf("config", {"paths": paths, "quast": {"filters": filters}})
     out = OUT.joinpath("qc_quast_filter.txt")
     command = f"{SCRIPT} {config} --output {out}"
     check_py_script(command)

@@ -177,16 +177,10 @@ def fcs_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
     )
 
 
-def filter_w_operators(
-    df: pl.DataFrame, spec: dict, all: bool = False, default_direction: str = ">"
-) -> pl.DataFrame:
+def filter_w_operators(df: pl.DataFrame, spec: list, all: bool = False) -> pl.DataFrame:
     exprs = []
-    for k, v in spec.items():
-        if isinstance(v, list):
-            direction, value = v
-            expr = (OMAP[direction](df[k], value)).alias(k)
-        else:
-            expr = (OMAP[default_direction](df[k], value)).alias(k)
+    for col, op, value in spec:
+        expr = (OMAP[op](df[col], value)).alias(col)
         exprs.append(expr)
     if all:
         return df.filter(pl.all_horizontal(*exprs))
@@ -215,7 +209,7 @@ def filter_quast(spec: dict, file: Path) -> list:
     df = df.transpose(
         column_names="Assembly", include_header=True, header_name="sample"
     )
-    filtered = filter_w_operators(df, spec=spec, all=True, default_direction=">")
+    filtered = filter_w_operators(df, spec=spec["filters"], all=True)
     return list(filtered["sample"])
 
 

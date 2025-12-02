@@ -26,34 +26,35 @@ kraken2:
   min_percent_expected: # Minimum percent of reads from sample matching to their expected taxid
   max_percent_other: # Maximum percent percent of reads from sample matching to other taxids at the same taxonomic level
 
-# All values for quast can either be numeric which is interpreted as samples must have value higher
-# than the config value to be accepted
-#
-# Or a tuple of [<operator>, value] defining allowed samples e.g.
-# EX: N50 = ['>', 90] means accept samples with N50 > 90
+# Elements of quast["filters"] are a 3-tuple of (column, <operator>, value)
+# defining allowed samples e.g.
+# EX: ('N50','>', 90) means accept samples with N50 > 90
+# Columns can be repeated to bound accepted values by min, max
+# EX. [('N50', '>', 30), ('N50', '<', 1000)]
 quast:
-  "# contigs (>= 0 bp)": null
-  "# contigs (>= 1000 bp)": null
-  "# contigs (>= 5000 bp)": null
-  "# contigs (>= 10000 bp)": null
-  "# contigs (>= 25000 bp)": null
-  "# contigs (>= 50000 bp)": null
-  "Total length (>= 0 bp)": null
-  "Total length (>= 1000 bp)": null
-  "Total length (>= 5000 bp)": null
-  "Total length (>= 10000 bp)": null
-  "Total length (>= 25000 bp)": null
-  "Total length (>= 50000 bp)": null
-  "# contigs": null
-  "Largest contig": null
-  "Total length": null
-  "GC (%)": null
-  "N50": null
-  "N90": null
-  "auN": null
-  "L50": null
-  "L90": null
-  "# N's per 100 kbp": null
+  filters:
+    - ["# contigs (>= 0 bp)", "", null]
+    - ["# contigs (>= 1000 bp)", "", null]
+    - ["# contigs (>= 5000 bp)", "", null]
+    - ["# contigs (>= 10000 bp)", "", null]
+    - ["# contigs (>= 25000 bp)", "", null]
+    - ["# contigs (>= 50000 bp)", "", null]
+    - ["Total length (>= 0 bp)", "", null]
+    - ["Total length (>= 1000 bp)", "", null]
+    - ["Total length (>= 5000 bp)", "", null]
+    - ["Total length (>= 10000 bp)", "", null]
+    - ["Total length (>= 25000 bp)", "", null]
+    - ["Total length (>= 50000 bp)", "", null]
+    - ["# contigs", "", null]
+    - ["Largest contig", "", null]
+    - ["Total length", "", null]
+    - ["GC (%)", "", null]
+    - ["N50", "", null]
+    - ["N90", "", null]
+    - ["auN", "", null]
+    - ["L50", "", null]
+    - ["L90", "", null]
+    - ["# N's per 100 kbp", "", null]
 
 fastani:
   # tuples of [<operator>, value] e.g. [">", 90]
