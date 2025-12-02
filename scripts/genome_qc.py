@@ -67,7 +67,7 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
         if k != "mapping":
             command += f"--{k} {v}"
 
-    def run_fastani(command, outfile, group: pl.DataFrame, group_name) -> pl.DataFrame:
+    def run_fastani(command, group: pl.DataFrame, group_name) -> pl.DataFrame:
         rl = outdir.joinpath(f"{group_name}_refs.txt")
         ql = outdir.joinpath(f"{group_name}_queries.txt")
         outfile = outdir.joinpath(f"{group_name}_result.tsv")
@@ -98,16 +98,19 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
     ):
         if p := config["mapping"].get(path):
             if headers is not None:
-                maps[path] = pl.read_csv(p, separator="\t", new_columns=headers)
+                maps[path] = pl.read_csv(p, separator="\t", new_columns=headers).cast(
+                    pl.String
+                )
             else:
                 with open(p, "r") as f:
                     tmp = yaml.safe_load(f)
+                    print(tmp)
                     maps[path] = pl.DataFrame(
                         {"taxid": tmp.keys(), "reference": tmp.values()}
                     )
-    if (q2r := maps.get("query2reference")) is None or (
+    if (q2r := maps.get("query2reference")) is None and (
         (q2t := maps.get("query2taxid")) is None
-        and (t2r := maps.get("taxid2reference")) is None
+        or (t2r := maps.get("taxid2reference")) is None
     ):
         raise ValueError(
             "Either `query2reference` or both `query2taxid` and `taxid2reference` must be given"
@@ -117,7 +120,7 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
     if q2t is not None and t2r is not None:
         merged = q2t.join(t2r, on="taxid")
         for taxid, group in merged.group_by("taxid"):
-            df = run_fastani(command=command, group_name=taxid, group=group)
+            df = run_fastani(command=command, group_name=taxid[0], group=group)
             dfs.append(df)
     if q2r is not None:
         for i, (_, group) in enumerate(

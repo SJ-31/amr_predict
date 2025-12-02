@@ -32,12 +32,6 @@ A_BAUMANNI = [
 E_COLI = [
     str(GENOMES.joinpath("moradigaravand", f))
     for f in [
-        "SAMN29490345.fasta",
-        "SAMN29490346.fasta",
-        "SAMN29490347.fasta",
-        "SAMN29490348.fasta",
-        "SAMN29490349.fasta",
-        "SAMN29490350.fasta",
         "ERR434259.fasta",
         "ERR434260.fasta",
         "ERR434261.fasta",
@@ -74,7 +68,7 @@ q2ref = pl.DataFrame(
 
 
 def get_refs(*names):
-    return [REF.joinpath(n) for n in names]
+    return [str(REF.joinpath(n)) for n in names]
 
 
 @pytest.fixture
@@ -89,7 +83,7 @@ def make_file_spec():
         else:
             first, second = kwargs["first"], kwargs["second"]
             f, s = args
-            pl.DataFrame({first: f, second: s})
+            pl.DataFrame({first: f, second: s}).write_csv(tmp.name, separator="\t")
         return tmp.name
 
     yield f
@@ -97,16 +91,14 @@ def make_file_spec():
 
 
 @pytest.fixture
-def make_conf():
-    tmp = NamedTemporaryFile(suffix=".yaml")
-
-    def f(config):
-        with open(tmp.name, "w") as f:
+def make_conf(tmp_path):
+    def f(name, config):
+        file = tmp_path / f"{name}.yaml"
+        with open(file, "w") as f:
             yaml.safe_dump(config, f)
-        return tmp.name
+        return str(file)
 
     yield f
-    tmp.close()
 
 
 def check_py_script(command):
@@ -117,6 +109,7 @@ def check_py_script(command):
 def test_fcs(make_file_spec, make_conf):
     inputs = make_file_spec(A_BAUMANNI)
     config = make_conf(
+        "config",
         {
             "run": {
                 "fcs": {
@@ -126,7 +119,7 @@ def test_fcs(make_file_spec, make_conf):
                     "container-engine": "singularity",
                 }
             }
-        }
+        },
     )
     logger.info(Path(config).exists())
     logger.info(Path(inputs).exists())
@@ -146,6 +139,7 @@ def test_fastani_q2t(make_file_spec, make_conf):
     )
     logger.info(qt2)
     t2r = make_conf(
+        "map",
         {
             "1": get_refs(
                 "GCF_000005845.2_ASM584v2_genomic.fna",
@@ -156,9 +150,11 @@ def test_fastani_q2t(make_file_spec, make_conf):
                 "GCA_014672755.1_ASM1467275v1_genomic.fna",
                 "GCA_020911985.1_ASM2091198v1_genomic.fna",
             ),
-        }
+        },
     )
+    logger.info(t2r)
     config = make_conf(
+        "config",
         {
             "run": {
                 "fastani": {
@@ -168,8 +164,9 @@ def test_fastani_q2t(make_file_spec, make_conf):
                     }
                 }
             }
-        }
+        },
     )
+    logger.info(config)
     out = OUT.joinpath("fastani")
     command = f"{SCRIPT} {config} --run fastani --outdir {out} --output {OUT.joinpath("fastani.tsv")}"
     check_py_script(command)
@@ -183,6 +180,7 @@ def test_fastani_q2r(make_file_spec, make_conf):
         second="reference",
     )
     config = make_conf(
+        "config",
         {
             "run": {
                 "fastani": {
@@ -191,7 +189,7 @@ def test_fastani_q2r(make_file_spec, make_conf):
                     }
                 }
             }
-        }
+        },
     )
     out = OUT.joinpath("fastani_q2r")
     command = f"{SCRIPT} {config} --run fastani --outdir {out} --output {OUT.joinpath("fastani_q2r.tsv")}"
@@ -225,7 +223,7 @@ def test_filter_kraken(make_file_spec, make_conf):
         "kraken2_expected_taxids": exp_tax,
     }
     filters = {"min_percent_expected": 0.2, "max_percent_other": 0.1}
-    config = make_conf({"paths": paths, "kraken": filters})
+    config = make_conf("config", {"paths": paths, "kraken": filters})
     command = f"{SCRIPT} {config} --output {OUT.joinpath("qc_kraken2_filter.txt")}"
     check_py_script(command)
 
@@ -235,6 +233,6 @@ def test_file_quast(make_conf):
         "quast": here(NF_OUT, "moradigaravand_2025-10-06/QUAST/report/report.tsv"),
     }
     filters = {"# contigs": ["<", 100], "Total length": [">", 5000000]}
-    config = make_conf({"paths": paths, "quast": filters})
+    config = make_conf("config", {"paths": paths, "quast": filters})
     command = f"{SCRIPT} {config} --output {OUT.joinpath("qc_quast_filter.txt")}"
     check_py_script(command)
