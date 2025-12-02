@@ -7,14 +7,17 @@ from tempfile import NamedTemporaryFile
 import polars as pl
 import pytest
 import yaml
+from loguru import logger
 from pyhere import here
+
+logger.add(here("tests", "genome_qc.log"))
 
 GENOMES: Path = here("data", "remote", "genomes")
 REF = GENOMES.joinpath("reference")
-OUT: Path = here("reuslts", "tests")
+OUT: Path = here("results", "tests")
 
 A_BAUMANNI = [
-    GENOMES.joinpath("jia", f)
+    str(GENOMES.joinpath("jia", f))
     for f in [
         "SAMN29490345.fasta",
         "SAMN29490346.fasta",
@@ -25,7 +28,7 @@ A_BAUMANNI = [
     ]
 ]
 E_COLI = [
-    GENOMES.joinpath("moradigaravand", f)
+    str(GENOMES.joinpath("moradigaravand", f))
     for f in [
         "SAMN29490345.fasta",
         "SAMN29490346.fasta",
@@ -123,6 +126,9 @@ def test_fcs(make_file_spec, make_conf):
             }
         }
     )
+    logger.info(Path(config).exists())
+    logger.info(Path(inputs).exists())
+    logger.info(Path(inputs).read_text())
     out = OUT.joinpath("fcs")
     command = f"{here("scripts", "genome_qc.py")} {config} --run fcs --outdir {out} --output {OUT.joinpath("fcs.tsv")}"
     check_py_script(command)
@@ -135,6 +141,7 @@ def test_fastani_q2t(make_file_spec, make_conf):
         first="query",
         second="taxid",
     )
+    logger.info(qt2)
     t2r = make_conf(
         {
             "1": get_refs(
