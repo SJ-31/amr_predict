@@ -95,15 +95,13 @@ format_main <- function(lst) {
   ) |>
     distinct(BioSample, .keep_all = TRUE)
 
-  null_description <- colSums(is.na(select(
-    mic_values,
-    -c(BioSample, Run, ScientificName)
-  ))) |>
-    sort() |>
-    as.data.frame() |>
-    `colnames<-`("null_count") |>
-    rownames_to_column(var = "antibiotic") |>
-    mutate(null_percent = null_count / nrow(mic_values))
+  null_description <- describe_na(
+    select(
+      mic_values,
+      -c(BioSample, Run, ScientificName)
+    ),
+    "antibiotic"
+  )
 
   table(mic_values$ScientificName) |>
     sort(decreasing = TRUE) |>

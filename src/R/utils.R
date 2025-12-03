@@ -14,6 +14,14 @@ read_existing <- function(filename, expr, read_fn = identity) {
   }
 }
 
+describe_na <- function(tb, colname = "col") {
+  colSums(is.na(tb)) |>
+    sort() |>
+    as.data.frame() |>
+    `colnames<-`("na_count") |>
+    rownames_to_column(var = colname) |>
+    mutate(na_percent = na_count / nrow(tb))
+}
 
 #' Estimate the degree of confounding in a tabular object `obj`
 #' @param x a factor/character column of `obj`
