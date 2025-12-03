@@ -17,7 +17,7 @@ from amr_predict.utils import (
     load_as,
     train_test_from_dict,
 )
-from datasets import Dataset, concatenate_datasets
+from datasets import Dataset
 from loguru import logger
 from xgboost import XGBClassifier, XGBRegressor
 

@@ -265,6 +265,7 @@ elif smk.rule == "make_text_datasets":
                 kws.update(
                     {
                         "fasta_annotations": Path(CONFIG["seq_metadata"]["bakta"]),
+                        # TODO: update this to also use hamr
                         "read_kws": {"comment_prefix": "# "},
                         "metadata_pattern": "*_bakta.tsv",
                     }
