@@ -1,0 +1,5 @@
+outs:
+- md5: a2da885fd9ecab82037b6a978b28e322
+  size: 375989208
+  hash: md5
+  path: ncbi_datasets_lookup.tsv

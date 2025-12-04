@@ -4,3 +4,5 @@
 /moradigaravand_samples.tsv
 /ADB_all_compounds.csv
 /biosample_attributes.tsv
+/genome2biosample.csv
+/ncbi_datasets_lookup.tsv
