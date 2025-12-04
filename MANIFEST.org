@@ -1,9 +1,22 @@
 # -*- eval: (jinx-mode -1) -*-
+* ncbi_datasets_bioprojects.tsv
+*Relative Path:* =data/meta/ncbi_datasets_bioprojects.tsv=
+*Date Added:* <2025-12-04 Thu>
+*Source:* Custom
+TSV file containing genome lookups for all bioprojects in the available AST browser sammples (=biosample_mapping_2025-11-21.csv=).
+Produced by =find_reference_genomes.py= by calls to the NCBI =datasets= tool
 * biosample_attributes.tsv
 *Relative Path:* =data/meta/biosample_attributes.tsv=
 *Date Added:* <2025-11-26 Wed>
 *Source:* Custom —  =scripts/format_ncbi_metadata.R=
 Attributes for the biosample accessions in =biosample_mapping_2025-11-21.csv=, obtained by parsing output of efetch using =get_biosample_attrs= in =src/utils.R=. Required because some of these metadata are not provided in the AST browser or in the mapping file
+* biosample_mapping_2025-11-21.csv
+*Relative Path:* =data/meta/biosample_mapping_2025-11-21.csv=
+*Date Added:* <2025-11-21 Wed>
+*Source:* Custom —  =src/map_biosample.R=
+File mapping BioSample accessions in AST browser to SRA runs and BioProject accessions, produced with calls to =esearch= and =efetch=.
+
+Required because the downloadable table from AST browser doesn't include SRA runs
 
 * ADB_all_compounds.csv
 *Relative Path:* =data/meta/ADB_all_compounds.csv=
