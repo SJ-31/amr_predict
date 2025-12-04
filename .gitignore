@@ -20,3 +20,4 @@
 /data/meta/genome_trakr_bsample.tsv
 /snakemake/tmp.kmc_pre
 /snakemake/tmp.kmc_suf
+/data/meta/who_aware.tsv
