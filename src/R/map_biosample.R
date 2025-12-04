@@ -13,7 +13,7 @@ get_sra_runinfo <- function(acc, cache) {
 
   cache_lookup <- bfcquery(cache, acc)
   if (nrow(cache_lookup) > 0) {
-    result <- readRDS(cache_lookup$rpath)
+    result <- read_csv(cache_lookup$rpath)
   } else {
     try_search <- system2(
       "esearch",
@@ -26,10 +26,10 @@ get_sra_runinfo <- function(acc, cache) {
       input = try_search,
       stdout = TRUE
     )
-    savepath <- bfcnew(cache, acc, ext = ".rds")
+    savepath <- bfcnew(cache, acc, ext = ".csv")
     if (length(fetch) == 0) {
       empty$EsearchLookup <- "FAILED"
-      saveRDS(empty, file = savepath)
+      write_csv(empty, file = savepath)
       result <- empty
     } else {
       empty$EsearchLookup <- "SUCCESS"
@@ -43,7 +43,7 @@ get_sra_runinfo <- function(acc, cache) {
       ) |>
         bind_rows() |>
         mutate(Query = acc, EsearchLookup = "SUCCESS")
-      saveRDS(result, file = savepath)
+      write_csv(result, file = savepath)
     }
   }
   result
@@ -60,7 +60,6 @@ biosample_db_links <- function(acc, cache) {
   cache_lookup <- bfcquery(cache, acc)
   if (nrow(cache_lookup) > 0) {
     lst <- readRDS(cache_lookup$rpath)
-    api_lookup_success <- TRUE # TODO: [2025-09-15 Mon] temporary, remove this after the run
   } else {
     try(search_biosample <- entrez_search(db = "biosample", term = acc))
   }
@@ -144,15 +143,21 @@ if (sys.nframe() == 0) {
   )
   args <- parse_args(parser)
   accs <- read_lines(args$input)
-  accs <- accs[1:50]
   cache <- BiocFileCache(args$cache)
   if (args$with_rentrez) {
     map_fn <- biosample_db_links
   } else {
     map_fn <- get_sra_runinfo
   }
+  map_fn <- slowly(map_fn, rate = rate_delay(1))
   lapply(accs, \(x) map_fn(x, cache = cache)) |>
-    lapply(\(x) unnest(x, BioSample)) |>
+    lapply(\(x) {
+      if ("BioSample" %in% colnames(x)) {
+        unnest(x, BioSample)
+      } else {
+        x
+      }
+    }) |>
     bind_rows() |>
     write_tsv(args$output)
 }

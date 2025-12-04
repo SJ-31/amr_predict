@@ -14,6 +14,13 @@ read_existing <- function(filename, expr, read_fn = identity) {
   }
 }
 
+table2tb <- function(table, row_header) {
+  table |>
+    as.data.frame() |>
+    `colnames<-`(c(row_header, "Var2", "Freq")) |>
+    tidyr::pivot_wider(names_from = Var2, values_from = Freq)
+}
+
 describe_na <- function(tb, colname = "col") {
   colSums(is.na(tb)) |>
     sort() |>
