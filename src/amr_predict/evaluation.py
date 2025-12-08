@@ -14,7 +14,7 @@ from amr_predict.metrics import (
     multitask_metrics2df,
 )
 from amr_predict.models import Baseline
-from amr_predict.utils import TASK_TYPES, load_as
+from amr_predict.utils import TASK_TYPES, Preprocessor, load_as
 from datasets import Dataset, DatasetDict
 from loguru import logger
 from torch import Tensor
@@ -30,10 +30,12 @@ class Evaluator:
         self,
         model: MODEL_CLASSES,
         how: Literal["cv", "holdout"] = "cv",
+        preprocessor: Preprocessor | None = None,
         trainer: L.Trainer | None = None,
         **kws,
     ) -> None:
         self.model: MODEL_CLASSES = model
+        self.pp: Preprocessor | None = preprocessor
         self.x_key: str = self.model.x_key
         self.task_type: TASK_TYPES = self.model.conf.task_type
         self.trainer: L.Trainer | None = trainer
@@ -150,8 +152,16 @@ class Evaluator:
                 test_dset = dataset[test]
             logger.info(f"Holdout on key {key}")
             logger.info(f"Train, test shape: {train_dset.shape}, {test_dset.shape}")
+
             if val_dset is not None:
                 logger.info(f"Validation set shape: {val_dset.shape}")
+
+            if self.pp is not None:
+                train_dset = self.pp.fit_transform(train_dset)
+                test_dset = self.pp.transform(test_dset)
+                if val_dset is not None:
+                    val_dset = self.pp.transform(val_dset)
+
             self._fit(train=train_dset, val=val_dset)
             y_true: Tensor = test_dset.to_polars().select(tasks).to_torch()
             if self.task_type == "regression":

@@ -13,7 +13,11 @@ import torchmetrics as tmet
 from amr_predict.metrics import multitask_all_reg, multitask_cross_entropy_loss
 from amr_predict.utils import CACHE_OPTIONS, TASK_TYPES, ModuleConfig, iter_cols
 from datasets.arrow_dataset import Dataset
-from lightning.pytorch.utilities.types import OptimizerConfig
+from lightning.pytorch.utilities.types import (
+    LRSchedulerType,
+    OptimizerConfig,
+    OptimizerLRSchedulerConfig,
+)
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torchmetrics import MeanSquaredError
@@ -201,7 +205,7 @@ class BaseNN(L.LightningModule):
         self.conf.scheduler_config = lr_scheduler_config
 
     @override
-    def configure_optimizers(self) -> OptimizerConfig:
+    def configure_optimizers(self) -> OptimizerLRSchedulerConfig:
         if self.conf.optimizer_fn is not None:
             optimizer = self.conf.optimizer_fn(self.named_parameters())
         else:

@@ -1,7 +1,9 @@
 #!/usr/bin/env ipython
 
 import os
+import re
 from pathlib import Path
+from typing import get_args
 
 import amr_predict.evaluation as ae
 import lightning as L
@@ -9,9 +11,11 @@ import numpy as np
 import polars as pl
 import torch
 from amr_predict.models import MLP, Baseline
+from amr_predict.preprocessing import EMBEDDING_METHODS
 from amr_predict.utils import (
     TASK_TYPES,
     ModuleConfig,
+    Preprocessor,
     data_spec,
     encode_strs,
     load_as,
@@ -101,6 +105,14 @@ if smk.rule in {"cross_validate", "holdout"}:
         obs: pl.DataFrame | None = (
             dataset.remove_columns("x").to_polars() if smk.rule == "holdout" else None
         )
+        baseline_re = "|".join(map(lambda x: x + ".*", get_args(EMBEDDING_METHODS)))
+        # The above re is fine because FM embeddings are named after pooling methods
+        if re.match(baseline_re, dname):
+            pp: Preprocessor | None = Preprocessor(
+                x_key=x_key, **smk.config.get("baseline_filtering", {})
+            )
+        else:
+            pp = None
         ttype: TASK_TYPES
         for ttype, task_names in smk.config["tasks"].items():
             if not task_names:
@@ -139,11 +151,15 @@ if smk.rule in {"cross_validate", "holdout"}:
                         in_features=in_features, x_key=x_key, conf=mconf, **model_kws
                     )
                     trainer = L.Trainer(**trainer_kws)
+                eva_kws = dict(
+                    model=model,
+                    trainer=trainer,
+                    preprocessor=pp,
+                    **loader_kws,
+                )
                 if smk.rule == "cross_validate":
                     logger.info(f"Running cross validation with {mname}")
-                    eva = ae.Evaluator(
-                        model=model, how="cv", trainer=trainer, **loader_kws
-                    )
+                    eva = ae.Evaluator(how="cv", **eva_kws)
                     result: pl.DataFrame = eva.cv(
                         dataset,
                         validation_kws=validation_kws,  # No need when using baseline
@@ -152,9 +168,7 @@ if smk.rule in {"cross_validate", "holdout"}:
                     logger.success("Cross validation complete")
                 elif smk.rule == "holdout":
                     logger.info(f"Running holdout with {mname}")
-                    eva = ae.Evaluator(
-                        model=model, how="holdout", trainer=trainer, **loader_kws
-                    )
+                    eva = ae.Evaluator(how="holdout", **eva_kws)
                     result = holdout_helper(
                         dataset=dataset, eva=eva, obs=obs, validation=valid_dset
                     )
