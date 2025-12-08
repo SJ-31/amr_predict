@@ -16,12 +16,15 @@ from Bio.SeqRecord import SeqRecord
 from datasets import DatasetDict, Value
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
+from loguru import logger
 from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader
 
 CACHE_OPTIONS: TypeAlias = Literal["train_loss", "val_acc", "val_loss", "train_acc"]
 PP_METHODS: TypeAlias = Literal["variance"]
+
+logger.disable("amr_predict")
 
 
 # * Utility functions
@@ -502,7 +505,7 @@ class Preprocessor:
         self.kws: dict = kws or {}
 
     def _filter_idx(self, batch):
-        batch[self.x_key] = batch[self.feature_idx]
+        batch[self.x_key] = batch[self.x_key][self.feature_idx]
         return batch
 
     def transform(self, dataset: Dataset) -> Dataset:
@@ -532,9 +535,12 @@ class Preprocessor:
             ]
 
     def _variance_filter(self, x, quantile_threshold: float = 0.30) -> None:
-        x = np.ndarray(x)
+        x = np.array(x)
         variance: np.ndarray = x.var(axis=0)
-        mask = variance >= np.quantile(variance, quantile_threshold)
+        thresh = np.quantile(variance, quantile_threshold)
+        logger.info(f"threshold value: {thresh}")
+        mask = variance >= thresh
+        logger.info(f"{mask.sum()} features kept")
         idx = np.where(mask)[0]
         self.feature_idx = idx
         self._write_idx()
