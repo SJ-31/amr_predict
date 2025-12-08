@@ -42,7 +42,7 @@ torch.set_default_dtype(torch.float32)
 
 RCONFIG["validation_kws"]["seed"] = RNG
 DEFAULT_TRAIN = smk.config.get("trainer", {})
-DEFAULT_LOADER = smk.config.get("dataloder", {})
+DEFAULT_LOADER = smk.config.get("dataloader", {})
 
 if smk.rule == "cross_validate":
     RCONFIG["k_fold"]["random_state"] = RNG
@@ -132,6 +132,8 @@ if smk.rule in {"cross_validate", "holdout"}:
             )
             for mname in RCONFIG["models"]:
                 outfile = f"{smk.params["outdir"]}/{mname}/{dname}_{ttype}.csv"
+                if Path(outfile).exists():
+                    continue
                 model_kws = (MODEL_ENV[mname] or {}).get("kws", {})
                 trainer_kws = (MODEL_ENV[mname] or {}).get("trainer", DEFAULT_TRAIN)
                 loader_kws = (MODEL_ENV[mname] or {}).get("dataloader", DEFAULT_LOADER)
