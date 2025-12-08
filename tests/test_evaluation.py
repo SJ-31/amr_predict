@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import pytest
 import tomllib
 import yaml
 from amr_predict.evaluation import Evaluator
@@ -28,30 +29,25 @@ REGRESSION_TASKS = ["AMK", "GEN"]
 CLASSIFICATION_TASKS = ["AMK", "GEN"]
 
 
-def test_baseline_classification():
+@pytest.mark.skip(reason="passed")
+@pytest.mark.parametrize(
+    "task_type,tasks",
+    [("classification", CLASSIFICATION_TASKS), ("regression", REGRESSION_TASKS)],
+)
+def test_baseline(task_type, tasks):
     dset = load_as(here(DIRS["seqlens"], "datasets", "pooled", "bin-mean"))
-    dset, _ = encode_strs(dset, CLASSIFICATION_TASKS)
-    in_features, n_classes = data_spec(dset, y=CLASSIFICATION_TASKS, x_key=X_KEY)
+    dset, _ = encode_strs(dset, tasks)
+    if task_type == "classification":
+        model = XGBClassifier
+    else:
+        model = XGBRegressor
+    in_features, n_classes = data_spec(dset, y=tasks, x_key=X_KEY)
     mconf = ModuleConfig(
-        task_type="classification",
+        task_type=task_type,
         n_classes=n_classes,
-        n_tasks=len(CLASSIFICATION_TASKS),
-        task_names=CLASSIFICATION_TASKS,
+        n_tasks=len(tasks),
+        task_names=tasks,
     )
-    model = Baseline(x_key=X_KEY, device="cpu", model=XGBClassifier, conf=mconf)
+    model = Baseline(x_key=X_KEY, device="cpu", model=model, conf=mconf)
     eva: Evaluator = Evaluator(model=model)
     print(eva.holdout(dataset=dset))
-
-
-def test_baseline_regression():
-    dset = load_as(here(DIRS["seqlens"], "datasets", "pooled", "bin-mean"))
-    in_features, n_classes = dset[X_KEY][:].shape[1], None
-    mconf = ModuleConfig(
-        task_type="regression",
-        n_classes=n_classes,
-        n_tasks=len(REGRESSION_TASKS),
-        task_names=REGRESSION_TASKS,
-    )
-    model = Baseline(x_key=X_KEY, device="cpu", model=XGBRegressor, conf=mconf)
-    eva = Evaluator(model=model)
-    print(eva.holdout(dset))

@@ -4,11 +4,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import polars as pl
+import pytest
 import tomllib
-from amr_predict.preprocessing import SeqDataset, SeqPreprocessor
+from amr_predict.preprocessing import SeqDataset, SeqEmbedder, SeqPreprocessor
 from amr_predict.utils import split_features
 from Bio import SeqIO
-from datasets import Dataset, disable_caching
+from datasets import Dataset, disable_caching, load_from_disk
+from loguru import logger
 from pyhere import here
 
 disable_caching()
@@ -16,6 +18,8 @@ disable_caching()
 
 with open(here("tests", "env.toml"), "rb") as f:
     ENV: dict = tomllib.load(f)
+
+logger.enable("amr_predict")
 
 # * Utilities
 
@@ -46,6 +50,12 @@ def get_diffs(df, feature_col: str = "locus_tag"):
     return grouped
 
 
+@pytest.fixture
+def bin_dataset() -> Dataset:
+    ds: Dataset = load_from_disk(ENV["bindata"])
+    return ds
+
+
 FASTAS = get_fastas()
 
 
@@ -61,7 +71,6 @@ def test_add_utrs():
         anno_path=Path(ENV["bakta"]),
         split_method="bakta",
         max_length=300,
-        include_utrs=(True, True),
         utr_amount=(100, 100),
         upstream_context=0,
         downstream_context=0,
@@ -85,7 +94,76 @@ def test_split_features():
     )
     split = split_features(sample_bakta, 120, "Start", "Stop")
     assert all((split["chunk_Stop"] - split["chunk_Start"]) <= 120)
-    return split
+
+
+def test_kmer_embed(tmp_path):
+    feature_file: Path = tmp_path / "features.txt"
+    emb = SeqEmbedder(
+        method="kmer",
+        fastas=Path(ENV["fastas"]),
+        id_col="sample",
+        k=3,
+        key="x",
+        save_features_to=feature_file,
+        var_quantile_threshold=0.5,
+    )
+    embedded = emb(None)
+    features = feature_file.read_text().splitlines()
+    assert len(features) == 32 and "AAA" in features
+    emb2 = SeqEmbedder(
+        method="kmer",
+        fastas=Path(ENV["fastas"]),
+        id_col="sample",
+        k=3,
+        key="x",
+        features=features,
+        var_quantile_threshold=0.5,
+    )
+    e2 = emb2(None)
+
+
+def test_embed_hamr(tmp_path):
+    feature_file: Path = tmp_path / "features.txt"
+    kws = dict(
+        method="feature_presence",
+        fasta_annotations=here("results", "tests", "no_date", "seq_metadata.csv"),
+        feature_cols=["hamr_gene_symbol", "hamr_resistance_mechanism"],
+        id_col="sample",
+        key="x",
+        save_features_to=feature_file,
+        var_quantile_threshold=0.5,
+    )
+    emb = SeqEmbedder(**kws)
+    embedded = emb(None)
+    features = feature_file.read_text().splitlines()
+    print(features[1:10])
+    del kws["save_features_to"]
+    kws["features"] = features
+    emb2 = SeqEmbedder(**kws)
+    e2 = emb2(None)
+
+
+def test_embed_bakta(tmp_path):
+    feature_file: Path = tmp_path / "features.txt"
+    kws = dict(
+        method="feature_presence",
+        fasta_annotations=Path(ENV["bakta"]),
+        feature_cols=["Gene", "Product"],
+        id_col="sample",
+        key="x",
+        save_features_to=feature_file,
+        var_quantile_threshold=0.5,
+        read_kws={"comment_prefix": "# "},
+        metadata_pattern="*_bakta.tsv",
+    )
+    emb = SeqEmbedder(**kws)
+    embedded = emb(None)
+    features = feature_file.read_text().splitlines()
+    print(features[1:10])
+    del kws["save_features_to"]
+    kws["features"] = features
+    emb2 = SeqEmbedder(**kws)
+    e2 = emb2(None)
 
 
 def test_utrs2():
