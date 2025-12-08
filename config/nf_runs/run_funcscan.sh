@@ -4,7 +4,8 @@
 # Run from repos/amr_predict/pipelines
 # [2025-09-24 Wed] Disabled protein annotation due to errors
 remote=".."
-
+# WARNING: You need to do funscan runs in batches of 1000 samples, otherwise it'll break
+#
 # Jia run completed [2025-09-22]
 nextflow run nf-core/funcscan \
     --input "./jia_samplesheet.csv" \
