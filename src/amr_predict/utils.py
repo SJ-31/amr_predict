@@ -21,6 +21,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 
 CACHE_OPTIONS: TypeAlias = Literal["train_loss", "val_acc", "val_loss", "train_acc"]
+PP_METHODS: TypeAlias = Literal["variance"]
 
 
 # * Utility functions
@@ -469,3 +470,75 @@ class ModuleConfig:
             self._init_device = torch.device(value)
         else:
             self._init_device = value
+
+
+# ** Preprocessing
+
+
+class Preprocessor:
+    """
+    Class to preprocess datasets prior to training e.g. apply data transformation
+    or filter features
+    Intended to be used with Evaluator class, which will call the `fit` method only
+    on training datasets
+    """
+
+    def __init__(
+        self,
+        method: PP_METHODS,
+        x_key: str = "x",
+        feature_file: Path | None = None,
+        read_idx: bool = False,
+        **kws,
+    ) -> None:
+        self.method: PP_METHODS = method
+        self.feature_file: Path | None = feature_file
+        self.feature_idx: Sequence | None = None
+        self.x_key: str = x_key
+        if read_idx and feature_file is None:
+            raise ValueError("`read_idx` was passed without `feature_file`")
+        elif read_idx:
+            self._read_idx()
+        self.kws: dict = kws or {}
+
+    def _filter_idx(self, batch):
+        batch[self.x_key] = batch[self.feature_idx]
+        return batch
+
+    def transform(self, dataset: Dataset) -> Dataset:
+        if self.method in {"variance"}:
+            filtered = dataset.map(self._filter_idx)
+            return filtered
+        else:
+            raise NotImplementedError()
+
+    def fit(self, dataset: Dataset) -> None:
+        x = dataset[self.x_key][:]
+        if self.method == "variance":
+            self._variance_filter(x, **self.kws)
+        else:
+            raise NotImplementedError()
+
+    def _write_idx(self) -> None:
+        if self.feature_idx is None:
+            raise ValueError("No features have been fit yet")
+        if self.feature_file is not None:
+            self.feature_file.write_text("\n".join([str(i) for i in self.feature_idx]))
+
+    def _read_idx(self) -> None:
+        if self.feature_file is not None:
+            self.feature_idx = [
+                int(f) for f in self.feature_file.read_text().splitlines()
+            ]
+
+    def _variance_filter(self, x, quantile_threshold: float = 0.30) -> None:
+        x = np.ndarray(x)
+        variance: np.ndarray = x.var(axis=0)
+        mask = variance >= np.quantile(variance, quantile_threshold)
+        idx = np.where(mask)[0]
+        self.feature_idx = idx
+        self._write_idx()
+
+    def fit_transform(self, dataset: Dataset) -> Dataset:
+        self.fit(dataset)
+        return self.transform(dataset)

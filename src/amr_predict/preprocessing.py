@@ -65,7 +65,6 @@ class SeqEmbedder:
         key: str,
         embed_fn: Callable,
         pattern: str | None = None,
-        var_quantile_threshold: float = 0.25,
         features: tuple | list | None = None,
         save_features_to: Path | None = None,
     ) -> Dataset:
@@ -99,15 +98,13 @@ class SeqEmbedder:
             meta = read_tabular(metadata)
             df = df.join(meta, on=id_col)
         arr = np.array(df.select(feature_cols))
-        if var_quantile_threshold and not features:
+        if not features:
             variance: np.ndarray = arr.var(axis=0)
-            feature_mask = (variance != 0) | (
-                variance >= np.quantile(variance, var_quantile_threshold)
-            )
+            feature_mask = variance != 0
             n_removed = (~feature_mask).sum()
             total = len(feature_mask)
             logger.info(
-                f"Removing {n_removed} features with variance threshold\n{(total-n_removed)} remaining."
+                f"Removing {n_removed} features with 0 variance. \n{(total-n_removed)} remaining."
             )
             arr = arr[:, feature_mask]
             if save_features_to is not None:
