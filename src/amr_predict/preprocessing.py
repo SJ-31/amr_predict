@@ -66,24 +66,54 @@ class SeqEmbedder:
         embed_fn: Callable,
         pattern: str | None = None,
         var_quantile_threshold: float = 0.25,
+        features: tuple | list | None = None,
+        save_features_to: Path | None = None,
     ) -> Dataset:
+        """Helper function to generate embeddings from files
+
+        Parameters
+        ----------
+        path : Path
+            Directory or file.
+            In the former, each file represents a single sample, and
+            `embed_fn` is called on each file
+            In the latter, a file aggregating multiple samples
+
+        Returns
+        -------
+
+
+        Notes
+        -----
+
+        """
         if path.is_dir():
             to_iter = path.glob(pattern) if pattern else path.iterdir()
             dfs = [embed_fn(f) for f in to_iter if f.suffix in accepted_suffixes]
             df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed").fill_null(0)
         else:
             df = embed_fn(path).fill_null(0)
-        feature_cols = df.drop(id_col).columns
+        feature_cols = features or df.drop(id_col).columns
+        logger.info(f"{len(feature_cols)} features")
         if metadata is not None:
             meta = read_tabular(metadata)
             df = df.join(meta, on=id_col)
         arr = np.array(df.select(feature_cols))
-        variance: np.ndarray = arr.var(axis=0)
-        arr = arr[
-            :,
-            (variance != 0)
-            | (variance >= np.quantile(variance, var_quantile_threshold)),
-        ]
+        if var_quantile_threshold and not features:
+            variance: np.ndarray = arr.var(axis=0)
+            feature_mask = (variance != 0) | (
+                variance >= np.quantile(variance, var_quantile_threshold)
+            )
+            n_removed = (~feature_mask).sum()
+            total = len(feature_mask)
+            logger.info(
+                f"Removing {n_removed} features with variance threshold\n{(total-n_removed)} remaining."
+            )
+            arr = arr[:, feature_mask]
+            if save_features_to is not None:
+                save_features_to.write_text(
+                    "\n".join(np.array(feature_cols)[feature_mask])
+                )
         dct = df.drop(feature_cols).to_dict()
         dct[key] = arr
         return Dataset.from_dict(dct).with_format("torch")
@@ -136,14 +166,41 @@ class SeqEmbedder:
         feature_whitelist: tuple | dict = (),
         feature_blacklist: tuple | dict = (),
         id_col: str = "sample",
+        id_regexp: str = "",
         metadata: Path | None = None,
         key: str = "x",
         read_kws: dict | None = None,
         metadata_pattern: str | None = None,
         **kws,
     ):
+        """Encode sample as a binary vector describing the presence of specific sequence
+        features.
+
+        Parameters
+        ----------
+        fasta_annotations : Path
+            A path to tabular files annotating the fasta samples.
+            The following conventions are required:
+                - Each entry (line) is an annotation to a sequence feature
+                - If a single file and not a directory, there must be a column denoting
+                    sample identity
+                - If a directory, the file stem must be the sample name
+        feature_cols : str | list[str]
+            Column(s) in the files naming the feature in the annotation entry
+        feature_blacklist : tuple | dict
+            Tuple of named features to exclude
+            Can also be a dictionary mapping the name of a feature column to a tuple of feeatures to exclude
+        feature_whitelist : tuple | dict
+            Named features to include. Effect is mutually exclusive to `feature_blacklist`
+        read_kws : dict
+            keyword arguments passed to `pl.read_csv`
+        id_regexp : str
+            A regex pattern containing a single capture group to extract sample names from
+            `id_col`. Only used when `fasta_annotations` is a single file
+        """
         read_kws = read_kws or {}
         is_annotations_dir: bool = fasta_annotations.is_dir()
+        feature_whitelist = feature_whitelist or kws.pop("features", ())
 
         def helper(file: Path) -> pl.DataFrame:
             try:
@@ -166,10 +223,21 @@ class SeqEmbedder:
                         .drop(cs.starts_with("_has"))
                     )
                 elif fspec:
-                    df = df.filter(pl.col(feature_cols).is_in(fspec))
+                    df = df.filter(pl.any_horizontal(pl.col(feature_cols).is_in(fspec)))
             if is_annotations_dir:
                 df = df.select(feature_cols).with_columns(
                     pl.lit(file.stem).alias(id_col)
+                )
+            else:
+                to_select = (
+                    [id_col] + feature_cols
+                    if isinstance(feature_cols, list)
+                    else [id_col, feature_cols]
+                )
+                df = df.select(to_select)
+            if id_regexp:
+                df = df.with_columns(
+                    pl.col(id_col).str.extract(id_regexp, group_index=1)
                 )
             df = (
                 df.unpivot(index=id_col)
