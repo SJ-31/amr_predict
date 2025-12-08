@@ -262,10 +262,16 @@ elif smk.rule == "make_text_datasets":
             if method == "kmer":
                 kws.update({"fastas": Path(CONFIG["genomes"])})
             elif method == "feature_presence":
+                if source := kws.pop("source", "bakta") == "bakta":
+                    anno = Path(CONFIG["seq_metadata"]["bakta"])
+                    feature_cols = ["Gene", "Product"]
+                elif source == "hamr":
+                    anno = Path(smk.input[0])
+                    feature_cols = ["hamr_gene_symbol", "hamr_drug_class"]
                 kws.update(
                     {
-                        "fasta_annotations": Path(CONFIG["seq_metadata"]["bakta"]),
-                        # TODO: update this to also use hamr
+                        "fasta_annotations": anno,
+                        "feature_cols": feature_cols,
                         "read_kws": {"comment_prefix": "# "},
                         "metadata_pattern": "*_bakta.tsv",
                     }
