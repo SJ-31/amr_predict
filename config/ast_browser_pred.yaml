@@ -1,0 +1,124 @@
+# TODO: configuration file for ast browser
+# change all of this
+genomes: "../data/remote/genomes/jia"
+
+pool_embeddings:
+  methods:
+    - method: mean
+    - method: sum
+    - method: similarity
+  obs_keep: [
+      # ACCESS
+      "gentamicin",
+      "tetracycline",
+      "trimethoprim-sulfamethoxazole",
+      "tetracycline_class",
+      "gentamicin_class",
+      "trimethoprim-sulfamethoxazole_class",
+      # WATCH
+      "ciprofloxacin",
+      "cefoxitin",
+      "meropenem",
+      "ciprofloxacin_class",
+      "cefoxitin_class",
+      "meropenem_class",
+    ]
+  key: "x"
+
+tasks:
+  classification:
+    [
+      "tetracycline_class",
+      "gentamicin_class",
+      "trimethoprim-sulfamethoxazole_class",
+      "ciprofloxacin_class",
+      "cefoxitin_class",
+      "meropenem_class",
+    ]
+  regression:
+    [
+      "ciprofloxacin",
+      "cefoxitin",
+      "meropenem",
+      "gentamicin",
+      "tetracycline",
+      "trimethoprim-sulfamethoxazole",
+    ]
+
+sample_metadata:
+  file: ""
+  id_col: "Accession"
+seq_metadata:
+  hamronization: "" # hamronization summary tsv
+  combgc: "" # combgc directory
+  bakta: "" # bakta directory
+  ampcombi: "" # Ampcombi summary cluster tsv
+
+compare_embeddings:
+  bootstrap_rounds: 2 # bootstrap with subsampling to make computations faster and also so that there aren't too many
+  n_samples_per: 10 # number of samples randomly chosen in bootstrap rounds
+  # [2025-10-01 Wed] Would add more, but 20 samples led to 34,000 sequences
+  pair_distance_distribution:
+    cols: ["sample", "hamr_gene_symbol"]
+    distance_metric: cosine
+    kws:
+      n_pairs_per: 20
+      replace: True
+  covariate_distance_correlation:
+    cols: []
+    distance_metric: cosine
+    seq_start_col: "start"
+    seq_end_col: "stop"
+    seq_id_col: "seqid"
+  neighbor_proportion:
+    cols: ["sample", "hamr_gene_symbol", "bakta_product"]
+    kws:
+      metric: "cosine"
+      n_neighbors: 5
+  cluster_on:
+    - "sample"
+    - "hamr_gene_symbol"
+    - "bakta_product"
+    - "hamr_drug_class"
+
+compare_pooled: # [2025-10-30 Thu] will choose to compare classes with the most even distribution, top two are MIN and GEN
+  bootstrap_rounds: 1
+  n_samples_per: null
+  methods:
+    - neighbor_proportion
+    - covariate_distance_correlation
+    - pair_distance_distribution
+    - clustering
+  pair_distance_distribution:
+    cols: []
+    distance_metric: cosine
+    kws:
+      n_pairs_per: 20
+  covariate_distance_correlation:
+    cols: []
+    distance_metric: "cosine"
+  neighbor_proportion:
+    cols: []
+    kws:
+      metric: "cosine"
+      n_neighbors: 5
+  cluster_on:
+    - "MIN_class"
+    - "GEN_class"
+  continuous:
+    - "AMK"
+
+cross_validate:
+  models:
+    - baseline
+    # - TODO: add in a base mlp here
+  validation_kws:
+    test_size: 0.2
+  k_fold:
+    n_repeats: 2
+    n_splits: 5
+
+# TODO: for Evo2 config, set utr_amount [200, 200]
+
+holdout:
+  splits: null # TODO: define these splits

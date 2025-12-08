@@ -1,0 +1,44 @@
+# [2025-12-02 Tue] need to wait for ast browser's bacass to finish first before filling
+# this in.
+# Only for genomes which aren't available from refseq already or have insufficient data for QC
+paths:
+  kraken2: [] # TODO: put in the Nextflow outdirectory for bacass kraken2 here
+  kraken2_expected_taxids: # TODO: prepare mapping file
+  quast: [] # TODO: put in the Nextflow summary for bacass quast
+  fastani: [] # TODO: prepare run of fastani
+
+run:
+  fcs: # Aside from `fasta-input`, values are the same as they are in the cli versions
+    fasta-input: # TODO: get it from nextflow
+    image: "~/tools/fcs-adaptor.sif"
+    taxonomy: prok
+    container-engine: singularity
+  fastani:
+    mapping:
+      query2taxid: # TODO: use the same thing as kraken2. tsv file mapping query files to NCBI taxids
+      taxid2reference: # TODO: prepare this
+      # Other k, v pairs are fastANI long flags
+    kmer: 16
+    threads: 1
+    fragLen: 3000
+    maxRatioDiff: 10.0
+
+kraken2:
+  min_percent_expected: # Minimum percent of reads from sample matching to their expected taxid
+  max_percent_other: null # Maximum percent percent of reads from sample matching to other taxids at the same taxonomic level
+
+# Adopted from NCBI refseq standards
+quast:
+  filters:
+    - ["Total length", "<", 15000000] # Remove assemblies that are too big
+    - ["Total length", ">", 300000] # Remove assemblies that are too small
+    # Filter out fragmented assemblies
+    - ["# contigs", "<", 2000]
+    - ["N50", ">", 5000]
+    - ["L50", "<", 500]
+
+fastani:
+  # tuples of [<operator>, value] e.g. [">", 90]
+  ani_avg: null
+  ani_all: null
+  ani_any: null
