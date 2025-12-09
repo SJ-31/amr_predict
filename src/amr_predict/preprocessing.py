@@ -263,7 +263,6 @@ class SeqEmbedder:
         pooling: Literal["cls", "mean"] = "mean",
         hidden_layer: int | None = None,
         batch_size=5,
-        max_len=3000,  # TODO: figure out what this is
     ) -> Dataset:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         edict: dict[str, Tensor]
@@ -313,7 +312,7 @@ class SeqEmbedder:
                     tokenizer=m.tokenizer,
                     sequences=df[text_key],
                     batch_size=batch_size,
-                    max_len=max_len,
+                    max_len=2048,
                     pooling_types=[pooling],
                     save=False,
                 )

@@ -252,7 +252,7 @@ elif smk.rule == "make_text_datasets":
     elif embedding_method == "Evo2":
         max_length = 1800
     elif embedding_method == "esm":
-        max_length = None  # TODO: find max length
+        max_length = 2048 * 3  # context length * 3 for codons
     for name, kws in smk.params["preprocessing"].items():
         savepath = Path(f"{smk.params['outdir']}/{name}")
         if (method := kws.pop("method", None)) in get_args(EMBEDDING_METHODS):
