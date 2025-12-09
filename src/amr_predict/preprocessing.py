@@ -23,12 +23,15 @@ from datasets.load import load_from_disk
 from loguru import logger
 from polars.exceptions import ComputeError, NoDataError
 from skbio import DNA
+from torch import Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
 from transformers.modeling_outputs import MaskedLMOutput
 
 SPLIT_METHODS: TypeAlias = Literal["bin", "bakta"]
-EMBEDDING_METHODS: TypeAlias = Literal["seqLens", "Evo2", "kmer", "feature_presence"]
+EMBEDDING_METHODS: TypeAlias = Literal[
+    "seqLens", "Evo2", "kmer", "feature_presence", "esm"
+]
 
 logger.disable("amr_predict")
 
@@ -49,6 +52,8 @@ class SeqEmbedder:
             return self._seqlens_embed(dset=dataset, **self.kwargs)
         elif self.method == "Evo2":
             return self._evo2_embed(dset=dataset, **self.kwargs)
+        elif self.method == "esm":
+            return self._esm_embed(dset=dataset, **self.kwargs)
         elif self.method == "kmer":
             return self._kmer_embed(**self.kwargs)
         elif self.method == "feature_presence":
@@ -77,14 +82,6 @@ class SeqEmbedder:
             In the former, each file represents a single sample, and
             `embed_fn` is called on each file
             In the latter, a file aggregating multiple samples
-
-        Returns
-        -------
-
-
-        Notes
-        -----
-
         """
         if path.is_dir():
             to_iter = path.glob(pattern) if pattern else path.iterdir()
@@ -256,6 +253,90 @@ class SeqEmbedder:
             pattern=metadata_pattern,
             **kws,
         )
+
+    def _esm_embed(
+        self,
+        dset: Dataset,
+        huggingface: str,
+        text_key: str = "sequence",
+        model: Literal["esm3-open", "esmc_600m", "esmc_300m"] = "esmc_600m",
+        pooling: Literal["cls", "mean"] = "mean",
+        hidden_layer: int | None = None,
+        batch_size=5,
+        max_len=3000,  # TODO: figure out what this is
+    ) -> Dataset:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        edict: dict[str, Tensor]
+        df: pl.DataFrame = dset.to_polars().with_columns(
+            pl.col(text_key).map_elements(
+                lambda x: str(DNA(x).translate()), return_dtype=pl.String
+            )
+        )
+        # TODO: should do some filtering and transformation here
+        # so that the model only embeds stuff with ORF
+
+        torch.set_default_dtype(torch.float32)
+        os.environ["HF_HOME"] = huggingface
+        get_hidden: bool = hidden_layer is not None
+        if model == "esm3-open":
+            from esm.models.esm3 import ESM3
+            from esm.sdk.api import ESM3InferenceClient, LogitsConfig
+
+            lconf = LogitsConfig(
+                return_embeddings=not get_hidden, return_hidden_states=get_hidden
+            )
+            client: ESM3InferenceClient = ESM3.from_pretrained(model, device=device)
+            to_get = "hidden_states" if hidden_layer is not None else "embeddings"
+
+            edict = {}
+            for prot in df[text_key].unique():
+                encoded = client.encode(prot)
+                logits = client.logits(encoded, lconf)
+                target: Tensor = getattr(logits, to_get)
+                if pooling == "cls":
+                    embedding = target[0, 0, :]
+                elif pooling == "mean":
+                    embedding = target[hidden_layer, 0, 1:-1, :].mean(dim=0)
+                edict[prot] = embedding
+
+        elif model in {"esmc_600m", "esmc_300m"}:
+            key = {
+                "esmc_600m": "ESMplusplus_large",
+                "esmc_300m": "ESMplusplus_small",
+            }[model]
+            m: AutoModelForMaskedLM = AutoModelForMaskedLM.from_pretrained(
+                key, trust_remote_code=True
+            )
+            m.to(device)
+            if not get_hidden:
+                edict = m.embed_dataset(
+                    tokenizer=m.tokenizer,
+                    sequences=df[text_key],
+                    batch_size=batch_size,
+                    max_len=max_len,
+                    pooling_types=[pooling],
+                    save=False,
+                )
+            else:
+                edict = {}
+                for prot in df[text_key].unique():
+                    tokenized = m.tokenizer(prot, padding=False, return_tensors="pt")
+                    output = m(**tokenized, output_hidden_states=True)
+                    if pooling == "cls":
+                        edict[prot] = output[hidden_layer][0, 0, :]
+                    elif pooling == "mean":
+                        edict[prot] = output[hidden_layer][0, 1:-1, :].mean(dim=0)
+        else:
+            raise ValueError(f"esm model {model} not supported")
+
+        def gen():
+            for row in df.iter_rows(named=True):
+                embedding = edict[row.pop(text_key)]
+                yield dict(embedding=embedding, **row)
+
+        result: Dataset = Dataset.from_generator(gen)
+        result = result.with_format("torch")
+        return result
 
     def _evo2_embed(
         self,

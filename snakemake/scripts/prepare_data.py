@@ -228,7 +228,7 @@ def format_bakta(
 # * Generate metadata
 if smk.rule == "get_seq_metadata":
     dfs = []
-    seq_meta = smk.config["seq_metadata"]
+    seq_meta = CONFIG["seq_metadata"]
     rename_kws = seq_meta["renaming_rules"]
     if seq_meta.get("hamronization"):
         dfs.append(format_hamronization(seq_meta["hamronization"], **rename_kws))
@@ -246,11 +246,13 @@ if smk.rule == "get_seq_metadata":
 
 # * Make text datasets
 elif smk.rule == "make_text_datasets":
-    embedding_method: EMBEDDING_METHODS = smk.config.get("embedding", {}).get("method")
+    embedding_method: EMBEDDING_METHODS = CONFIG["embedding"]
     if embedding_method == "seqLens":
         max_length = 512
     elif embedding_method == "Evo2":
         max_length = 1800
+    elif embedding_method == "esm":
+        max_length = None  # TODO: find max length
     for name, kws in smk.params["preprocessing"].items():
         savepath = Path(f"{smk.params['outdir']}/{name}")
         if (method := kws.pop("method", None)) in get_args(EMBEDDING_METHODS):
@@ -278,8 +280,8 @@ elif smk.rule == "make_text_datasets":
                 )
             sem = SeqEmbedder(
                 method=method,
-                id_col=smk.config["sample_metadata"]["id_col"],
-                metadata=smk.config["sample_metadata"]["file"],
+                id_col=CONFIG["sample_metadata"]["id_col"],
+                metadata=CONFIG["sample_metadata"]["file"],
                 **kws,
             )
             dataset = sem(None)
@@ -293,7 +295,7 @@ elif smk.rule == "make_text_datasets":
             SeqDataset.save_from_fastas(
                 fastas=CONFIG["genomes"],
                 savepath=savepath,
-                id_col=smk.config["sample_metadata"]["id_col"],
+                id_col=CONFIG["sample_metadata"]["id_col"],
                 annotations=anno,
                 seq_metadata=smk.input[0],
                 max_length=max_length,
@@ -301,8 +303,9 @@ elif smk.rule == "make_text_datasets":
             )
 # * Embed
 elif smk.rule == "make_embedded_datasets":
-    method: str = smk.config["embedding"]["method"]
-    kws: dict = {}
+    method: EMBEDDING_METHODS = CONFIG["embedding"]
+    params: dict = CONFIG["embedding_methods"][method]
+    kws: dict = params.copy()
     for seq_ds in smk.input:
         inpath = Path(seq_ds)
         if inpath.stem in smk.params["ignore"]:
@@ -313,18 +316,12 @@ elif smk.rule == "make_embedded_datasets":
             workdir.mkdir(exist_ok=True)
             kws.update(
                 {
-                    "runscript": smk.config["evo2_runscript"],
+                    "runscript": CONFIG["evo2_runscript"],
                     "workdir": workdir,
-                    "batch_size": smk.config["embedding"].get("batch_size", 10),
                 }
             )
-        elif method == "seqLens":
-            kws.update(
-                {
-                    "huggingface": CONFIG["huggingface"],
-                    "pooling": CONFIG["embedding"].get("pooling", "mean"),
-                }
-            )
+        elif method == "seqLens" or method == "esm":
+            kws["huggingface"] = CONFIG["huggingface"]
         if not savepath.exists():
             logger.info(f"Embedding dataset `{inpath.stem}` started")
             dset = SeqDataset(
@@ -353,8 +350,8 @@ elif smk.rule == "pool_embeddings":
                 logger.info(f"Pooling for {inpath.stem} with method `{method}` started")
                 sp: StaticPooler = StaticPooler(
                     method=method,
-                    sample_metadata=smk.config["sample_metadata"]["file"],
-                    sample_metadata_key=smk.config["sample_metadata"]["id_col"],
+                    sample_metadata=CONFIG["sample_metadata"]["file"],
+                    sample_metadata_key=CONFIG["sample_metadata"]["id_col"],
                     **spec_kws,
                 )
                 pooled = sp(inpath)
