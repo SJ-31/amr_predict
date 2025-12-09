@@ -31,6 +31,8 @@ if TEST:
     del config["preprocessing"]["feature_presence_bakta"]
 
 PREPROCESSING = config["preprocessing"]
+
+
 DATA_OUTS = {
     k: f"{REMOTE}/{DATE}/datasets/{s}"
     for k, s in zip(
@@ -45,6 +47,18 @@ DATA_OUTS = {
 pooling_methods = [
     d.get("name", d["method"]) for d in config["pool_embeddings"]["methods"]
 ]
+if config["embedding"] == "esm":
+    tmp = {}
+    # Only use esm for pure ORFs
+    for k, v in PREPROCESSING.items():
+        if (v.get("method") in get_args(EMBEDDING_METHODS)) or (
+            v.get("split_method") == "bakta"
+            and v.get("utr_amount") is None
+            and v.get("upstream_context") is None
+            and v.get("downstream_context") is None
+        ):
+            tmp[k] = v
+    PREPROCESSING = tmp
 
 PLOT_OUT = f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation"
 
