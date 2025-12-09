@@ -262,7 +262,7 @@ elif smk.rule == "make_text_datasets":
             if method == "kmer":
                 kws.update({"fastas": Path(CONFIG["genomes"])})
             elif method == "feature_presence":
-                if source := kws.pop("source", "bakta") == "bakta":
+                if (source := kws.pop("source", "bakta")) == "bakta":
                     anno = Path(CONFIG["seq_metadata"]["bakta"])
                     feature_cols = ["Gene", "Product"]
                 elif source == "hamr":
