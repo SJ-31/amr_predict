@@ -263,17 +263,51 @@ class SeqEmbedder:
         pooling: Literal["cls", "mean"] = "mean",
         hidden_layer: int | None = None,
         batch_size=5,
+        degenerate_handling: Literal["ignore", "random", "error"] = "random",
     ) -> Dataset:
+        """Embed nucleotide sequences with an esm model after translating into protein
+
+        Parameters
+        ----------
+        degenerate_handling : str
+            How to handle degenerate bases in the nucleotide sequence during translation
+            - random: expand all possible degenerates and take the first option.
+                This is random because there is no guaranteed order to skbio.DNA.expand_degenerates
+            - ignore: do not embed sequence
+            - error: raise an error
+            For "random", degenerate sequences are indicated in the new "dna_degenerate" column
+
+        pooling : str
+            How to pool per-residue embeddings
+
+        hidden_layer : int | None
+            If not None, the index of the hidden layer of the esm model to take as an embedding
+            Otherwise, the key "embedding" is taken
+        """
         device = "cuda" if torch.cuda.is_available() else "cpu"
         edict: dict[str, Tensor]
-        df: pl.DataFrame = dset.to_polars().with_columns(
-            pl.col(text_key).map_elements(
-                lambda x: str(DNA(x).translate()), return_dtype=pl.String
-            )
-        )
-        # TODO: should do some filtering and transformation here
-        # so that the model only embeds stuff with ORF
 
+        def translate(seq) -> dict:
+            dna: DNA = DNA(seq)
+            degenerate = False
+            if dna.has_degenerates():
+                degenerate = True
+                if degenerate_handling == "error":
+                    raise ValueError(
+                        f"cannot translate degenerate bases in sequence `{seq}`"
+                    )
+                elif degenerate_handling == "ignore":
+                    translated = None
+                translated = next(dna.expand_degenerates())
+            else:
+                translated = dna.translate()
+            return {text_key: translated, "dna_degenerate": degenerate}
+
+        df: pl.DataFrame = dset.to_polars().with_columns(
+            pl.col(text_key)
+            .map_elements(translate, return_dtype=pl.Struct)
+            .struct.unnest()
+        )
         torch.set_default_dtype(torch.float32)
         os.environ["HF_HOME"] = huggingface
         get_hidden: bool = hidden_layer is not None
