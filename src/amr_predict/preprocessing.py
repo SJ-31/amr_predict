@@ -14,15 +14,15 @@ from typing import Callable, Literal, TypeAlias
 import numpy as np
 import polars as pl
 import polars.selectors as cs
+import skbio
 import torch
 from amr_predict.utils import add_intergenic, join_within, read_tabular, split_features
-from Bio import SeqIO
-from Bio.SeqRecord import SeqRecord
 from datasets import concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
 from polars.exceptions import ComputeError, NoDataError
+from skbio import DNA
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
 from transformers.modeling_outputs import MaskedLMOutput
@@ -525,13 +525,13 @@ class SeqPreprocessor:
             s for s in seq_path.iterdir() if s.suffix in accepted_suffixes
         ]
 
-    def _sample_dict(self, sample, record, **kwargs) -> dict:
+    def _sample_dict(self, sample, record: DNA, **kwargs) -> dict:
         """Boilerplate to create sequence entry for generator"""
         val = {
             "sample": sample,
-            "seqid": record.id,
-            "sequence": str(record.seq),
-            "description": record.description,
+            "seqid": record.metadata["id"],
+            "sequence": str(record),
+            "description": record.metadata["description"],
         }
         val.update(kwargs)
         return val
@@ -539,7 +539,7 @@ class SeqPreprocessor:
     def _process_record(
         self,
         sample: str,
-        record: SeqRecord,
+        record: DNA,
         anno: pl.DataFrame | None = None,
     ) -> list[dict]:
         """Generate a list of sequence dicts from a single fasta record, splitting
@@ -569,7 +569,7 @@ class SeqPreprocessor:
                 acc += self.max_length
                 i += 1
         elif self.split_method == "bakta":
-            filtered = anno.filter(pl.col("#Sequence Id") == record.id)
+            filtered = anno.filter(pl.col("#Sequence Id") == record.metadata["id"])
             if not filtered.is_empty():
                 split_by_length = split_features(
                     filtered,
@@ -611,8 +611,8 @@ class SeqPreprocessor:
         return vals
 
     def _get_subsequence(
-        self, record: SeqRecord, row: dict, start: str = "Start", stop: str = "Stop"
-    ) -> tuple[SeqRecord, tuple[int, int]]:
+        self, record: DNA, row: dict, start: str = "Start", stop: str = "Stop"
+    ) -> tuple[DNA, tuple[int, int]]:
         start_idx, stop_idx = row[start], row[stop]
         # Get widths of actual downstream, upstream sequences for percentage-based
         # widening. Overriden if widening dowstream, upstream by flat number of bases
@@ -664,7 +664,7 @@ class SeqPreprocessor:
             else:
                 anno = None
             if anno is not None or self.split_method != "bakta":
-                for record in SeqIO.parse(fasta, "fasta"):
+                for record in skbio.io.read(fasta, "fasta", constructor=DNA):
                     for s in self._process_record(sample=id, record=record, anno=anno):
                         yield s
 

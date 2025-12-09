@@ -17,7 +17,7 @@ dependencies = [
   "loguru",
   "transformers",
   "datasets",
-  "biopython",
+  "scikit-bio",
   "anndata",
   "fastcluster",
   "scanpy",

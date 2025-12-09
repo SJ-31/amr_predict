@@ -10,9 +10,9 @@ from typing import Literal, TypeAlias
 import anndata as ad
 import numpy as np
 import polars as pl
+import skbio as sb
 import torch
 import torch.utils.data as td
-from Bio.SeqRecord import SeqRecord
 from datasets import DatasetDict, Value
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
@@ -184,7 +184,7 @@ def discretize_resistance(
 
 
 def add_intergenic(
-    record: SeqRecord,
+    record: sb.Sequence,
     df: pl.DataFrame,
     start_col: str = "Start",
     stop_col: str = "Stop",
@@ -199,8 +199,8 @@ def add_intergenic(
 
     Parameters
     ----------
-    record : SeqRecord
-        BioPython sequence record describing a CONTIG (not a gene sequence)
+    record : Sequence
+        skbio sequence describing a CONTIG (not a gene sequence)
     start_col : str
         Column denoting feature start
     stop_col : str
