@@ -259,6 +259,7 @@ class SeqEmbedder:
         dset: Dataset,
         huggingface: str,
         text_key: str = "sequence",
+        workdir: Path | None = None,
         model: Literal["esm3-open", "esmc_600m", "esmc_300m"] = "esmc_600m",
         pooling: Literal["cls", "mean"] = "mean",
         hidden_layer: int | None = None,
@@ -286,6 +287,7 @@ class SeqEmbedder:
         """
         device = "cuda" if torch.cuda.is_available() else "cpu"
         edict: dict[str, Tensor]
+        tkey = f"{text_key}_aa"
 
         def translate(seq) -> dict:
             dna: DNA = DNA(seq)
@@ -298,16 +300,14 @@ class SeqEmbedder:
                     )
                 elif degenerate_handling == "ignore":
                     translated = None
-                translated = next(dna.expand_degenerates())
+                translated = next(dna.expand_degenerates()).translate()
             else:
                 translated = dna.translate()
-            return {text_key: translated, "dna_degenerate": degenerate}
+            return {tkey: str(translated), "dna_degenerate": degenerate}
 
-        df: pl.DataFrame = dset.to_polars().with_columns(
-            pl.col(text_key)
-            .map_elements(translate, return_dtype=pl.Struct)
-            .struct.unnest()
-        )
+        df: pl.DataFrame = dset.to_polars()
+        df = df.with_columns(pl.Series(map(translate, df[text_key])).struct.unnest())
+
         torch.set_default_dtype(torch.float32)
         os.environ["HF_HOME"] = huggingface
         get_hidden: bool = hidden_layer is not None
@@ -322,7 +322,7 @@ class SeqEmbedder:
             to_get = "hidden_states" if hidden_layer is not None else "embeddings"
 
             edict = {}
-            for prot in df[text_key].unique():
+            for prot in df[tkey].unique():
                 encoded = client.encode(prot)
                 logits = client.logits(encoded, lconf)
                 target: Tensor = getattr(logits, to_get)
@@ -364,7 +364,7 @@ class SeqEmbedder:
 
         def gen():
             for row in df.iter_rows(named=True):
-                embedding = edict[row.pop(text_key)]
+                embedding = edict[row.pop(tkey)]
                 yield dict(embedding=embedding, **row)
 
         result: Dataset = Dataset.from_generator(gen)
