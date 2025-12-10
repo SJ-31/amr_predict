@@ -4,8 +4,9 @@ from __future__ import annotations
 import json
 import math
 import os
+import uuid
 from collections.abc import Sequence
-from itertools import batched
+from math import ceil
 from pathlib import Path
 from subprocess import run
 from tempfile import TemporaryDirectory
@@ -16,7 +17,14 @@ import polars as pl
 import polars.selectors as cs
 import skbio
 import torch
-from amr_predict.utils import add_intergenic, join_within, read_tabular, split_features
+from amr_predict.utils import (
+    EmbeddingCache,
+    add_intergenic,
+    gen_from_cached,
+    join_within,
+    read_tabular,
+    split_features,
+)
 from datasets import concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
@@ -40,10 +48,17 @@ class SeqEmbedder:
     def __init__(
         self,
         method: EMBEDDING_METHODS = "seqLens",
+        workdir: Path | None = None,
         **kwargs,
     ):
         self.method: EMBEDDING_METHODS = method
         self.kwargs: dict = kwargs
+        if workdir is None:
+            name = f"{method}-work_{uuid.uuid4().hex}"
+            self.workdir = Path().cwd().joinpath(name)
+            self.workdir.mkdir()
+        else:
+            self.workdir = workdir
 
     def __call__(self, dataset: Dataset | None) -> Dataset:
         if self.method not in {"kmer", "feature_presence"} and dataset is None:
@@ -259,7 +274,6 @@ class SeqEmbedder:
         dset: Dataset,
         huggingface: str,
         text_key: str = "sequence",
-        workdir: Path | None = None,
         model: Literal["esm3-open", "esmc_600m", "esmc_300m"] = "esmc_600m",
         pooling: Literal["cls", "mean"] = "mean",
         hidden_layer: int | None = None,
@@ -286,7 +300,6 @@ class SeqEmbedder:
             Otherwise, the key "embedding" is taken
         """
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        edict: dict[str, Tensor]
         tkey = f"{text_key}_aa"
 
         def translate(seq) -> dict:
@@ -311,6 +324,8 @@ class SeqEmbedder:
         torch.set_default_dtype(torch.float32)
         os.environ["HF_HOME"] = huggingface
         get_hidden: bool = hidden_layer is not None
+        cache: EmbeddingCache = EmbeddingCache(self.workdir)
+
         if model == "esm3-open":
             from esm.models.esm3 import ESM3
             from esm.sdk.api import ESM3InferenceClient, LogitsConfig
@@ -321,17 +336,20 @@ class SeqEmbedder:
             client: ESM3InferenceClient = ESM3.from_pretrained(model, device=device)
             to_get = "hidden_states" if hidden_layer is not None else "embeddings"
 
-            edict = {}
-            for prot in df[tkey].unique():
-                encoded = client.encode(prot)
-                logits = client.logits(encoded, lconf)
-                target: Tensor = getattr(logits, to_get)
-                if pooling == "cls":
-                    embedding = target[0, 0, :]
-                elif pooling == "mean":
-                    embedding = target[hidden_layer, 0, 1:-1, :].mean(dim=0)
-                edict[prot] = embedding
+            def esm3(proteins):
+                edict = {}
+                for prot in proteins:
+                    encoded = client.encode(prot)
+                    logits = client.logits(encoded, lconf)
+                    target: Tensor = getattr(logits, to_get)
+                    if pooling == "cls":
+                        embedding = target[0, 0, :]
+                    elif pooling == "mean":
+                        embedding = target[hidden_layer, 0, 1:-1, :].mean(dim=0)
+                    edict[prot] = embedding
+                return edict
 
+            cache.save(df[tkey], fn=esm3, batch_size=batch_size)
         elif model in {"esmc_600m", "esmc_300m"}:
             key = {
                 "esmc_600m": "Synthyra/ESMplusplus_large",
@@ -341,33 +359,41 @@ class SeqEmbedder:
                 key, trust_remote_code=True
             )
             m.to(device)
-            if not get_hidden:
-                edict = m.embed_dataset(
-                    tokenizer=m.tokenizer,
-                    sequences=df[text_key],
-                    batch_size=batch_size,
-                    max_len=2048,
-                    pooling_types=[pooling],
-                    save=False,
-                )
-            else:
-                edict = {}
-                for prot in df[text_key].unique():
-                    tokenized = m.tokenizer(prot, padding=False, return_tensors="pt")
-                    output = m(**tokenized, output_hidden_states=True)
-                    if pooling == "cls":
-                        edict[prot] = output[hidden_layer][0, 0, :]
-                    elif pooling == "mean":
-                        edict[prot] = output[hidden_layer][0, 1:-1, :].mean(dim=0)
+
+            def esmc(proteins):
+                if not get_hidden:
+                    edict = m.embed_dataset(
+                        tokenizer=m.tokenizer,
+                        sequences=proteins,
+                        batch_size=batch_size,
+                        max_len=2048,
+                        pooling_types=[pooling],
+                        save=False,
+                    )
+                else:
+                    edict = {}
+                    for prot in proteins:
+                        tokenized = m.tokenizer(
+                            prot, padding=False, return_tensors="pt"
+                        )
+                        output = m(**tokenized, output_hidden_states=True)
+                        if pooling == "cls":
+                            edict[prot] = output[hidden_layer][0, 0, :]
+                        elif pooling == "mean":
+                            edict[prot] = output[hidden_layer][0, 1:-1, :].mean(dim=0)
+                return edict
+
+            cache.save(
+                df[tkey],
+                fn=esmc,
+                batch_size=ceil(df.shape[0] / 5) if not get_hidden else batch_size,
+                # Use fast batching from huggingface
+            )
         else:
             raise ValueError(f"esm model {model} not supported")
 
-        def gen():
-            for row in df.iter_rows(named=True):
-                embedding = edict[row.pop(tkey)]
-                yield dict(embedding=embedding, **row)
-
-        result: Dataset = Dataset.from_generator(gen)
+        gen = gen_from_cached(df, tkey, cache)
+        result: Dataset = Dataset.from_generator(gen).remove_columns(text_key)
         result = result.with_format("torch")
         return result
 
@@ -509,63 +535,71 @@ class SeqEmbedder:
         model = AutoModelForMaskedLM.from_pretrained(model_key)
         model.to(device)
         model.config.output_hidden_states = True
-        to_keep = {"uid", "label"}
-        dset = dset.add_column("uid", list(range(len(dset))))
-        to_remove = [c for c in dset.column_names if c not in to_keep]
-        tokenized = dset.map(
-            lambda x: self._tokenize(
-                x, tokenizer=tokenizer, text_key=text_key, max_length=512
-            ),
-            batched=True,
-            remove_columns=to_remove,
-        )
-        dset = dset.remove_columns(text_key)
+        dataset = dset.add_column("uid", list(range(len(dset))))
+        df: pl.DataFrame = dataset.to_polars()
+        cache: EmbeddingCache = EmbeddingCache(self.workdir)
+        to_remove = [c for c in dset.column_names if c != "uid"]
+
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
-        # TODO: is there any reason to change this from the default?
-        loader = DataLoader(tokenized, batch_size=batch_size, collate_fn=data_collator)
 
-        def gen():
-            with torch.no_grad():
-                for batch in loader:
-                    input_ids = batch["input_ids"].to(device)
-                    attention_mask = batch["attention_mask"].to(device)
-                    output: MaskedLMOutput = model(
-                        input_ids=input_ids, attention_mask=attention_mask
+        def seqlens(sequences) -> dict:
+            current = dataset.filter(lambda x: x[text_key] in sequences)
+            tokenized = current.map(
+                lambda x: self._tokenize(
+                    x, tokenizer=tokenizer, text_key=text_key, max_length=512
+                ),
+                batched=True,
+                remove_columns=to_remove,
+            )
+            uid2seq = dict(zip(current["uid"][:], current[text_key][:]))
+
+            loader = DataLoader(
+                tokenized, batch_size=batch_size, collate_fn=data_collator
+            )
+            result: dict = {}
+            for batch in loader:
+                input_ids = batch["input_ids"].to(device)
+                attention_mask = batch["attention_mask"].to(device)
+                output: MaskedLMOutput = model(
+                    input_ids=input_ids, attention_mask=attention_mask
+                )
+                last_hidden = output.hidden_states[-1]
+                # This has shape (batch_size, sequence_length, hidden_size)
+                # Mask out padding
+                expanded_mask = attention_mask.unsqueeze(-1).expand_as(last_hidden)
+                hidden_masked = last_hidden * expanded_mask
+                if pooling == "max":
+                    embedding = hidden_masked.max(dim=1).values
+                elif pooling == "cls":
+                    embedding = hidden_masked[:, 0, :]
+                elif pooling == "mean":
+                    sum_features = hidden_masked.sum(dim=1)
+                    non_padding_count = expanded_mask.sum(dim=1).clamp(
+                        min=1
+                    )  # Clamp min to 1 to avoid division by zero
+                    embedding = sum_features / non_padding_count
+                elif pooling == "concat":
+                    sum_features = hidden_masked.sum(dim=1)
+                    non_padding_count = expanded_mask.sum(dim=1).clamp(min=1)
+                    embedding = torch.cat(
+                        [
+                            hidden_masked[:, 0, :],  # CLS
+                            hidden_masked.max(dim=1).values,  # Max
+                            sum_features / non_padding_count,  # Mean
+                        ],
+                        dim=1,
                     )
-                    last_hidden = output.hidden_states[-1]
-                    # This has shape (batch_size, sequence_length, hidden_size)
-                    # Mask out padding
-                    expanded_mask = attention_mask.unsqueeze(-1).expand_as(last_hidden)
-                    hidden_masked = last_hidden * expanded_mask
-                    if pooling == "max":
-                        embedding = hidden_masked.max(dim=1).values
-                    elif pooling == "cls":
-                        embedding = hidden_masked[:, 0, :]
-                    elif pooling == "mean":
-                        sum_features = hidden_masked.sum(dim=1)
-                        non_padding_count = expanded_mask.sum(dim=1).clamp(
-                            min=1
-                        )  # Clamp min to 1 to avoid division by zero
-                        embedding = sum_features / non_padding_count
-                    elif pooling == "concat":
-                        sum_features = hidden_masked.sum(dim=1)
-                        non_padding_count = expanded_mask.sum(dim=1).clamp(min=1)
-                        embedding = torch.cat(
-                            [
-                                hidden_masked[:, 0, :],  # CLS
-                                hidden_masked.max(dim=1).values,  # Max
-                                sum_features / non_padding_count,  # Mean
-                            ],
-                            dim=1,
-                        )
-                    for e, uid in zip(
-                        torch.unbind(embedding, axis=0), torch.unbind(batch["uid"])
-                    ):
-                        yield {"embedding": e, "uid": uid}
+                for e, uid in zip(
+                    torch.unbind(embedding, axis=0), torch.unbind(batch["uid"])
+                ):
+                    result[uid2seq[uid.cpu().item()]] = e.cpu()
+            return result
 
+        with torch.no_grad():
+            cache.save(df[text_key], fn=seqlens, batch_size=ceil(df.shape[0] / 5))
+        gen = gen_from_cached(cache=cache, key=text_key, df=df)
         result: Dataset = Dataset.from_generator(gen)
-        result = result.with_format("torch").sort("uid").remove_columns("uid")
-        result = concatenate_datasets([result, dset.sort("uid")], axis=1)
+        result = result.with_format("torch")
         return result
 
     @staticmethod
