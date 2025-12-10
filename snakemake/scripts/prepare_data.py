@@ -311,15 +311,10 @@ elif smk.rule == "make_embedded_datasets":
         if inpath.stem in smk.params["ignore"]:
             continue
         savepath = Path(smk.params["outdir"]) / inpath.stem
+        workdir = Path(f"{smk.params['outdir']}") / f".{inpath.stem}_{method}_cache"
+        workdir.mkdir(exist_ok=True)
         if method == "Evo2":
-            workdir = Path(f"{smk.params['outdir']}") / f".{inpath.stem}_evo2_cache"
-            workdir.mkdir(exist_ok=True)
-            kws.update(
-                {
-                    "runscript": CONFIG["evo2_runscript"],
-                    "workdir": workdir,
-                }
-            )
+            kws["runscript"] = CONFIG["evo2_runscript"]
         elif method == "seqLens" or method == "esm":
             kws["huggingface"] = CONFIG["huggingface"]
         if not savepath.exists():
@@ -328,6 +323,7 @@ elif smk.rule == "make_embedded_datasets":
                 inpath,
                 embedder=SeqEmbedder(
                     method=method,
+                    workdir=workdir,
                     text_key="sequence",
                     **kws,
                 ),
