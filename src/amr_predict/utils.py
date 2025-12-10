@@ -1,11 +1,12 @@
 #!/usr/bin/env ipython
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import reduce
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import anndata as ad
 import numpy as np
@@ -19,7 +20,6 @@ from datasets.load import load_from_disk
 from loguru import logger
 from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
-from torch.utils.data import DataLoader
 
 CACHE_OPTIONS: TypeAlias = Literal["train_loss", "val_acc", "val_loss", "train_acc"]
 PP_METHODS: TypeAlias = Literal["variance"]
@@ -548,3 +548,101 @@ class Preprocessor:
     def fit_transform(self, dataset: Dataset) -> Dataset:
         self.fit(dataset)
         return self.transform(dataset)
+
+
+class EmbeddingCache:
+    """Cache for batched text embeddings
+
+    Can be used like a dictionary
+    EX: cache = EmbeddingCache(".cache")
+        cache["ATCGACTA"] = [3, 9, 1, ...]
+
+    TODO: this works, but you should be able to do better if you get a on-disk
+    database to avoid having to store the tensor object
+    """
+
+    __slots__ = ["_storage", "_prefix", "_dir", "_seen", "_lookup", "_count"]
+
+    def _read_saved(self, df: pl.DataFrame, init: bool = False) -> None:
+        start = self._storage.shape[0]
+        end = start + df.shape[0]
+        if len(df["key"].unique()) != df.shape[0]:
+            logger.warning("duplicae keys detected in dataframe")
+            df = df.unique("key")
+        from_df = dict(zip(df["key"], range(start, end)))
+        values: Tensor = df.drop("key").to_torch()
+        if init:
+            self._storage = values
+        else:
+            self._storage = torch.vstack([self._storage, values])
+        self._lookup.update(from_df)
+
+    def __init__(self, dir: Path, prefix: str = "batch") -> None:
+        self._dir = dir
+        self._prefix = prefix
+        self._lookup: dict = {}
+        self._seen: set = set()
+        self._storage: Tensor = torch.tensor([])
+        for i, file in enumerate(self._dir.glob(f"{self._prefix}*.parquet")):
+            df = pl.read_parquet(file)
+            self._seen.add(file)
+            self._read_saved(df, init=i == 0)
+        self._count: int = len(self._lookup)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._lookup
+
+    def __getitem__(self, key: str) -> Tensor:
+        idx = self._lookup[key]
+        return self._storage[idx, :]
+
+    def values(self):
+        return self._lookup.values()
+
+    def keys(self):
+        return self._lookup.keys()
+
+    def __len__(self) -> int:
+        return len(self._lookup)
+
+    def save(
+        self,
+        to_embed: Sequence,
+        fn: Callable[[Any], dict[str, Tensor]],
+        batch_size: int = 50,
+    ) -> None:
+        """Embed all unique sequences in `to_embed`
+
+        The embeddings can later be accessed by indexing the class instance like a dictionary
+
+        Parameters
+        ----------
+        fn : Callable
+            A function that takes a sequence of text and returns a
+            dictionary mapping texts to their embeddings
+
+        """
+        as_set = set(to_embed)
+        n_old = len(as_set & self._lookup.keys())
+        if n_old:
+            logger.info(f"{n_old} found in cache")
+        to_embed = as_set - self._lookup.keys()
+        logger.info(f"Embedding {len(to_embed)} new strings")
+        for batch in itertools.batched(set(to_embed), n=batch_size):
+            self._count += 1
+            save_path = self._dir.joinpath(f"{self._prefix}_{self._count}.parquet")
+            assert not save_path.exists()
+            embedded: dict = fn(batch)
+            keys, values = zip(*embedded.items())
+            grouped = torch.vstack(values)
+            if grouped.shape[0] != len(embedded):
+                raise ValueError("Embedding vectors must be 1D")
+            df = pl.DataFrame(grouped).with_columns(key=pl.Series(keys))
+            n_cached = self._storage.shape[0]
+            indices = range(n_cached, n_cached + len(keys))
+            if n_cached:
+                self._storage = torch.vstack([self._storage, grouped])
+            else:
+                self._storage = grouped
+            self._lookup.update(dict(zip(keys, indices)))
+            df.write_parquet(save_path)
