@@ -2,12 +2,9 @@
 
 from string import ascii_letters
 
-import pytest
 import torch
 from amr_predict.utils import EmbeddingCache
 from loguru import logger
-from pyhere import here
-from torch import Tensor
 
 logger.enable("amr_predict")
 

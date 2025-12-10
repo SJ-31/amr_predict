@@ -646,3 +646,31 @@ class EmbeddingCache:
                 self._storage = grouped
             self._lookup.update(dict(zip(keys, indices)))
             df.write_parquet(save_path)
+
+
+def gen_from_cached(
+    df: pl.DataFrame, key: str, cache: EmbeddingCache, keep: bool = False
+):
+    """Return a generator function to produce a huggingface dataset
+
+    Parameters
+    ----------
+    df : DataFrame
+        Polars dataframe containing the query values that were embedded, as well as other
+        metadata
+    key : str
+        Column of `df` containing the query values
+
+    If `keep`, then the column containing the input to the embedding will be kept in
+    the dataset
+    """
+
+    def f():
+        for row in df.iter_rows(named=True):
+            if keep:
+                embedding = cache[row[key]]
+            else:
+                embedding = cache[row.pop(key)]
+            yield dict(embedding=embedding, **row)
+
+    return f
