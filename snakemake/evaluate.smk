@@ -24,6 +24,7 @@ if TEST:
     # config["tasks"]["classification"] = ["IPM_class", "GEN_class"]
     config["cross_validate"]["k_fold"]["n_splits"] = 2
     config["cross_validate"]["models"] = ["baseline", "mlp"]
+    config["dataloader"]["batch_size"] = 20
     config["holdout"]["models"] = ["baseline", "mlp"]
     config["holdout"]["splits"] = None
     # config["holdout"]["splits"] = {

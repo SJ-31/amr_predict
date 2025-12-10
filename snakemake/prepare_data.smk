@@ -24,7 +24,7 @@ if TEST:
         "file"
     ] = f"{config["data"]["meta"]}/combined_sample_meta.tsv"
     config["sample_metadata"]["id_col"] = "sample"
-    to_keep = [[a, f"{a}_class"] for a in ["AMK", "GEN", "IPM", "CRO"]]
+    to_keep = [[a, f"{a}_class"] for a in ["imipenem", "amikacin", "gentamicin"]]
     config["pool_embeddings"].update(
         {"obs_keep": [el for sublist in to_keep for el in sublist]}
     )
