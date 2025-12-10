@@ -334,8 +334,8 @@ class SeqEmbedder:
 
         elif model in {"esmc_600m", "esmc_300m"}:
             key = {
-                "esmc_600m": "ESMplusplus_large",
-                "esmc_300m": "ESMplusplus_small",
+                "esmc_600m": "Synthyra/ESMplusplus_large",
+                "esmc_300m": "Synthyra/ESMplusplus_small",
             }[model]
             m: AutoModelForMaskedLM = AutoModelForMaskedLM.from_pretrained(
                 key, trust_remote_code=True
