@@ -14,7 +14,7 @@ import polars as pl
 import skbio as sb
 import torch
 import torch.utils.data as td
-from datasets import DatasetDict, Value
+from datasets import DatasetDict, Features, Value
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
@@ -649,7 +649,11 @@ class EmbeddingCache:
 
 
 def gen_from_cached(
-    df: pl.DataFrame, key: str, cache: EmbeddingCache, keep: bool = False
+    df: pl.DataFrame,
+    key: str,
+    cache: EmbeddingCache,
+    keep: bool = False,
+    drop_null_columns: bool = False,
 ):
     """Return a generator function to produce a huggingface dataset
 
@@ -664,6 +668,8 @@ def gen_from_cached(
     If `keep`, then the column containing the input to the embedding will be kept in
     the dataset
     """
+    if drop_null_columns:
+        df = df[[s.name for s in df if not (s.null_count() == df.height)]]
 
     def f():
         for row in df.iter_rows(named=True):
@@ -671,6 +677,14 @@ def gen_from_cached(
                 embedding = cache[row[key]]
             else:
                 embedding = cache[row.pop(key)]
-            yield dict(embedding=embedding, **row)
+            give = dict(embedding=embedding, **row)
+            yield give
 
     return f
+
+
+def features_from_df(df: pl.DataFrame) -> Features:
+    return Dataset.from_polars(df).features  # REVIEW: this seems expensive, is there
+
+
+# a way to do it from the df schema?

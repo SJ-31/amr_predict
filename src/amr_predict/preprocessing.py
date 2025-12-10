@@ -20,6 +20,7 @@ import torch
 from amr_predict.utils import (
     EmbeddingCache,
     add_intergenic,
+    features_from_df,
     gen_from_cached,
     join_within,
     read_tabular,
@@ -392,8 +393,10 @@ class SeqEmbedder:
         else:
             raise ValueError(f"esm model {model} not supported")
 
-        gen = gen_from_cached(df, tkey, cache)
-        result: Dataset = Dataset.from_generator(gen).remove_columns(text_key)
+        gen = gen_from_cached(df, tkey, cache, drop_null_columns=True)
+        result: Dataset = Dataset.from_generator(
+            gen, features=features_from_df(df)
+        ).remove_columns(text_key)
         result = result.with_format("torch")
         return result
 
@@ -597,8 +600,9 @@ class SeqEmbedder:
 
         with torch.no_grad():
             cache.save(df[text_key], fn=seqlens, batch_size=ceil(df.shape[0] / 5))
-        gen = gen_from_cached(cache=cache, key=text_key, df=df)
-        result: Dataset = Dataset.from_generator(gen)
+        df = df.drop("uid")
+        gen = gen_from_cached(cache=cache, key=text_key, df=df, drop_null_columns=True)
+        result: Dataset = Dataset.from_generator(gen, features=features_from_df(df))
         result = result.with_format("torch")
         return result
 
