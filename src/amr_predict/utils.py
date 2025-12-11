@@ -684,7 +684,36 @@ def gen_from_cached(
 
 
 def features_from_df(df: pl.DataFrame) -> Features:
-    return Dataset.from_polars(df).features  # REVIEW: this seems expensive, is there
+    from pyarrow import schema
+
+    return Features.from_arrow_schema(schema(df.schema))
 
 
-# a way to do it from the df schema?
+def torch2hf(dtype: torch.dtype | Sequence[torch.dtype]) -> Value | list[Value]:
+    # Valid v2.9.1
+    mapping: dict = {
+        torch.bool: "bool",
+        torch.int8: "int8",
+        torch.uint8: "uint8",
+        torch.int16: "int16",  # alias: torch.short
+        torch.uint16: "uint16",
+        torch.int32: "int32",  # alias: torch.int
+        torch.uint32: "uint32",
+        torch.int64: "int64",  # alias: torch.long
+        torch.uint64: "uint64",
+        torch.float16: "float16",  # alias: torch.half
+        torch.float32: "float32",  # alias: torch.float
+        torch.float64: "float64",  # alias: torch.double
+    }
+    if isinstance(dtype, Sequence):
+        converted = []
+        for tp in dtype:
+            try:
+                converted.append(Value(mapping[tp]))
+            except KeyError:
+                raise ValueError(f"`{tp}` is not supported by HF")
+        return converted
+    try:
+        return Value(mapping[dtype])
+    except KeyError:
+        raise ValueError(f"`{dtype}` is not supported by HF")
