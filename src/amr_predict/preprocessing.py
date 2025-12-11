@@ -25,8 +25,9 @@ from amr_predict.utils import (
     join_within,
     read_tabular,
     split_features,
+    torch2hf,
 )
-from datasets import concatenate_datasets
+from datasets import Features, List, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
@@ -54,7 +55,7 @@ class SeqEmbedder:
     ):
         self.method: EMBEDDING_METHODS = method
         self.kwargs: dict = kwargs
-        if workdir is None:
+        if workdir is None and self.method not in {"kmer", "feature_presence"}:
             name = f"{method}-work_{uuid.uuid4().hex}"
             self.workdir = Path().cwd().joinpath(name)
             self.workdir.mkdir()
@@ -393,10 +394,25 @@ class SeqEmbedder:
         else:
             raise ValueError(f"esm model {model} not supported")
 
-        gen = gen_from_cached(df, tkey, cache, drop_null_columns=True)
-        result: Dataset = Dataset.from_generator(
-            gen, features=features_from_df(df)
-        ).remove_columns(text_key)
+        return self._finalize_dataset(df, tkey, cache, text_key)
+
+    def _finalize_dataset(
+        self,
+        dataset_df: pl.DataFrame,
+        text_key: str,
+        cache: EmbeddingCache,
+        cols_remove: str | None = None,
+    ) -> Dataset:
+        gen = gen_from_cached(
+            dataset_df, text_key, cache, drop_null_columns=True, new_col="embedding"
+        )
+        features: Features = features_from_df(dataset_df, "large_string")
+        features["embedding"] = List(torch2hf(torch.get_default_dtype()))
+        if text_key in features:
+            del features[text_key]
+        result: Dataset = Dataset.from_generator(gen, features=features)
+        if cols_remove is not None:
+            result = result.remove_columns(cols_remove)
         result = result.with_format("torch")
         return result
 
@@ -601,10 +617,7 @@ class SeqEmbedder:
         with torch.no_grad():
             cache.save(df[text_key], fn=seqlens, batch_size=ceil(df.shape[0] / 5))
         df = df.drop("uid")
-        gen = gen_from_cached(cache=cache, key=text_key, df=df, drop_null_columns=True)
-        result: Dataset = Dataset.from_generator(gen, features=features_from_df(df))
-        result = result.with_format("torch")
-        return result
+        return self._finalize_dataset(df, text_key, cache)
 
     @staticmethod
     def _tokenize(data, tokenizer, text_key: str, max_length: int):

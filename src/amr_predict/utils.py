@@ -654,6 +654,7 @@ def gen_from_cached(
     cache: EmbeddingCache,
     keep: bool = False,
     drop_null_columns: bool = False,
+    new_col: str = "embedding",
 ):
     """Return a generator function to produce a huggingface dataset
 
@@ -677,16 +678,25 @@ def gen_from_cached(
                 embedding = cache[row[key]]
             else:
                 embedding = cache[row.pop(key)]
-            give = dict(embedding=embedding, **row)
+            give = {new_col: embedding}
+            give.update(row)
             yield give
 
     return f
 
 
-def features_from_df(df: pl.DataFrame) -> Features:
+def features_from_df(
+    df: pl.DataFrame,
+    convert_string_view: Literal["string", "large_string"] | None = "large_string",
+) -> Features:
     from pyarrow import schema
 
-    return Features.from_arrow_schema(schema(df.schema))
+    converted = Features.from_arrow_schema(schema(df.schema))
+    if convert_string_view is not None:
+        for k, v in converted.items():
+            if v == Value("string_view"):
+                converted[k] = Value(convert_string_view)
+    return converted
 
 
 def torch2hf(dtype: torch.dtype | Sequence[torch.dtype]) -> Value | list[Value]:
