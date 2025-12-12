@@ -5,6 +5,9 @@
 /data/temp
 /data/processed
 /tests/data/*
+/tests/tmp*
+/tests/*pth
+snakemake/lightning_logs
 
 # Other
 *.egg-info*
