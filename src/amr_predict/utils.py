@@ -443,6 +443,7 @@ class ModuleConfig:
         record_norm: bool = False,
         dropout_p: float = 0.2,
         init_device: str = "cpu",
+        seed: int = 3110,
         n_tasks: int = 1,
         n_classes: tuple[int] = (1,),
         task_type: TASK_TYPES = "regression",
@@ -464,6 +465,11 @@ class ModuleConfig:
         self.task_type: TASK_TYPES = task_type
         self.task_weights: Tensor | None = task_weights
         self.kws: dict = kws
+
+    def __getitem__(self, key: str):
+        if key in dir(self):
+            return getattr(self, key)
+        return self.kws[key]
 
     @property
     def init_device(self) -> torch.device:
@@ -567,6 +573,7 @@ class EmbeddingCache:
         "_prefix",
         "_dir",
         "_seen",
+        "_with_tokens",
     ]
 
     def retrieve(self, keys: Sequence, tokens: bool = False) -> pl.DataFrame:
@@ -582,7 +589,11 @@ class EmbeddingCache:
         return pl.DataFrame({"key": keys}).join(df, on="key", how="left")
 
     def __init__(
-        self, dir: Path, prefix: str = "batch", save_interval: int = 10
+        self,
+        dir: Path,
+        prefix: str = "batch",
+        save_interval: int = 10,
+        with_tokens: bool = True,
     ) -> None:
         """
 
@@ -595,6 +606,7 @@ class EmbeddingCache:
         self._dir = dir
         self._prefix = prefix
         self._save_interval: int = save_interval
+        self._with_tokens = with_tokens
         try:
             _ = next(self._dir.glob(self._glob(False)))
             self._set_seen()
@@ -714,6 +726,8 @@ class EmbeddingCache:
                 raise e
             keys, values = zip(*embedded.items())
             seq_level, token_level = zip(*values)
+            if not self._with_tokens:
+                token_level = [None for _ in range(len(keys))]
             grouped = torch.vstack(seq_level)
             if grouped.shape[0] != len(embedded):
                 raise ValueError("Embedding vectors must be 1D")
