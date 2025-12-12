@@ -31,7 +31,7 @@ if TEST:
     del config["preprocessing"]["feature_presence_bakta"]
 
 PREPROCESSING = config["preprocessing"]
-
+EMBEDDING = config["embedding"]
 
 DATA_OUTS = {
     k: f"{REMOTE}/{DATE}/datasets/{s}"
@@ -70,6 +70,8 @@ POOLED_ALREADY = [
 TO_POOL = [d for d in PREPROCESSING.keys() if d not in POOLED_ALREADY]
 POOLED_PLOTS = expand("{o}/{d}-{p}.png", o=PLOT_OUT, d=TO_POOL, p=pooling_methods)
 
+CACHE_CHECKS = ([f"{DATA_OUTS['E']}/{d}_{EMBEDDING}_cache.complete" for d in TO_POOL],)
+
 
 def default_log(rule_name):
     return f"{LOGDIR}/prepare_data-{rule_name}.log"
@@ -90,7 +92,7 @@ def get_pooled_out(as_dir: bool = False):
 rule all:
     input:
         POOLED_PLOTS,
-        embedded=[f"{DATA_OUTS["E"]}/{d}" for d in TO_POOL],
+        embedded=CACHE_CHECKS,
         pooled=get_pooled_out(),
         other_pooled=[f"{DATA_OUTS['P']}/{d}" for d in POOLED_ALREADY],
         meta=f"{PROCESSED}/{DATE}/seq_metadata.csv",
@@ -130,7 +132,7 @@ rule make_embedded_datasets:
         outdir=DATA_OUTS["E"],
         ignore=POOLED_ALREADY,
     output:
-        [directory(f"{DATA_OUTS['E']}/{d}") for d in TO_POOL],
+        CACHE_CHECKS,
     script:
         "scripts/prepare_data.py"
 
@@ -140,6 +142,7 @@ rule pool_embeddings:
         rules.make_embedded_datasets.output,
     params:
         outdir=DATA_OUTS["P"],
+        textdir=DATA_OUTS["S"],
         plotdir=PLOT_OUT,
     log:
         default_log("pool_embeddings"),

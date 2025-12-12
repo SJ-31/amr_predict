@@ -344,11 +344,23 @@ class SeqEmbedder:
                     encoded = client.encode(prot)
                     logits = client.logits(encoded, lconf)
                     target: Tensor = getattr(logits, to_get)
-                    if pooling == "cls":
+                    # If `get_hidden`, target has shape
+                    #    (n_hidden, 1, sequence_len, dim_model)
+                    # Otherwise
+                    #  (1, sequence_len, dim_model)
+                    if get_hidden:
+                        tokens = target[hidden_layer, 0, 1:-1, :]
+                    else:
+                        tokens = target[0, 1:-1, :]
+                    if pooling == "cls" and get_hidden:
+                        embedding = target[hidden_layer, 0, 0, :]
+                    elif pooling == "cls":
                         embedding = target[0, 0, :]
-                    elif pooling == "mean":
+                    elif pooling == "mean" and get_hidden:
                         embedding = target[hidden_layer, 0, 1:-1, :].mean(dim=0)
-                    edict[prot] = embedding
+                    elif pooling == "mean":
+                        embedding = target[0, 1:-1, :].mean(dim=0)
+                    edict[prot] = embedding, tokens
                 return edict
 
             cache.save(df[tkey], fn=esm3, batch_size=batch_size)
@@ -364,25 +376,41 @@ class SeqEmbedder:
 
             def esmc(proteins):
                 if not get_hidden:
-                    edict = m.embed_dataset(
+                    edict = {}
+                    tmp = m.embed_dataset(
                         tokenizer=m.tokenizer,
                         sequences=proteins,
                         batch_size=batch_size,
+                        full_embeddings=True,
                         max_len=2048,
                         pooling_types=[pooling],
                         save=False,
                     )
+                    for k, v in tmp.items():
+                        if pooling == "cls":
+                            pooled = v[0, :]
+                        else:
+                            pooled = v[1:-1, :].mean(dim=0)
+                        edict[k] = (pooled, v)
                 else:
                     edict = {}
-                    for prot in proteins:
-                        tokenized = m.tokenizer(
-                            prot, padding=False, return_tensors="pt"
-                        )
-                        output = m(**tokenized, output_hidden_states=True)
-                        if pooling == "cls":
-                            edict[prot] = output[hidden_layer][0, 0, :]
-                        elif pooling == "mean":
-                            edict[prot] = output[hidden_layer][0, 1:-1, :].mean(dim=0)
+                    with torch.no_grad():
+                        for prot in proteins:
+                            tokenized = m.tokenizer(
+                                prot, padding=False, return_tensors="pt"
+                            ).to(device)
+                            output = m(**tokenized, output_hidden_states=True)
+                            hidden = output.hidden_states
+                            # Each element of hidden is a tensor with shape
+                            # (1, sequence_len, dim_model)
+                            tokens = hidden[hidden_layer][0, 1:-1, :].cpu()
+                            if pooling == "cls":
+                                edict[prot] = (
+                                    hidden[hidden_layer][0, 0, :].cpu(),
+                                    tokens,
+                                )
+                            elif pooling == "mean":
+                                edict[prot] = (tokens.mean(dim=0).cpu(), tokens)
                 return edict
 
             cache.save(

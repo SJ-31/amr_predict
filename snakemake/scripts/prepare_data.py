@@ -8,7 +8,7 @@ from typing import Literal, get_args
 import plotnine as gg
 import polars as pl
 import torch
-from amr_predict.utils import load_as
+from amr_predict.utils import EmbeddingCache, load_as
 from datasets import Dataset
 from loguru import logger
 from scipy import stats
@@ -21,6 +21,7 @@ from amr_predict.preprocessing import EMBEDDING_METHODS, SeqDataset, SeqEmbedder
 
 CONFIG: dict = smk.config
 RCONFIG: dict = smk.config.get(smk.rule)
+EMBEDDING: EMBEDDING_METHODS = CONFIG["embedding"]
 
 logger.enable("amr_predict")
 logger.add(sink=smk.log[0])
@@ -303,45 +304,48 @@ elif smk.rule == "make_text_datasets":
             )
 # * Embed
 elif smk.rule == "make_embedded_datasets":
-    method: EMBEDDING_METHODS = CONFIG["embedding"]
-    params: dict = CONFIG["embedding_methods"][method]
+    params: dict = CONFIG["embedding_methods"][EMBEDDING]
     kws: dict = params.copy()
     for seq_ds in smk.input:
         inpath = Path(seq_ds)
         if inpath.stem in smk.params["ignore"]:
             continue
-        savepath = Path(smk.params["outdir"]) / inpath.stem
-        workdir = Path(f"{smk.params['outdir']}") / f".{inpath.stem}_{method}_cache"
+        savepath = Path(smk.params["outdir"]) / f"{inpath.stem}.complete"
+        workdir = Path(f"{smk.params['outdir']}") / f"{inpath.stem}_{EMBEDDING}_cache"
         workdir.mkdir(exist_ok=True)
-        if method == "Evo2":
+        if EMBEDDING == "Evo2":
             kws["runscript"] = CONFIG["evo2_runscript"]
-        elif method == "seqLens" or method == "esm":
+        elif EMBEDDING == "seqLens" or EMBEDDING == "esm":
             kws["huggingface"] = CONFIG["huggingface"]
         if not savepath.exists():
             logger.info(f"Embedding dataset `{inpath.stem}` started")
             dset = SeqDataset(
                 inpath,
                 embedder=SeqEmbedder(
-                    method=method,
+                    method=EMBEDDING,
                     workdir=workdir,
                     text_key="sequence",
                     **kws,
                 ),
             )
-            dset.embed(savepath)
+            dset.embed(None)
+            savepath.write_text("TRUE")
             logger.success(f"Embedding dataset `{inpath.stem}` complete")
 # * Pool
 elif smk.rule == "pool_embeddings":
     methods: list[dict] = RCONFIG.pop("methods")
     for embedding_ds in smk.input:
-        inpath = Path(embedding_ds)
+        inpath = Path(embedding_ds).with_suffix("")
+        cache = EmbeddingCache(dir=inpath)
+        ds_name = inpath.stem.removesuffix(f"_{EMBEDDING}_cache")
+        texts_path = Path(smk.params["textdir"]).joinpath(ds_name)
         for spec in methods:
             method = spec["method"]
             name = spec.get("name", method)
             spec_kws = RCONFIG.copy()
             spec_kws.update(spec.get("kws", {}))
-            savepath = Path(smk.params["outdir"]) / f"{inpath.stem}-{method}"
-            figpath = Path(smk.params["plotdir"]) / f"{inpath.stem}-{method}.png"
+            savepath = Path(smk.params["outdir"]) / f"{ds_name}-{method}"
+            figpath = Path(smk.params["plotdir"]) / f"{ds_name}-{method}.png"
             if not savepath.exists():
                 logger.info(f"Pooling for {inpath.stem} with method `{method}` started")
                 sp: StaticPooler = StaticPooler(
@@ -350,7 +354,12 @@ elif smk.rule == "pool_embeddings":
                     sample_metadata_key=CONFIG["sample_metadata"]["id_col"],
                     **spec_kws,
                 )
-                pooled = sp(inpath)
+                dset: Dataset = cache.to_dataset(
+                    df=load_as(texts_path, "polars", ["sample", "sequence"]),
+                    key_col="sequence",
+                    new_col="embedding",
+                )
+                pooled = sp(dset)
                 pooled.save_to_disk(dataset_path=savepath)
                 logger.success("Pooling complete")
             else:
