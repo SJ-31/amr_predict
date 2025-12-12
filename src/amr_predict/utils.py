@@ -707,7 +707,11 @@ class EmbeddingCache:
         counter = 0
         dfs = []
         for batch in itertools.batched(set(to_embed), n=batch_size):
-            embedded: dict = fn(batch)
+            try:
+                embedded: dict = fn(batch)
+            except Exception as e:
+                self._write(dfs)
+                raise e
             keys, values = zip(*embedded.items())
             seq_level, token_level = zip(*values)
             grouped = torch.vstack(seq_level)
@@ -747,6 +751,22 @@ class EmbeddingCache:
             file_count = len(list(self._dir.glob(self._glob(False))))
             save_path = self._dir.joinpath(f"{self._prefix}_{file_count}.parquet")
             pl.concat(dfs).write_parquet(save_path)
+
+    def to_dataset(
+        self,
+        df: pl.DataFrame,
+        key_col: str,
+        tokens: bool = False,
+        new_col: str = "embedding",
+        drop_null_columns: bool = True,
+    ) -> Dataset:
+        if drop_null_columns:
+            df = df[[s.name for s in df if not (s.null_count() == df.height)]]
+        col = "token" if tokens else "seq"
+        join_with = self.retrieve(df[key_col], tokens=tokens).rename({col: new_col})
+        joined = df.join(join_with, left_on=key_col, right_on="key")
+        dset = Dataset.from_polars(joined).with_format("torch")
+        return dset
 
 
 def gen_from_cached(
