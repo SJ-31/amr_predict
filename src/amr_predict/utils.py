@@ -5,10 +5,12 @@ import itertools
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import reduce
+from math import ceil
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
 import anndata as ad
+import duckdb
 import numpy as np
 import polars as pl
 import skbio as sb
@@ -553,57 +555,130 @@ class Preprocessor:
 class EmbeddingCache:
     """Cache for batched text embeddings
 
-    Can be used like a dictionary
+    Can be used like a dictionary, but it's more efficient to use the "retrieve" method
+    to look up queries in batched fashion
     EX: cache = EmbeddingCache(".cache")
         cache["ATCGACTA"] = [3, 9, 1, ...]
-
-    TODO: this works, but you should be able to do better if you get a on-disk
-    database to avoid having to store the tensor object
     """
 
-    __slots__ = ["_storage", "_prefix", "_dir", "_seen", "_lookup", "_count"]
+    __slots__ = [
+        "_storage",
+        "_save_interval",
+        "_prefix",
+        "_dir",
+        "_seen",
+    ]
 
-    def _read_saved(self, df: pl.DataFrame, init: bool = False) -> None:
-        start = self._storage.shape[0]
-        end = start + df.shape[0]
-        if len(df["key"].unique()) != df.shape[0]:
-            logger.warning("duplicae keys detected in dataframe")
-            df = df.unique("key")
-        from_df = dict(zip(df["key"], range(start, end)))
-        values: Tensor = df.drop("key").to_torch()
-        if init:
-            self._storage = values
-        else:
-            self._storage = torch.vstack([self._storage, values])
-        self._lookup.update(from_df)
+    def retrieve(self, keys: Sequence, tokens: bool = False) -> pl.DataFrame:
+        col = "token" if tokens else "seq"
+        df: pl.DataFrame = (
+            duckdb.query(f"""
+        SELECT key, {col}
+        FROM '{self._glob()}'
+        """)
+            .pl()
+            .filter(pl.col("key").is_in(keys))
+        )
+        return pl.DataFrame({"key": keys}).join(df, on="key", how="left")
 
-    def __init__(self, dir: Path, prefix: str = "batch") -> None:
+    def __init__(
+        self, dir: Path, prefix: str = "batch", save_interval: int = 10
+    ) -> None:
+        """
+
+        Parameters
+        ----------
+        save_interval : int
+            Number of times batches accumulate before writing a new parquet batch.
+            duckdb recommends parquet files to be 100mb-10gb in size
+        """
         self._dir = dir
         self._prefix = prefix
-        self._lookup: dict = {}
-        self._seen: set = set()
+        self._save_interval: int = save_interval
+        try:
+            _ = next(self._dir.glob(self._glob(False)))
+            self._set_seen()
+        except StopIteration:
+            self._seen = set()
         self._storage: Tensor = torch.tensor([])
-        for i, file in enumerate(self._dir.glob(f"{self._prefix}*.parquet")):
-            df = pl.read_parquet(file)
-            self._seen.add(file)
-            self._read_saved(df, init=i == 0)
-        self._count: int = len(self._lookup)
+
+    def _set_seen(self) -> None:
+        self._seen = set(
+            duckdb.query(f"""
+        SELECT key
+        FROM '{self._glob()}'
+        """)
+            .pl()["key"]
+            .to_list()
+        )
+
+    def rewrite(self, n: int = 10) -> None:
+        "Read all entries into memory, remove duplicates and re-write cache to contain N parquet files"
+        df: pl.DataFrame = self.pl()
+        slice_count = ceil(df.height / n)
+        new_files: set = set()
+        for i, frame in enumerate(df.iter_slices(slice_count)):
+            f = self._dir.joinpath(f"{self._prefix}_{i}.parquet")
+            frame.write_parquet(f)
+            new_files.add(f)
+        for file in self._dir.glob(self._glob(False)):
+            if file not in new_files:
+                file.unlink()
+
+    def _glob(self, with_dir: bool = True) -> str:
+        if with_dir:
+            return f"{str(self._dir)}/{self._prefix}*.parquet"
+        return f"{self._prefix}*.parquet"
+
+    def pl(self, as_array: bool = False) -> pl.DataFrame:
+        try:
+            df = (
+                duckdb.query(f"""
+        SELECT *
+        FROM '{self._glob()}'
+        """)
+                .pl()
+                .unique("key")
+            )
+        except duckdb.IOException:
+            return pl.DataFrame()
+        if not as_array:
+            return df
+        seq_size, token_size = self._peek_size(df)
+        schema = df.schema
+        seq_type = schema["seq"].inner
+        new_schema = {
+            "seq": pl.Array(seq_type, seq_size),
+        }
+        if df.row(0, named=True)["token"] is not None:
+            token_type = schema["token"].inner.inner
+            new_schema["token"] = pl.List(pl.Array(token_type, token_size))
+        return df.cast(new_schema)
 
     def __contains__(self, key: str) -> bool:
-        return key in self._lookup
+        return key in self._seen
 
     def __getitem__(self, key: str) -> Tensor:
-        idx = self._lookup[key]
-        return self._storage[idx, :]
+        try:
+            query = duckdb.query(f"""
+            SELECT seq
+            FROM '{self._glob()}'
+            WHERE key = '{key}'
+            """).fetchone()
+            return torch.tensor(query[0])
+        except duckdb.IOException:
+            raise ValueError("no cached files available")
 
-    def values(self):
-        return self._lookup.values()
+    def _peek_size(self, df: pl.DataFrame) -> tuple[int, int]:
+        vals = df.row(0, named=True)
+        tk = vals["token"]
+        return len(vals["seq"]), len(tk[0]) if tk is not None else 0
 
     def keys(self):
-        return self._lookup.keys()
+        return self._seen
 
     def __len__(self) -> int:
-        return len(self._lookup)
+        return len(self._seen)
 
     def save(
         self,
@@ -619,33 +694,59 @@ class EmbeddingCache:
         ----------
         fn : Callable
             A function that takes a sequence of text and returns a
-            dictionary mapping texts to their embeddings
-
+            dictionary mapping texts to a tuple of
+                (sequence-level embeddings, token-level embeddings)
+            The token-level embeddings are optional
         """
         as_set = set(to_embed)
-        n_old = len(as_set & self._lookup.keys())
+        n_old = len(as_set & self._seen)
         if n_old:
             logger.info(f"{n_old} found in cache")
-        to_embed = as_set - self._lookup.keys()
+        to_embed = as_set - self._seen
         logger.info(f"Embedding {len(to_embed)} new strings")
+        counter = 0
+        dfs = []
         for batch in itertools.batched(set(to_embed), n=batch_size):
-            self._count += 1
-            save_path = self._dir.joinpath(f"{self._prefix}_{self._count}.parquet")
-            assert not save_path.exists()
             embedded: dict = fn(batch)
             keys, values = zip(*embedded.items())
-            grouped = torch.vstack(values)
+            seq_level, token_level = zip(*values)
+            grouped = torch.vstack(seq_level)
             if grouped.shape[0] != len(embedded):
                 raise ValueError("Embedding vectors must be 1D")
-            df = pl.DataFrame(grouped).with_columns(key=pl.Series(keys))
-            n_cached = self._storage.shape[0]
-            indices = range(n_cached, n_cached + len(keys))
-            if n_cached:
-                self._storage = torch.vstack([self._storage, grouped])
+            if (
+                len(embedded) > 0
+                and next(iter(token_level)) is not None
+                and any([len(tk.shape) != 2 for tk in token_level])
+            ):
+                raise ValueError("Token-level embeddings should all be 2D")
+
+            if (tk := next(iter(token_level))) is not None:
+                token_dtype = torch2pl(tk.dtype)
+                schema = {
+                    "token": pl.List(pl.List(token_dtype)),
+                    "key": pl.String,
+                    "seq": pl.List(torch2pl(next(iter(seq_level)).dtype)),
+                }
             else:
-                self._storage = grouped
-            self._lookup.update(dict(zip(keys, indices)))
-            df.write_parquet(save_path)
+                schema = None
+            df = pl.DataFrame(
+                {"key": keys, "seq": grouped, "token": token_level}, schema=schema
+            )
+            self._seen |= set(keys)
+            dfs.append(df)
+            if counter == self._save_interval:
+                self._write(dfs)
+                dfs = []
+                counter = 0
+            else:
+                counter += 1
+        self._write(dfs)
+
+    def _write(self, dfs: list[pl.DataFrame]) -> None:
+        if dfs:
+            file_count = len(list(self._dir.glob(self._glob(False))))
+            save_path = self._dir.joinpath(f"{self._prefix}_{file_count}.parquet")
+            pl.concat(dfs).write_parquet(save_path)
 
 
 def gen_from_cached(

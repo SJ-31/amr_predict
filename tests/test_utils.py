@@ -16,13 +16,25 @@ def dummy_embed(texts) -> dict:
     def embed(text):
         return torch.tensor([mapping[text[i]] for i in range(ncol)])
 
-    return dict(zip(texts, [embed(t) for t in texts]))
+    return dict(
+        zip(
+            texts,
+            [
+                (
+                    embed(t),
+                    torch.vstack([embed(t) for _ in range(torch.randint(2, 10, (1,)))]),
+                )
+                for t in texts
+            ],
+        )
+    )
 
 
 def test_cache1(tmp_path):
     path = tmp_path / ".cache"
     path.mkdir()
-    cache: EmbeddingCache = EmbeddingCache(path)
+    cache: EmbeddingCache = EmbeddingCache(path, save_interval=2)
+    assert cache.pl().height == 0
     words = [
         "forest",
         "crane",
@@ -44,7 +56,9 @@ def test_cache1(tmp_path):
     assert "bridge" in cache
     assert "foo" not in cache
     assert len(cache) == len(words)
-    assert len(cache.values()) == len(set(cache.values()))
+    assert cache.pl().height == len(words)
+    print(cache.pl(as_array=True))
+
     assert (cache["forest"] == torch.tensor([5, 14, 17])).all()
     assert (cache["harbor"] == torch.tensor([7, 0, 17])).all()
 
