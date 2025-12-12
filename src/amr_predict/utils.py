@@ -779,7 +779,9 @@ class EmbeddingCache:
             df = df[[s.name for s in df if not (s.null_count() == df.height)]]
         col = "token" if tokens else "seq"
         join_with = self.retrieve(df[key_col], tokens=tokens).rename({col: new_col})
-        joined = df.join(join_with, left_on=key_col, right_on="key")
+        joined = df.join(join_with, left_on=key_col, right_on="key").filter(
+            pl.col(new_col).is_not_null()
+        )
         dset = Dataset.from_polars(joined).with_format("torch")
         return dset
 
