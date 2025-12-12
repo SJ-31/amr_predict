@@ -308,10 +308,11 @@ elif smk.rule == "make_embedded_datasets":
     kws: dict = params.copy()
     for seq_ds in smk.input:
         inpath = Path(seq_ds)
+        cache_name = f"{inpath.stem}_{EMBEDDING}_cache"
         if inpath.stem in smk.params["ignore"]:
             continue
-        savepath = Path(smk.params["outdir"]) / f"{inpath.stem}.complete"
-        workdir = Path(f"{smk.params['outdir']}") / f"{inpath.stem}_{EMBEDDING}_cache"
+        savepath = Path(smk.params["outdir"]) / f"{cache_name}.complete"
+        workdir = Path(f"{smk.params['outdir']}") / cache_name
         workdir.mkdir(exist_ok=True)
         if EMBEDDING == "Evo2":
             kws["runscript"] = CONFIG["evo2_runscript"]

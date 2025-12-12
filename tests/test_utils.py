@@ -92,3 +92,4 @@ def test_cache1(tmp_path):
     ]
     cache.save(dupes, fn=dummy_embed, batch_size=5)
     assert old_len == len(cache)
+    print(cache.retrieve(["cascade", "meadow", "spice"]))

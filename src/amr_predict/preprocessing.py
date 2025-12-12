@@ -20,14 +20,11 @@ import torch
 from amr_predict.utils import (
     EmbeddingCache,
     add_intergenic,
-    features_from_df,
-    gen_from_cached,
     join_within,
     read_tabular,
     split_features,
-    torch2hf,
 )
-from datasets import Features, List, concatenate_datasets
+from datasets import concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
@@ -51,10 +48,14 @@ class SeqEmbedder:
         self,
         method: EMBEDDING_METHODS = "seqLens",
         workdir: Path | None = None,
+        with_tokens: bool = True,
+        save_interval: int = 10,
         **kwargs,
     ):
         self.method: EMBEDDING_METHODS = method
         self.kwargs: dict = kwargs
+        self.with_tokens = with_tokens
+        self.save_interval = save_interval
         if workdir is None and self.method not in {"kmer", "feature_presence"}:
             name = f"{method}-work_{uuid.uuid4().hex}"
             self.workdir = Path().cwd().joinpath(name)
@@ -326,7 +327,9 @@ class SeqEmbedder:
         torch.set_default_dtype(torch.float32)
         os.environ["HF_HOME"] = huggingface
         get_hidden: bool = hidden_layer is not None
-        cache: EmbeddingCache = EmbeddingCache(self.workdir)
+        cache: EmbeddingCache = EmbeddingCache(
+            self.workdir, with_tokens=self.with_tokens, save_interval=self.save_interval
+        )
 
         if model == "esm3-open":
             from esm.models.esm3 import ESM3
@@ -431,75 +434,81 @@ class SeqEmbedder:
         cache: EmbeddingCache,
         cols_remove: str | None = None,
     ) -> Dataset:
-        gen = gen_from_cached(
-            dataset_df, text_key, cache, drop_null_columns=True, new_col="embedding"
-        )
-        features: Features = features_from_df(dataset_df, "large_string")
-        features["embedding"] = List(torch2hf(torch.get_default_dtype()))
-        if text_key in features:
-            del features[text_key]
-        result: Dataset = Dataset.from_generator(gen, features=features)
+        result = cache.to_dataset(dataset_df, key_col=text_key)
+        # gen = gen_from_cached(
+        #     dataset_df, text_key, cache, drop_null_columns=True, new_col="embedding"
+        # )
+        # features: Features = features_from_df(dataset_df, "large_string")
+        # features["embedding"] = List(torch2hf(torch.get_default_dtype()))
+        # if text_key in features:
+        #     del features[text_key]
+        # result: Dataset = Dataset.from_generator(gen, features=features)
         if cols_remove is not None:
             result = result.remove_columns(cols_remove)
-        result = result.with_format("torch")
         return result
 
     def _evo2_embed(
         self,
         dset: Dataset,
         runscript: str,
-        workdir: str | Path | None = None,
         text_key: str = "sequence",
         batch_size: int = 10,
     ) -> Dataset:
         dset = dset.add_column("uid", list(range(len(dset)))).sort("uid")
-        tmp: TemporaryDirectory | None = None
-        df: pl.DataFrame = dset.to_polars().with_columns(
-            (
-                ">" + pl.concat_str([pl.col("uid"), pl.col(text_key)], separator="\n")
-            ).alias("fasta")
-        )
-        seqs = df["seqid"].unique()
+        df: pl.DataFrame = dset.to_polars()
         logger.info(f"{df.shape[0]} sequences to embed")
+        cache: EmbeddingCache = EmbeddingCache(
+            self.workdir, save_interval=self.save_interval, with_tokens=self.with_tokens
+        )
 
-        def embed_seqs(wd) -> list[str]:
-            batches = []
-            for i, seq_set in enumerate(batched(seqs, n=batch_size)):
-                bname = f"batch_{i}"
-                if len(seq_set) != batch_size:
-                    logger.info(
-                        f"Embedding batch with of different size: {len(seq_set)}"
-                    )
-                self._evo2_embed_batch(
-                    df,
-                    seqids=seq_set,
-                    workdir=wd,
-                    batch_name=bname,
-                    runscript=runscript,
+        def run_evo2(sequences):
+            with TemporaryDirectory() as d:
+                outdir: Path = Path(d)
+                ids = [f"seq_{i}" for i in range(len(sequences))]
+                id2seq = dict(zip(ids, sequences))
+                fasta = [f">{id}\n{seq}" for id, seq in id2seq.items()]
+                input = outdir.joinpath("input.fasta")
+                input.write_text("\n".join(fasta))
+                evo_run = run(
+                    f"sbatch --wait --parsable {runscript} -i {input} -o {outdir}",
+                    shell=True,
+                    capture_output=True,
                 )
-                batches.append(bname)
-            return batches
+                jobid = evo_run.stdout.decode().strip()
+                outfile = Path(f"slurm-{jobid}.out")
+                logger.warning(f"{jobid=}")
+                evo_run.check_returncode()
+                if outfile.exists():
+                    stdout = outfile.read_text()
+                    outfile.unlink()
+                else:
+                    stdout = (
+                        "Slurm stdout file not found. Did you delete it by accident?"
+                    )
+                try:
+                    embeddings: pl.DataFrame = pl.read_parquet(
+                        outdir / "pred_input.parquet"
+                    )
+                except FileNotFoundError:
+                    logger.debug(
+                        f"Evo2 failed to generate predictions\n-- BEGIN STDOUT -- \n{stdout}\n -- END STDOUT --"
+                    )
+                    raise ValueError("Evo2 failed to generate predictions")
+                with open(outdir / "seq_idx_map.json", "rb") as f:
+                    id_map: dict = json.load(f)
+                id_df: pl.DataFrame = pl.DataFrame(
+                    {"seqid": id_map.keys(), "id": id_map.values()}
+                )
+                joined = embeddings.join(id_df, on="id").drop("id")
+                return {
+                    s: (v, None)  # TODO: replace 'None' with token-level embeddings
+                    for s, v in zip(
+                        joined["seqid"], torch.unbind(joined.drop("seqid").to_torch())
+                    )
+                }
 
-        if workdir is None:
-            tmp = TemporaryDirectory()
-            workdir = Path(tmp.name)
-
-        batches = embed_seqs(workdir)
-        workdir = workdir if isinstance(workdir, Path) else Path(workdir)
-
-        def gen():
-            for b in batches:
-                edf = pl.read_parquet(workdir / f"{b}.parquet")
-                for uid, embedding in edf.rows_by_key("uid").items():
-                    yield {"embedding": embedding[0], "uid": uid}
-
-        result: Dataset = Dataset.from_generator(gen)
-        result = result.with_format("torch").sort("uid").remove_columns("uid")
-        dset = dset.remove_columns(text_key)
-        result = concatenate_datasets([result, dset], axis=1)
-        if tmp is not None:
-            tmp.cleanup()
-        return result
+        cache.save(df[text_key], fn=run_evo2, batch_size=batch_size)
+        return self._finalize_dataset(df, text_key, cache)
 
     def _evo2_embed_batch(
         self,
@@ -584,7 +593,9 @@ class SeqEmbedder:
         model.config.output_hidden_states = True
         dataset = dset.add_column("uid", list(range(len(dset))))
         df: pl.DataFrame = dataset.to_polars()
-        cache: EmbeddingCache = EmbeddingCache(self.workdir)
+        cache: EmbeddingCache = EmbeddingCache(
+            self.workdir, save_interval=self.save_interval, with_tokens=self.with_tokens
+        )
         to_remove = [c for c in dset.column_names if c != "uid"]
 
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
@@ -636,10 +647,11 @@ class SeqEmbedder:
                         ],
                         dim=1,
                     )
-                for e, uid in zip(
-                    torch.unbind(embedding, axis=0), torch.unbind(batch["uid"])
+                for i, e, uid in enumerate(
+                    zip(torch.unbind(embedding, axis=0), torch.unbind(batch["uid"]))
                 ):
-                    result[uid2seq[uid.cpu().item()]] = e.cpu()
+                    tokens = hidden_masked[i, :, :]
+                    result[uid2seq[uid.cpu().item()]] = e.cpu(), tokens
             return result
 
         with torch.no_grad():
