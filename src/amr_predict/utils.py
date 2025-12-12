@@ -20,6 +20,7 @@ from datasets import DatasetDict, Features, Value
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
+from skbio import DNA
 from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
 
@@ -893,3 +894,31 @@ def torch2hf(dtype: torch.dtype | Sequence[torch.dtype]) -> Value | list[Value]:
         return Value(mapping[dtype])
     except KeyError:
         raise ValueError(f"`{dtype}` is not supported by HF")
+
+
+def translate_df(
+    df: pl.DataFrame,
+    seq_col: str,
+    new_col: str | None = None,
+    degenerate_handling: Literal["ignore", "random", "error"] = "random",
+) -> pl.DataFrame:
+    new_col = new_col or f"{seq_col}_aa"
+
+    def translate(seq) -> dict:
+        dna: DNA = DNA(seq)
+        degenerate = False
+        if dna.has_degenerates():
+            degenerate = True
+            if degenerate_handling == "error":
+                raise ValueError(
+                    f"cannot translate degenerate bases in sequence `{seq}`"
+                )
+            elif degenerate_handling == "ignore":
+                translated = None
+            translated = next(dna.expand_degenerates()).translate()
+        else:
+            translated = dna.translate()
+        return {new_col: str(translated), "dna_degenerate": degenerate}
+
+    df = df.with_columns(pl.Series(map(translate, df[seq_col])).struct.unnest())
+    return df

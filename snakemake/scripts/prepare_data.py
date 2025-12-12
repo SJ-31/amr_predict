@@ -8,7 +8,7 @@ from typing import Literal, get_args
 import plotnine as gg
 import polars as pl
 import torch
-from amr_predict.utils import EmbeddingCache, load_as
+from amr_predict.utils import EmbeddingCache, load_as, translate_df
 from datasets import Dataset
 from loguru import logger
 from scipy import stats
@@ -27,6 +27,18 @@ logger.enable("amr_predict")
 logger.add(sink=smk.log[0])
 
 # * Utilities
+
+
+def get_seq_level(text_dset_path, cache) -> Dataset:
+    df = load_as(text_dset_path, "polars", ["sample", "sequence"])
+    if EMBEDDING == "esm":
+        df = (
+            translate_df(df, "sequence", "sequence_aa", "random")
+            .drop("sequence")
+            .rename({"sequence_aa": "sequence"})
+        )
+    dset: Dataset = cache.to_dataset(df=df, key_col="sequence", new_col="embedding")
+    return dset
 
 
 def format_combgc(
@@ -325,6 +337,8 @@ elif smk.rule == "make_embedded_datasets":
                 embedder=SeqEmbedder(
                     method=EMBEDDING,
                     workdir=workdir,
+                    with_tokens=True,  # [2025-12-12 Fri] REVIEW: is this a good idea?
+                    # make this a param in env. File size is so large
                     text_key="sequence",
                     **kws,
                 ),
@@ -355,17 +369,13 @@ elif smk.rule == "pool_embeddings":
                     sample_metadata_key=CONFIG["sample_metadata"]["id_col"],
                     **spec_kws,
                 )
-                dset: Dataset = cache.to_dataset(
-                    df=load_as(texts_path, "polars", ["sample", "sequence"]),
-                    key_col="sequence",
-                    new_col="embedding",
-                )
+                dset = get_seq_level(texts_path, cache)
                 pooled = sp(dset)
                 pooled.save_to_disk(dataset_path=savepath)
                 logger.success("Pooling complete")
             else:
                 pooled = load_as(savepath)
-            original = load_as(inpath)
+            original = get_seq_level(texts_path, cache)
             comparison = compare_pooled(
                 original,
                 pooled,

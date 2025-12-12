@@ -23,6 +23,7 @@ from amr_predict.utils import (
     join_within,
     read_tabular,
     split_features,
+    translate_df,
 )
 from datasets import concatenate_datasets
 from datasets.arrow_dataset import Dataset
@@ -304,25 +305,10 @@ class SeqEmbedder:
         """
         device = "cuda" if torch.cuda.is_available() else "cpu"
         tkey = f"{text_key}_aa"
-
-        def translate(seq) -> dict:
-            dna: DNA = DNA(seq)
-            degenerate = False
-            if dna.has_degenerates():
-                degenerate = True
-                if degenerate_handling == "error":
-                    raise ValueError(
-                        f"cannot translate degenerate bases in sequence `{seq}`"
-                    )
-                elif degenerate_handling == "ignore":
-                    translated = None
-                translated = next(dna.expand_degenerates()).translate()
-            else:
-                translated = dna.translate()
-            return {tkey: str(translated), "dna_degenerate": degenerate}
-
         df: pl.DataFrame = dset.to_polars()
-        df = df.with_columns(pl.Series(map(translate, df[text_key])).struct.unnest())
+        df = translate_df(
+            df, text_key, new_col=None, degenerate_handling=degenerate_handling
+        )
 
         torch.set_default_dtype(torch.float32)
         os.environ["HF_HOME"] = huggingface
