@@ -752,57 +752,58 @@ class EmbeddingCache:
         to_embed = as_set - self._seen
         logger.info(f"Embedding {len(to_embed)} new strings")
         counter = 0
-        dfs = []
+        lfs = []
+        dtype = torch2pl(torch.get_default_dtype())
         for batch in itertools.batched(set(to_embed), n=batch_size):
             try:
-                tmp = {"key": [], "seq": [], "token": []}
                 schema: dict = {"key": pl.String}
-                for keys, seq_level, token_level in fn(batch):
-                    if len(seq_level.shape) != 1:
-                        raise ValueError("Embedding vectors must be 1D")
-                    if token_level is not None and len(token_level.shape) != 2:
-                        raise ValueError("Token-level embeddings must all be 2D")
-                    if (
-                        self._with_tokens
-                        and "token" not in schema
-                        and token_level is not None
-                    ):
-                        schema["token"] = pl.List(pl.List(torch2pl(token_level.dtype)))
-                    if "seq" not in schema:
-                        schema["seq"] = pl.List(torch2pl(seq_level.dtype))
-                    tmp["key"].append(keys)
-                    tmp["seq"].append(seq_level)  # Tensor
-                    if not self._with_tokens:
-                        tmp["token"].append(None)
-                    elif self._token_prop is None or (
-                        self._rng.choice(
-                            [True, False], [self._token_prop, 1 - self._token_prop]
-                        )
-                    ):
-                        tmp["token"].append(token_level)  # 2D tensor
+                gen = fn(batch)
+                key, seq, token = next(gen)
+                if len(seq.shape) != 1:
+                    raise ValueError("Embedding vectors must be 1D")
+                if token is not None and len(token.shape) != 2:
+                    raise ValueError("Token-level embeddings must all be 2D")
 
-                if "token" not in schema:
-                    schema["token"] = None
-                df = pl.DataFrame(tmp, schema=schema)
-                self._seen |= set(df["key"])
-                dfs.append(df)
+                schema["seq"] = pl.Array(dtype, len(seq))
+                schema["token"] = (
+                    pl.List(pl.Array(dtype, token.shape[1]))
+                    if self._with_tokens
+                    else pl.Null()
+                )
+                tmp = {"key": [], "seq": [], "token": []}
+                gen = itertools.chain([(key, seq, token)], gen)
+                # REVIEW: you didn't wanna have to do this, but had trouble with
+                # casting types from the generator directly
+                for k, s, t in gen:
+                    tmp["key"].append(k)
+                    tmp["seq"].append(s)
+                    tmp["token"].append(t)
+
+                lf = pl.LazyFrame(tmp, schema=schema)
+                logger.debug(lf.collect())
+                if not self._with_tokens:
+                    lf = lf.with_columns(pl.lit(None).alias("token"))
+                elif self._token_prop is not None:
+                    lf = self._mask_in_df(lf, "token", 1 - self._token_prop, len(batch))
+                self._seen |= set(lf.select("key").collect()["key"])
+                lfs.append(lf)
                 if counter == self._save_interval:
-                    self._write(dfs)
-                    dfs = []
+                    self._write(lfs)
+                    lfs = []
                     counter = 0
                 else:
                     counter += 1
             except Exception as e:
-                self._write(dfs)
+                self._write(lfs)
                 raise e
 
-        self._write(dfs)
+        self._write(lfs)
 
-    def _write(self, dfs: list[pl.DataFrame]) -> None:
-        if dfs:
+    def _write(self, lfs: list[pl.LazyFrame]) -> None:
+        if lfs:
             file_count = len(list(self._dir.glob(self._glob(False))))
             save_path = self._dir.joinpath(f"{self._prefix}_{file_count}.parquet")
-            pl.concat(dfs).write_parquet(save_path)
+            pl.concat(lfs).sink_parquet(save_path)
 
     def to_dataset(
         self,

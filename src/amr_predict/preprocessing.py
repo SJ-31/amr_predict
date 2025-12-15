@@ -349,7 +349,7 @@ class SeqEmbedder:
                         embedding = target[hidden_layer, 0, 1:-1, :].mean(dim=0)
                     elif pooling == "mean":
                         embedding = target[0, 1:-1, :].mean(dim=0)
-                    edict[prot] = embedding, tokens
+                    yield prot, embedding, tokens
                 return edict
 
             cache.save(df[tkey], fn=esm3, batch_size=batch_size)
@@ -365,7 +365,6 @@ class SeqEmbedder:
 
             def esmc(proteins):
                 if not get_hidden:
-                    edict = {}
                     tmp = m.embed_dataset(
                         tokenizer=m.tokenizer,
                         sequences=proteins,
@@ -380,9 +379,8 @@ class SeqEmbedder:
                             pooled = v[0, :]
                         else:
                             pooled = v[1:-1, :].mean(dim=0)
-                        edict[k] = (pooled, v)
+                        yield k, pooled, v
                 else:
-                    edict = {}
                     with torch.no_grad():
                         for prot in proteins:
                             tokenized = m.tokenizer(
@@ -394,18 +392,14 @@ class SeqEmbedder:
                             # (1, sequence_len, dim_model)
                             tokens = hidden[hidden_layer][0, 1:-1, :].cpu()
                             if pooling == "cls":
-                                edict[prot] = (
-                                    hidden[hidden_layer][0, 0, :].cpu(),
-                                    tokens,
-                                )
+                                yield prot, hidden[hidden_layer][0, 0, :].cpu(), tokens
                             elif pooling == "mean":
-                                edict[prot] = (tokens.mean(dim=0).cpu(), tokens)
-                return edict
+                                yield prot, tokens.mean(dim=0).cpu(), tokens
 
             cache.save(
                 df[tkey],
                 fn=esmc,
-                batch_size=ceil(df.shape[0] / 5) if not get_hidden else batch_size,
+                batch_size=batch_size,
                 # Use fast batching from huggingface
             )
         else:
@@ -586,7 +580,7 @@ class SeqEmbedder:
 
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-        def seqlens(sequences) -> dict:
+        def seqlens(sequences):
             current = dataset.filter(lambda x: x[text_key] in sequences)
             tokenized = current.map(
                 lambda x: self._tokenize(
@@ -636,13 +630,11 @@ class SeqEmbedder:
                 for i, (e, uid) in enumerate(
                     zip(torch.unbind(embedding, axis=0), torch.unbind(batch["uid"]))
                 ):
-                    # tokens = hidden_masked[i, :, :]
-                    tokens = None
-                    result[uid2seq[uid.cpu().item()]] = e.cpu(), tokens
-            return result
+                    seq = uid2seq[uid.cpu().item()]
+                    yield seq, e.cpu(), hidden_masked[i, :, :]
 
         with torch.no_grad():
-            cache.save(df[text_key], fn=seqlens, batch_size=ceil(df.shape[0] / 5))
+            cache.save(df[text_key], fn=seqlens, batch_size=batch_size)
         df = df.drop("uid")
         return self._finalize_dataset(df, text_key, cache)
 
