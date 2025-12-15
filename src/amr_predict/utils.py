@@ -583,24 +583,24 @@ class EmbeddingCache:
 
     def retrieve(self, keys: Sequence, tokens: bool = False) -> pl.DataFrame:
         col = "token" if tokens else "seq"
-        df: pl.DataFrame = (
+        lf: pl.LazyFrame = (
             duckdb.query(f"""
         SELECT key, {col}
         FROM '{self._glob()}'
         """)
-            .pl()
+            .pl(lazy=True)
             .filter(pl.col("key").is_in(keys))
         )
-        return pl.DataFrame({"key": keys}).join(df, on="key", how="left")
+        return pl.DataFrame({"key": keys}).join(lf.collect(), on="key", how="left")
 
     def _mask_in_df(
-        self, df: pl.DataFrame, column: str, mask_prop: float
+        self, df: pl.LazyFrame, column: str, mask_prop: float, height: int
     ) -> pl.DataFrame:
         return df.with_columns(
             pl.when(
                 pl.Series(
                     self._rng.choice(
-                        [True, False], p=[mask_prop, 1 - mask_prop], size=df.height
+                        [True, False], p=[mask_prop, 1 - mask_prop], size=height
                     )
                 )
             )
@@ -655,50 +655,52 @@ class EmbeddingCache:
             .to_list()
         )
 
-    def rewrite(self, n: int = 10, token_prop: float | None = None) -> None:
+    def rewrite(self, n_rows: int = 100_000, token_prop: float | None = None) -> None:
         "Read all entries into memory, remove duplicates and re-write cache to contain N parquet files"
-        df: pl.DataFrame = self.pl()
-        if token_prop and df["token"].is_not_null().any():
-            df = self._mask_in_df(df, "token", 1 - token_prop)
-        slice_count = ceil(df.height / n)
-        new_files: set = set()
-        for i, frame in enumerate(df.iter_slices(slice_count)):
-            f = self._dir.joinpath(f"{self._prefix}_{i}.parquet")
-            frame.write_parquet(f)
-            new_files.add(f)
-        for file in self._dir.glob(self._glob(False)):
-            if file not in new_files:
-                file.unlink()
+        lf: pl.LazyFrame = self.pl()
+        if token_prop:
+            col = lf.select("token").collect()["token"].is_not_null()
+            if col.any():
+                lf = self._mask_in_df(lf, "token", 1 - token_prop, height=len(col))
+        lf.sink_parquet(
+            pl.PartitionMaxSize(
+                base_path=self._dir,
+                file_path=lambda x: x.full_path.parent.joinpath(
+                    f"{self._prefix}_{x.file_idx}.parquet"
+                ),
+                max_size=n_rows,
+            )
+        )
 
     def _glob(self, with_dir: bool = True) -> str:
         if with_dir:
             return f"{str(self._dir)}/{self._prefix}*.parquet"
         return f"{self._prefix}*.parquet"
 
-    def pl(self, as_array: bool = False) -> pl.DataFrame:
+    def pl(self, as_array: bool = False) -> pl.LazyFrame:
         try:
-            df = (
+            lf = (
                 duckdb.query(f"""
         SELECT *
         FROM '{self._glob()}'
         """)
-                .pl()
+                .pl(lazy=True)
                 .unique("key")
             )
         except duckdb.IOException:
-            return pl.DataFrame()
+            return pl.LazyFrame()
         if not as_array:
-            return df
-        seq_size, token_size = self._peek_size(df)
-        schema = df.schema
+            return lf
+        seq_size, token_size = self._peek_size(lf)
+        schema = lf.collect_schema()
         seq_type = schema["seq"].inner
         new_schema = {
             "seq": pl.Array(seq_type, seq_size),
         }
-        if df.row(0, named=True)["token"] is not None:
+        if lf.head(1).collect()["token"].item() is not None:
             token_type = schema["token"].inner.inner
             new_schema["token"] = pl.List(pl.Array(token_type, token_size))
-        return df.cast(new_schema)
+        return lf.cast(new_schema)
 
     def __contains__(self, key: str) -> bool:
         return key in self._seen
@@ -714,10 +716,10 @@ class EmbeddingCache:
         except duckdb.IOException:
             raise ValueError("no cached files available")
 
-    def _peek_size(self, df: pl.DataFrame) -> tuple[int, int]:
-        vals = df.row(0, named=True)
-        tk = vals["token"]
-        return len(vals["seq"]), len(tk[0]) if tk is not None else 0
+    def _peek_size(self, df: pl.LazyFrame) -> tuple[int, int]:
+        vals = df.head(1).collect()
+        tk = vals["token"].item()
+        return len(vals["seq"].item()), len(tk[0]) if tk is not None else 0
 
     def keys(self):
         return self._seen
