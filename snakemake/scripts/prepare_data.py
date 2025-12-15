@@ -337,8 +337,7 @@ elif smk.rule == "make_embedded_datasets":
                 embedder=SeqEmbedder(
                     method=EMBEDDING,
                     workdir=workdir,
-                    with_tokens=True,  # [2025-12-12 Fri] REVIEW: is this a good idea?
-                    # make this a param in env. File size is so large
+                    with_tokens=CONFIG["save_tokens"],
                     text_key="sequence",
                     **kws,
                 ),

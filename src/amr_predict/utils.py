@@ -20,6 +20,7 @@ from datasets import DatasetDict, Features, Value
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
+from numpy.random import Generator
 from skbio import DNA
 from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
@@ -575,6 +576,8 @@ class EmbeddingCache:
         "_dir",
         "_seen",
         "_with_tokens",
+        "_rng",
+        "_token_prop",
     ]
 
     def retrieve(self, keys: Sequence, tokens: bool = False) -> pl.DataFrame:
@@ -595,6 +598,8 @@ class EmbeddingCache:
         prefix: str = "batch",
         save_interval: int = 10,
         with_tokens: bool = True,
+        token_prop: float | None = None,
+        rng: int | Generator | None = None,
     ) -> None:
         """
 
@@ -603,8 +608,18 @@ class EmbeddingCache:
         save_interval : int
             Number of times batches accumulate before writing a new parquet batch.
             duckdb recommends parquet files to be 100mb-10gb in size
+        token_prop : float | None
+            The proportion of tokens to randomly sample from each batch
+            Likely necessary due to file size constraints
+        rng : int | Generator | None
+            numpy generator object for sampling
         """
         self._dir = dir
+        self._token_prop: float | None = token_prop
+        if rng is None or isinstance(rng, int):
+            self._rng: Generator = np.random.default_rng(rng)
+        else:
+            self._rng = rng
         self._prefix = prefix
         self._save_interval: int = save_interval
         self._with_tokens = with_tokens
@@ -709,7 +724,7 @@ class EmbeddingCache:
             A function that takes a sequence of text and returns a
             dictionary mapping texts to a tuple of
                 (sequence-level embeddings, token-level embeddings)
-            The token-level embeddings are optional
+            The token-level embeddings (a 2D tensor) are optional
         """
         as_set = set(to_embed)
         n_old = len(as_set & self._seen)
@@ -726,9 +741,16 @@ class EmbeddingCache:
                 self._write(dfs)
                 raise e
             keys, values = zip(*embedded.items())
+            token_level: list[Tensor]  # List of 2D tensors
             seq_level, token_level = zip(*values)
             if not self._with_tokens:
                 token_level = [None for _ in range(len(keys))]
+            elif self._token_prop is not None:
+                idx = self._rng.choice(np.arange(len(token_level)))
+                token_level = [
+                    token_level[i] if i in idx else None
+                    for i in range(len(token_level))
+                ]
             grouped = torch.vstack(seq_level)
             if grouped.shape[0] != len(embedded):
                 raise ValueError("Embedding vectors must be 1D")

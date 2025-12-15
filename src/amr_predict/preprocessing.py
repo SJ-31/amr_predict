@@ -633,10 +633,11 @@ class SeqEmbedder:
                         ],
                         dim=1,
                     )
-                for i, e, uid in enumerate(
+                for i, (e, uid) in enumerate(
                     zip(torch.unbind(embedding, axis=0), torch.unbind(batch["uid"]))
                 ):
-                    tokens = hidden_masked[i, :, :]
+                    # tokens = hidden_masked[i, :, :]
+                    tokens = None
                     result[uid2seq[uid.cpu().item()]] = e.cpu(), tokens
             return result
 
