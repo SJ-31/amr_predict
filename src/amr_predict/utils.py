@@ -753,47 +753,47 @@ class EmbeddingCache:
         dfs = []
         for batch in itertools.batched(set(to_embed), n=batch_size):
             try:
-                embedded: dict = fn(batch)
+                tmp = {"key": [], "seq": [], "token": []}
+                schema: dict = {"key": pl.String}
+                for keys, seq_level, token_level in fn(batch):
+                    if len(seq_level.shape) != 1:
+                        raise ValueError("Embedding vectors must be 1D")
+                    if token_level is not None and len(token_level.shape) != 2:
+                        raise ValueError("Token-level embeddings must all be 2D")
+                    if (
+                        self._with_tokens
+                        and "token" not in schema
+                        and token_level is not None
+                    ):
+                        schema["token"] = pl.List(pl.List(torch2pl(token_level.dtype)))
+                    if "seq" not in schema:
+                        schema["seq"] = pl.List(torch2pl(seq_level.dtype))
+                    tmp["key"].append(keys)
+                    tmp["seq"].append(seq_level)  # Tensor
+                    if not self._with_tokens:
+                        tmp["token"].append(None)
+                    elif self._token_prop is None or (
+                        self._rng.choice(
+                            [True, False], [self._token_prop, 1 - self._token_prop]
+                        )
+                    ):
+                        tmp["token"].append(token_level)  # 2D tensor
+
+                if "token" not in schema:
+                    schema["token"] = None
+                df = pl.DataFrame(tmp, schema=schema)
+                self._seen |= set(df["key"])
+                dfs.append(df)
+                if counter == self._save_interval:
+                    self._write(dfs)
+                    dfs = []
+                    counter = 0
+                else:
+                    counter += 1
             except Exception as e:
                 self._write(dfs)
                 raise e
-            keys, values = zip(*embedded.items())
-            token_level: list[Tensor]  # List of 2D tensors
-            seq_level, token_level = zip(*values)
-            if not self._with_tokens:
-                token_level = [None for _ in range(len(keys))]
-            grouped = torch.vstack(seq_level)
-            if grouped.shape[0] != len(embedded):
-                raise ValueError("Embedding vectors must be 1D")
-            if (
-                len(embedded) > 0
-                and next(iter(token_level)) is not None
-                and any([len(tk.shape) != 2 for tk in token_level])
-            ):
-                raise ValueError("Token-level embeddings should all be 2D")
 
-            if (tk := next(iter(token_level))) is not None:
-                token_dtype = torch2pl(tk.dtype)
-                schema = {
-                    "token": pl.List(pl.List(token_dtype)),
-                    "key": pl.String,
-                    "seq": pl.List(torch2pl(next(iter(seq_level)).dtype)),
-                }
-            else:
-                schema = None
-            df = pl.DataFrame(
-                {"key": keys, "seq": grouped, "token": token_level}, schema=schema
-            )
-            if self._token_prop is not None:
-                df = self._mask_in_df(df, "token", 1 - self._token_prop)
-            self._seen |= set(keys)
-            dfs.append(df)
-            if counter == self._save_interval:
-                self._write(dfs)
-                dfs = []
-                counter = 0
-            else:
-                counter += 1
         self._write(dfs)
 
     def _write(self, dfs: list[pl.DataFrame]) -> None:

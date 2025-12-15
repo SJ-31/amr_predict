@@ -25,25 +25,19 @@ dummy_df.with_columns(
 dummy_df.filter(rng.choice([True, False], p=[0.3, 0.7], size=dummy_df.height))
 
 
-def dummy_embed(texts) -> dict:
+def dummy_embed(texts):
     ncol = 3
     mapping = dict(zip(ascii_letters, range(len(ascii_letters))))
 
     def embed(text):
         return torch.tensor([mapping[text[i]] for i in range(ncol)])
 
-    return dict(
-        zip(
-            texts,
-            [
-                (
-                    embed(t),
-                    torch.vstack([embed(t) for _ in range(torch.randint(2, 10, (1,)))]),
-                )
-                for t in texts
-            ],
+    for t in texts:
+        yield (
+            t,
+            embed(t),
+            torch.vstack([embed(t) for _ in range(torch.randint(2, 10, (1,)))]),
         )
-    )
 
 
 @pytest.fixture
