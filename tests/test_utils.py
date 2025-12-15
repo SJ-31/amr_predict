@@ -2,11 +2,27 @@
 
 from string import ascii_letters
 
+import numpy as np
+import polars as pl
+import pytest
 import torch
 from amr_predict.utils import EmbeddingCache
 from loguru import logger
 
 logger.enable("amr_predict")
+
+rng = np.random.default_rng()
+
+dummy_df = pl.DataFrame({"a": list(ascii_letters), "b": torch.rand(len(ascii_letters))})
+
+dummy_df.with_columns(
+    pl.when(pl.Series(rng.choice([True, False], p=[0.3, 0.7], size=dummy_df.height)))
+    .then(pl.lit(None))
+    .otherwise(pl.col("a"))
+    .alias("a")
+)["a"].value_counts()
+
+dummy_df.filter(rng.choice([True, False], p=[0.3, 0.7], size=dummy_df.height))
 
 
 def dummy_embed(texts) -> dict:
@@ -30,11 +46,11 @@ def dummy_embed(texts) -> dict:
     )
 
 
-def test_cache1(tmp_path):
+@pytest.fixture
+def default_cache(tmp_path) -> tuple[EmbeddingCache, list]:
     path = tmp_path / ".cache"
     path.mkdir()
-    cache: EmbeddingCache = EmbeddingCache(path, save_interval=2)
-    assert cache.pl().height == 0
+    cache: EmbeddingCache = EmbeddingCache(path, save_interval=1)
     words = [
         "forest",
         "crane",
@@ -52,12 +68,19 @@ def test_cache1(tmp_path):
         "flame",
         "harbor",
     ]
-    cache.save(words, fn=dummy_embed, batch_size=3)
+    cache.save(words, fn=dummy_embed, batch_size=2)
+    return cache, words
+
+
+def test_cache1(default_cache):
+    cache: EmbeddingCache
+    cache, words = default_cache
     assert "bridge" in cache
     assert "foo" not in cache
     assert len(cache) == len(words)
     assert cache.pl().height == len(words)
     print(cache.pl(as_array=True))
+    path = cache._dir
 
     assert (cache["forest"] == torch.tensor([5, 14, 17])).all()
     assert (cache["harbor"] == torch.tensor([7, 0, 17])).all()
@@ -93,3 +116,17 @@ def test_cache1(tmp_path):
     cache.save(dupes, fn=dummy_embed, batch_size=5)
     assert old_len == len(cache)
     print(cache.retrieve(["cascade", "meadow", "spice"]))
+
+
+def test_cache2(default_cache):
+    cache: EmbeddingCache
+    cache, words = default_cache
+    cache.rewrite(n=2)
+    assert len(list(cache._dir.iterdir())) == 2
+    prop = 0.3
+    cache.rewrite(n=2, token_prop=prop)
+    df = cache.pl()
+    null_count = df.filter(pl.col("token").is_not_null()).height
+    print(null_count)
+    print(df.height * prop)
+    assert pytest.approx(null_count, abs=1) == df.height * prop

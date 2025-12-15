@@ -578,6 +578,7 @@ class EmbeddingCache:
         "_with_tokens",
         "_rng",
         "_token_prop",
+        "_seed",
     ]
 
     def retrieve(self, keys: Sequence, tokens: bool = False) -> pl.DataFrame:
@@ -592,6 +593,22 @@ class EmbeddingCache:
         )
         return pl.DataFrame({"key": keys}).join(df, on="key", how="left")
 
+    def _mask_in_df(
+        self, df: pl.DataFrame, column: str, mask_prop: float
+    ) -> pl.DataFrame:
+        return df.with_columns(
+            pl.when(
+                pl.Series(
+                    self._rng.choice(
+                        [True, False], p=[mask_prop, 1 - mask_prop], size=df.height
+                    )
+                )
+            )
+            .then(pl.lit(None))
+            .otherwise(pl.col(column))
+            .alias(column)
+        )
+
     def __init__(
         self,
         dir: Path,
@@ -599,7 +616,7 @@ class EmbeddingCache:
         save_interval: int = 10,
         with_tokens: bool = True,
         token_prop: float | None = None,
-        rng: int | Generator | None = None,
+        seed: int | None = None,
     ) -> None:
         """
 
@@ -611,15 +628,13 @@ class EmbeddingCache:
         token_prop : float | None
             The proportion of tokens to randomly sample from each batch
             Likely necessary due to file size constraints
-        rng : int | Generator | None
-            numpy generator object for sampling
+        seed : int | None
+            Seed for random sampling operations
         """
         self._dir = dir
         self._token_prop: float | None = token_prop
-        if rng is None or isinstance(rng, int):
-            self._rng: Generator = np.random.default_rng(rng)
-        else:
-            self._rng = rng
+        self._rng: Generator = np.random.default_rng(seed)
+        self._seed: int = seed
         self._prefix = prefix
         self._save_interval: int = save_interval
         self._with_tokens = with_tokens
@@ -640,9 +655,11 @@ class EmbeddingCache:
             .to_list()
         )
 
-    def rewrite(self, n: int = 10) -> None:
+    def rewrite(self, n: int = 10, token_prop: float | None = None) -> None:
         "Read all entries into memory, remove duplicates and re-write cache to contain N parquet files"
         df: pl.DataFrame = self.pl()
+        if token_prop and df["token"].is_not_null().any():
+            df = self._mask_in_df(df, "token", 1 - token_prop)
         slice_count = ceil(df.height / n)
         new_files: set = set()
         for i, frame in enumerate(df.iter_slices(slice_count)):
@@ -745,12 +762,6 @@ class EmbeddingCache:
             seq_level, token_level = zip(*values)
             if not self._with_tokens:
                 token_level = [None for _ in range(len(keys))]
-            elif self._token_prop is not None:
-                idx = self._rng.choice(np.arange(len(token_level)))
-                token_level = [
-                    token_level[i] if i in idx else None
-                    for i in range(len(token_level))
-                ]
             grouped = torch.vstack(seq_level)
             if grouped.shape[0] != len(embedded):
                 raise ValueError("Embedding vectors must be 1D")
@@ -773,6 +784,8 @@ class EmbeddingCache:
             df = pl.DataFrame(
                 {"key": keys, "seq": grouped, "token": token_level}, schema=schema
             )
+            if self._token_prop is not None:
+                df = self._mask_in_df(df, "token", 1 - self._token_prop)
             self._seen |= set(keys)
             dfs.append(df)
             if counter == self._save_interval:
