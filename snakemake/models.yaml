@@ -10,3 +10,5 @@ models:
     dataloader:
       batch_size: 5
     # trainer: # TODO: specify model-specific trainer
+  BatchTopK:
+    kws:
