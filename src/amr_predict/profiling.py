@@ -6,7 +6,7 @@ from subprocess import run
 import memray
 
 
-def memray_from_smk(env: dict, fn, outfile, env_key: str = "memray"):
+def memray_from_smk(env: dict, fn, bin_out, env_key: str = "memray"):
     """Call top-level function `fn` with memray profiling if it is set up in the
     snakemake configuration
 
@@ -18,6 +18,8 @@ def memray_from_smk(env: dict, fn, outfile, env_key: str = "memray"):
 
     ENV_KEY:
       run: False
+      kws: # keyword arguments for memray.Tracker
+        follow_fork: True
       flamegraph:
           run: True
           kws: # Any valid flags for the `memray flamegraph` CLI command
@@ -36,11 +38,12 @@ def memray_from_smk(env: dict, fn, outfile, env_key: str = "memray"):
         tb: dict = cfg.get("table", {})
         memray_wrapper(
             fn,
-            outfile=outfile,
+            bin_out=bin_out,
             flamegraph=fg.get("run"),
             flamegraph_kws=fg.get("kws", {}),
             table=tb.get("run"),
             table_kws=tb.get("kws", {}),
+            **cfg.get("kws"),
         )
     else:
         fn()

@@ -471,10 +471,14 @@ class SeqEmbedder:
                     raise ValueError("Evo2 failed to generate predictions")
                 with open(outdir / "seq_idx_map.json", "rb") as f:
                     id_map: dict = json.load(f)
+                lf: pl.LazyFrame = pl.scan_parquet(embeddings)
+                # for row in lf.
+                # TODO: need to read this lazily, otherwise your memory is screwed
                 id_df: pl.DataFrame = pl.DataFrame(
                     {"seqid": id_map.keys(), "id": id_map.values()}
                 )
                 joined = embeddings.join(id_df, on="id").drop("id")
+
                 return {
                     s: (v, None)  # TODO: replace 'None' with token-level embeddings
                     for s, v in zip(
