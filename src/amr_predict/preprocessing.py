@@ -51,11 +51,13 @@ class SeqEmbedder:
         workdir: Path | None = None,
         with_tokens: bool = True,
         save_interval: int = 10,
+        only_cache: bool = True,
         **kwargs,
     ):
         self.method: EMBEDDING_METHODS = method
         self.kwargs: dict = kwargs
         self.with_tokens = with_tokens
+        self.only_cache: bool = only_cache
         self.save_interval = save_interval
         if workdir is None and self.method not in {"kmer", "feature_presence"}:
             name = f"{method}-work_{uuid.uuid4().hex}"
@@ -64,7 +66,7 @@ class SeqEmbedder:
         else:
             self.workdir = workdir
 
-    def __call__(self, dataset: Dataset | None) -> Dataset:
+    def __call__(self, dataset: Dataset | None) -> Dataset | None:
         if self.method not in {"kmer", "feature_presence"} and dataset is None:
             raise ValueError("The selected method requires a preprocessed dataset")
         if self.method == "seqLens":
@@ -414,18 +416,11 @@ class SeqEmbedder:
         cache: EmbeddingCache,
         cols_remove: str | None = None,
     ) -> Dataset:
-        result = cache.to_dataset(dataset_df, key_col=text_key)
-        # gen = gen_from_cached(
-        #     dataset_df, text_key, cache, drop_null_columns=True, new_col="embedding"
-        # )
-        # features: Features = features_from_df(dataset_df, "large_string")
-        # features["embedding"] = List(torch2hf(torch.get_default_dtype()))
-        # if text_key in features:
-        #     del features[text_key]
-        # result: Dataset = Dataset.from_generator(gen, features=features)
-        if cols_remove is not None:
-            result = result.remove_columns(cols_remove)
-        return result
+        if not self.only_cache:
+            result = cache.to_dataset(dataset_df, key_col=text_key)
+            if cols_remove is not None:
+                result = result.remove_columns(cols_remove)
+            return result
 
     def _evo2_embed(
         self,
@@ -589,19 +584,22 @@ class SeqEmbedder:
                 batched=True,
                 remove_columns=to_remove,
             )
+            logger.info("Tokenization complete")
             uid2seq = dict(zip(current["uid"][:], current[text_key][:]))
 
             loader = DataLoader(
                 tokenized, batch_size=batch_size, collate_fn=data_collator
             )
-            result: dict = {}
-            for batch in loader:
+            for i, batch in enumerate(loader):
+                # logger.debug(f"beginning batch {i}")
                 input_ids = batch["input_ids"].to(device)
                 attention_mask = batch["attention_mask"].to(device)
                 output: MaskedLMOutput = model(
                     input_ids=input_ids, attention_mask=attention_mask
                 )
-                last_hidden = output.hidden_states[-1]
+                attention_mask = attention_mask.to("cpu")
+                # logger.debug(f"batch {i} complete")
+                last_hidden = output.hidden_states[-1].to("cpu")
                 # This has shape (batch_size, sequence_length, hidden_size)
                 # Mask out padding
                 expanded_mask = attention_mask.unsqueeze(-1).expand_as(last_hidden)
@@ -631,10 +629,12 @@ class SeqEmbedder:
                     zip(torch.unbind(embedding, axis=0), torch.unbind(batch["uid"]))
                 ):
                     seq = uid2seq[uid.cpu().item()]
-                    yield seq, e.cpu(), hidden_masked[i, :, :]
+                    # token = hidden_masked[i, :, :]
+                    token = None
+                    yield seq, e, token
 
         with torch.no_grad():
-            cache.save(df[text_key], fn=seqlens, batch_size=batch_size)
+            cache.save(df[text_key], fn=seqlens, batch_size=ceil(df.height / 5))
         df = df.drop("uid")
         return self._finalize_dataset(df, text_key, cache)
 

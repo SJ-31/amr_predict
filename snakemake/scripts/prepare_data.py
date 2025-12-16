@@ -340,6 +340,8 @@ def main():
                     embedder=SeqEmbedder(
                         method=EMBEDDING,
                         workdir=workdir,
+                        only_cache=True,  # WARNING: [2025-12-16 Tue] cache.to_dataset is
+                        # highly memory-intensive, so don't use it
                         with_tokens=CONFIG["save_tokens"],
                         text_key="sequence",
                         **kws,
