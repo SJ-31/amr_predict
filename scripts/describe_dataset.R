@@ -41,6 +41,10 @@ plot_helper <- function(plot, name, width = 15, height = 10) {
   )
 }
 
+save_tb_helper <- function(x, name) {
+  write_tsv(x, here(OUT, glue("{name}-{DATE}.tsv")))
+}
+
 ## * Load data
 
 aware <- aware %>%
@@ -160,3 +164,5 @@ valid_for_splits <- cfs$tables |>
       mutate(antibiotic = am)
   }) |>
   bind_rows()
+
+save_tb_helper(valid_for_splits, "amr_classes_genus_counts")

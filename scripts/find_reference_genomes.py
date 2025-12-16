@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import polars as pl
+from loguru import logger
 from pyhere import here
 
 META: Path = here("data", "meta")
@@ -75,8 +76,13 @@ def download_preview(acc) -> dict:
         with open(outfile, "w") as f:
             json.dump(res, f)
     else:
-        with open(outfile, "w") as f:
-            res = json.load(res)
+        with open(outfile, "r") as f:
+            try:
+                res = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Decode error when reading {outfile}")
+                logger.exception(e)
+                return {}
     return {acc: res}
 
 

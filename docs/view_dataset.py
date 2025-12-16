@@ -181,7 +181,7 @@ def _(META, dfs, here, pl):
     ref_df = pl.concat(dfs)
     ref_df.write_csv(here(META, "reference_genomes.tsv"), separator="\t")
     here("data", "temp", "reference_accs.txt").write_text(
-        "\n".join("Assembly Accession")
+        "\n".join(ref_df["Assembly Accession"])
     )
     return
 
