@@ -74,7 +74,10 @@ CACHE_CHECKS = ([f"{DATA_OUTS['E']}/{d}_{EMBEDDING}_cache.complete" for d in TO_
 
 
 def default_log(rule_name):
-    return f"{LOGDIR}/prepare_data-{rule_name}.log"
+    return {
+        "log": f"{LOGDIR}/prepare_data-{rule_name}.log",
+        "profile": f"{LOGDIR}/prepare_data-{rule_name}_mem.bin",
+    }
 
 
 def get_pooled_out(as_dir: bool = False):
@@ -102,7 +105,7 @@ rule get_seq_metadata:
     output:
         rules.all.input.meta,
     log:
-        default_log("get_seq_metadata"),
+        **default_log("get_seq_metadata"),
     script:
         "scripts/prepare_data.py"
 
@@ -114,7 +117,7 @@ rule make_text_datasets:
     input:
         rules.get_seq_metadata.output,
     log:
-        default_log("make_text_datasets"),
+        **default_log("make_text_datasets"),
     params:
         outdir=DATA_OUTS["S"],
         outdir_pooled=DATA_OUTS["P"],
@@ -127,7 +130,7 @@ rule make_embedded_datasets:
     input:
         rules.make_text_datasets.output,
     log:
-        default_log("make_embedded_datasets"),
+        **default_log("make_embedded_datasets"),
     params:
         outdir=DATA_OUTS["E"],
         ignore=POOLED_ALREADY,
@@ -145,7 +148,7 @@ rule pool_embeddings:
         textdir=DATA_OUTS["S"],
         plotdir=PLOT_OUT,
     log:
-        default_log("pool_embeddings"),
+        **default_log("pool_embeddings"),
     output:
         get_pooled_out(True),
         POOLED_PLOTS,
