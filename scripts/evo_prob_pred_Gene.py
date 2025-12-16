@@ -27,6 +27,7 @@ from typing import Literal, Optional
 import nemo.lightning as nl
 import numpy as np
 import pandas as pd
+import polars as pl
 import torch
 from bionemo.evo2.data.fasta_dataset import SimpleFastaDataset
 from bionemo.llm.lightning import LightningPassthroughPredictionMixin
@@ -100,7 +101,7 @@ class HyenaPredictor(LightningPassthroughPredictionMixin, HyenaModel):
         # print(self.tokenizer.ids_to_tokens(token_numpy[-1]))
         # print(token_numpy[-1], token_numpy[-2])
 
-        forward_out, embedding_out = self.forward_step(batch)
+        forward_out, embedding_out, tokens = self.forward_step(batch)
 
         if not isinstance(forward_out, Tensor) and not isinstance(
             embedding_out, Tensor
@@ -141,6 +142,7 @@ class HyenaPredictor(LightningPassthroughPredictionMixin, HyenaModel):
                 "log_probs_seqs": log_prob_seqs.cpu(),
                 "seq_idx": batch["seq_idx"].cpu(),
                 "embedding": embedding_out,
+                "tokens": tokens,
                 "sequence_length": batch["loss_mask"][:, 1:].float().sum(dim=-1).cpu(),
             }
         else:
@@ -150,10 +152,13 @@ class HyenaPredictor(LightningPassthroughPredictionMixin, HyenaModel):
                 "pad_mask": batch["loss_mask"].cpu(),
                 "seq_idx": batch["seq_idx"].cpu(),
                 "embedding": embedding_out,
+                "tokens": tokens,
             }
 
 
-def hyena_predict_forward_step(model, batch) -> torch.Tensor:
+def hyena_predict_forward_step(
+    model, batch, layer: int, with_tokens: bool
+) -> torch.Tensor:
     """Performs a forward step for the Hyena model.
 
     Args:
@@ -189,14 +194,15 @@ def hyena_predict_forward_step(model, batch) -> torch.Tensor:
 
     # Choose layer for embedding
     model._modules["module"].module.module.decoder.layers[
-        30
+        layer
     ].mlp.linear_fc2.register_forward_hook(get_activation("embedding_output"))
 
     model_output = model(**forward_args)
 
     avg_embedding_output = torch.sum(activations["embedding_output"], axis=0)
+    tokens = None if not with_tokens else activations["embedding_output"]
 
-    return model_output, avg_embedding_output
+    return model_output, avg_embedding_output, tokens
 
 
 def hyena_predict_data_step(dataloader_iter) -> dict[str, torch.Tensor]:
@@ -276,6 +282,8 @@ def predict(
     json_output_path: Path,
     parquet_output_path: Path,
     tensor_parallel_size: int,
+    layer: int,
+    with_tokens: bool,
     pipeline_model_parallel_size: int,
     context_parallel_size: int,
     model_size: str = "7b",
@@ -364,7 +372,9 @@ def predict(
         config_modifiers_init["num_layers"] = num_layers
 
     config = HYENA_MODEL_OPTIONS[model_size](
-        forward_step_fn=hyena_predict_forward_step,
+        forward_step_fn=lambda model, batch: hyena_predict_forward_step(
+            model=model, batch=batch, layer=layer, with_tokens=with_tokens
+        ),
         data_step_fn=hyena_predict_data_step,  # , attention_backend=AttnBackend.fused,
         distribute_saved_activations=False
         if sequence_parallel and tensor_parallel_size > 1
@@ -418,9 +428,14 @@ def predict(
     processed_prediction = None
     sequence_length = 0
     all_embeddings = []
+    all_tokens = []
     ids = []
     for i in range(len(prediction)):
         pred = prediction[i]["embedding"].float().detach().cpu().numpy()
+        tokens = prediction[i]["tokens"]
+        if tokens is not None:
+            tokens = tokens.float().detach().cpu().numpy()
+            all_tokens.append(tokens)
         if i == 0:
             processed_prediction = pred
         else:
@@ -438,11 +453,20 @@ def predict(
         "avg_embedding": processed_prediction.tolist(),
         "sequence_length": sequence_length,
     }
-    edf: pd.DataFrame = pd.DataFrame(np.array(all_embeddings)).assign(id=ids)
+    size = len(all_embeddings[0])  # Should be 4096
+    to_df = {"embeddings": all_embeddings, "id": ids}
+    schema = {"embeddings": pl.Array(pl.Float32, size), "id": pl.String}
+    if not with_tokens:
+        schema["tokens"] = pl.Null
+        to_df["tokens"] = None
+    else:
+        to_df["tokens"] = all_tokens
+        schema["tokens"] = pl.List(pl.Array(pl.Float32, size))
+    edf: pl.DataFrame = pl.DataFrame(to_df, schema=schema)
 
     with open(json_output_path, "w") as json_file:
         json.dump(prediction_json, json_file)
-    edf.to_parquet(parquet_output_path, index=False)
+    edf.write_parquet(parquet_output_path)
 
     print("Write files")
     dataset.write_idx_map(
@@ -455,6 +479,20 @@ def parse_args():
     parser.add_argument("-c", "--checkpoint_path", required=True)
     parser.add_argument("-i", "--input", required=True)
     parser.add_argument("-o", "--outdir", required=True)
+    parser.add_argument(
+        "-t",
+        "--tokens",
+        default=True,
+        help="Whether to save individual token embeddings",
+        action="store_true",
+    )
+    parser.add_argument(
+        "-l",
+        "--layer",
+        default=30,
+        help="Layer from which to get embeddings from. Between [0, 30]",
+        action="store",
+    )
     args = vars(parser.parse_args())  # convert to dict
     return args
 
@@ -478,6 +516,7 @@ if __name__ == "__main__":
                     tensor_parallel_size=1,
                     pipeline_model_parallel_size=1,
                     context_parallel_size=1,
+                    layer=args["layer"],
                     batch_size=1,
                     output_dir=outdir,
                     json_output_path=json_out,
@@ -497,6 +536,8 @@ if __name__ == "__main__":
             tensor_parallel_size=1,
             pipeline_model_parallel_size=1,
             context_parallel_size=1,
+            layer=args["layer"],
+            with_tokens=args["tokens"],
             batch_size=1,
             output_dir=outdir,
             json_output_path=json_out,
