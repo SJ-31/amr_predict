@@ -340,7 +340,11 @@ class SeqEmbedder:
                     # Otherwise
                     #  (1, sequence_len, dim_model)
                     if get_hidden:
-                        tokens = target[hidden_layer, 0, 1:-1, :]
+                        tokens = (
+                            target[hidden_layer, 0, 1:-1, :]
+                            if self.with_tokens
+                            else None
+                        )
                     else:
                         tokens = target[0, 1:-1, :]
                     if pooling == "cls" and get_hidden:
@@ -392,7 +396,11 @@ class SeqEmbedder:
                             hidden = output.hidden_states
                             # Each element of hidden is a tensor with shape
                             # (1, sequence_len, dim_model)
-                            tokens = hidden[hidden_layer][0, 1:-1, :].cpu()
+                            tokens = (
+                                hidden[hidden_layer][0, 1:-1, :].cpu()
+                                if self.with_tokens
+                                else None
+                            )
                             if pooling == "cls":
                                 yield prot, hidden[hidden_layer][0, 0, :].cpu(), tokens
                             elif pooling == "mean":
@@ -633,8 +641,7 @@ class SeqEmbedder:
                     zip(torch.unbind(embedding, axis=0), torch.unbind(batch["uid"]))
                 ):
                     seq = uid2seq[uid.cpu().item()]
-                    # token = hidden_masked[i, :, :]
-                    token = None
+                    token = hidden_masked[i, :, :] if self.with_tokens else None
                     yield seq, e, token
 
         with torch.no_grad():
