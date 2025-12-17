@@ -141,8 +141,9 @@ class HyenaPredictor(LightningPassthroughPredictionMixin, HyenaModel):
             return {
                 "log_probs_seqs": log_prob_seqs.cpu(),
                 "seq_idx": batch["seq_idx"].cpu(),
-                "embedding": embedding_out,
-                "tokens": tokens,
+                # WARNING: sending them to cpu here is essential to prevent segfault
+                "embedding": embedding_out.cpu(),
+                "tokens": tokens.cpu(),
                 "sequence_length": batch["loss_mask"][:, 1:].float().sum(dim=-1).cpu(),
             }
         else:
@@ -151,8 +152,8 @@ class HyenaPredictor(LightningPassthroughPredictionMixin, HyenaModel):
                 "token_logits": forward_out_gathered.cpu(),
                 "pad_mask": batch["loss_mask"].cpu(),
                 "seq_idx": batch["seq_idx"].cpu(),
-                "embedding": embedding_out,
-                "tokens": tokens,
+                "embedding": embedding_out.cpu(),
+                "tokens": tokens.cpu(),
             }
 
 
@@ -425,37 +426,23 @@ def predict(
 
     prediction = trainer.predict(model, datamodule=datamodule)
 
-    processed_prediction = None
-    sequence_length = 0
     all_embeddings = []
     all_tokens = []
     ids = []
     for i in range(len(prediction)):
-        pred = prediction[i]["embedding"].float().detach().cpu().numpy()
+        pred = prediction[i]["embedding"].float().detach().numpy()
+        # This is the problem here
         tokens = prediction[i]["tokens"]
         if tokens is not None:
-            tokens = tokens.float().detach().cpu().numpy()
+            tokens = tokens.float().detach().numpy()[:, 0, :]
+            # TODO: n tokens is 1 + sequence length. Do you remove the first or last?
             all_tokens.append(tokens)
-        if i == 0:
-            processed_prediction = pred
-        else:
-            processed_prediction += pred
         all_embeddings.append(pred[0])
         ids.append(prediction[i]["seq_idx"].numpy()[0])
 
-        sequence_length += (
-            prediction[i]["sequence_length"].float().detach().cpu().numpy().tolist()[0]
-        )
-
-    processed_prediction = processed_prediction / sequence_length
-
-    prediction_json = {
-        "avg_embedding": processed_prediction.tolist(),
-        "sequence_length": sequence_length,
-    }
     size = len(all_embeddings[0])  # Should be 4096
-    to_df = {"embeddings": all_embeddings, "id": ids}
-    schema = {"embeddings": pl.Array(pl.Float32, size), "id": pl.String}
+    to_df = {"embeddings": all_embeddings, "id": pl.Series(ids)}
+    schema = {"embeddings": pl.Array(pl.Float32, size), "id": pl.Int64}
     if not with_tokens:
         schema["tokens"] = pl.Null
         to_df["tokens"] = None
@@ -464,11 +451,8 @@ def predict(
         schema["tokens"] = pl.List(pl.Array(pl.Float32, size))
     edf: pl.DataFrame = pl.DataFrame(to_df, schema=schema)
 
-    with open(json_output_path, "w") as json_file:
-        json.dump(prediction_json, json_file)
+    print("Writing files...")
     edf.write_parquet(parquet_output_path)
-
-    print("Write files")
     dataset.write_idx_map(
         output_dir
     )  # Finally write out the index map so we can match the predictions to the original sequences.
@@ -505,6 +489,9 @@ if __name__ == "__main__":
     if not checkpoint_path.exists():
         raise ValueError("Model checkpoint not found")
     extensions = {".fasta", ".fa", ".fna"}
+    if args["tokens"]:
+        print("INFO: saving token-level embeddings")
+    print(f"INFO: saving embedding at layer {args['layer']}")
     if input.is_dir():
         for file in input.iterdir():
             if file.suffix in extensions:
