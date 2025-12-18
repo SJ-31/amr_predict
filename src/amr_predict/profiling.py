@@ -40,10 +40,10 @@ def memray_from_smk(env: dict, fn, bin_out, env_key: str = "memray"):
             fn,
             bin_out=bin_out,
             flamegraph=fg.get("run"),
-            flamegraph_kws=fg.get("kws", {}),
+            flamegraph_kws=fg.get("kws", {}) or {},
             table=tb.get("run"),
-            table_kws=tb.get("kws", {}),
-            **cfg.get("kws"),
+            table_kws=tb.get("kws", {}) or {},
+            **cfg.get("kws", {}) or {},
         )
     else:
         fn()
