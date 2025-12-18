@@ -201,7 +201,7 @@ class BaseNN(L.LightningModule):
         self.cfg.scheduler_config = lr_scheduler_config
 
     @override
-    def configure_optimizers(self) -> OptimizerLRSchedulerConfig:
+    def configure_optimizers(self):
         if self.cfg.optimizer_fn is not None:
             optimizer = self.cfg.optimizer_fn(self.named_parameters())
         else:
@@ -217,7 +217,7 @@ class BaseNN(L.LightningModule):
             )
         else:
             lr_scheduler_config["scheduler"] = self.cfg.scheduler_fn(optimizer)
-        return {"optimizer": optimizer, "lr_scheduler_config": lr_scheduler_config}
+        return optimizer
 
     @override
     def forward(self, X):
@@ -283,7 +283,7 @@ class BaseNN(L.LightningModule):
             )
         elif not self.supervised:
             y = None
-        else:
+        elif isinstance(self.task_names, str):
             y = batch[self.task_names]
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, batch=batch, context="train")

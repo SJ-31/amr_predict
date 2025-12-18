@@ -39,6 +39,9 @@ def get_default_cfg():
         # (Batch)TopKSAE specific
         "top_k": 32,
         "top_k_aux": 512,
+        "top_k_threshold_lr": 0.01,  # SAELens' implementation of BatchTopK
+        # "Learning rate for updating the global topk threshold.
+        # The threshold is updated using an exponential moving average of the minimum positive activation value"
         "aux_penalty": (1 / 32),
         # for jumprelu
         "bandwidth": 0.001,
@@ -113,7 +116,8 @@ class BatchTopKSAE(BaseAutoencoder):
 
         x_cent = x - self.b_dec
         acts = F.relu(x_cent @ self.W_enc)
-        acts_topk = torch.topk(acts.flatten(), self.cfg["top_k"] * x.shape[0], dim=-1)
+        n_samples = x.shape[0]
+        acts_topk = torch.topk(acts.flatten(), self.cfg["top_k"] * n_samples, dim=-1)
         acts_topk = (
             torch.zeros_like(acts.flatten())
             .scatter(-1, acts_topk.indices, acts_topk.values)
