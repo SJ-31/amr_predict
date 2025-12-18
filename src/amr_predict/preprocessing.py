@@ -25,7 +25,7 @@ from amr_predict.utils import (
     split_features,
     translate_df,
 )
-from datasets import concatenate_datasets
+from datasets import concatenate_datasets, disable_progress_bar
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
@@ -41,6 +41,7 @@ EMBEDDING_METHODS: TypeAlias = Literal[
     "seqLens", "Evo2", "kmer", "feature_presence", "esm"
 ]
 
+disable_progress_bar()
 logger.disable("amr_predict")
 
 
@@ -57,6 +58,10 @@ class SeqEmbedder:
         self.method: EMBEDDING_METHODS = method
         self.kwargs: dict = kwargs
         self.with_tokens = with_tokens
+        if self.with_tokens:
+            logger.warning(
+                "Embedder set to save tokens. Ensure you have enough memory and space"
+            )
         self.only_cache: bool = only_cache
         self.save_interval = save_interval
         if workdir is None and self.method not in {"kmer", "feature_presence"}:
@@ -285,7 +290,7 @@ class SeqEmbedder:
         hidden_layer: int | None = None,
         batch_size=5,
         degenerate_handling: Literal["ignore", "random", "error"] = "random",
-    ) -> Dataset:
+    ) -> Dataset | None:
         """Embed nucleotide sequences with an esm model after translating into protein
 
         Parameters
@@ -339,14 +344,12 @@ class SeqEmbedder:
                     #    (n_hidden, 1, sequence_len, dim_model)
                     # Otherwise
                     #  (1, sequence_len, dim_model)
-                    if get_hidden:
-                        tokens = (
-                            target[hidden_layer, 0, 1:-1, :]
-                            if self.with_tokens
-                            else None
-                        )
-                    else:
+                    if get_hidden and self.with_tokens:
+                        tokens = target[hidden_layer, 0, 1:-1, :]
+                    elif self.with_tokens:
                         tokens = target[0, 1:-1, :]
+                    else:
+                        tokens = None
                     if pooling == "cls" and get_hidden:
                         embedding = target[hidden_layer, 0, 0, :]
                     elif pooling == "cls":
@@ -397,9 +400,9 @@ class SeqEmbedder:
                             # Each element of hidden is a tensor with shape
                             # (1, sequence_len, dim_model)
                             tokens = (
-                                hidden[hidden_layer][0, 1:-1, :].cpu()
-                                if self.with_tokens
-                                else None
+                                None
+                                if not self.with_tokens
+                                else hidden[hidden_layer][0, 1:-1, :].cpu()
                             )
                             if pooling == "cls":
                                 yield prot, hidden[hidden_layer][0, 0, :].cpu(), tokens
@@ -409,7 +412,7 @@ class SeqEmbedder:
             cache.save(
                 df[tkey],
                 fn=esmc,
-                batch_size=batch_size,
+                batch_size=batch_size * 3,
                 # Use fast batching from huggingface
             )
         else:
@@ -423,7 +426,7 @@ class SeqEmbedder:
         text_key: str,
         cache: EmbeddingCache,
         cols_remove: str | None = None,
-    ) -> Dataset:
+    ) -> Dataset | None:
         if not self.only_cache:
             result = cache.to_dataset(dataset_df, key_col=text_key)
             if cols_remove is not None:
@@ -436,24 +439,28 @@ class SeqEmbedder:
         runscript: str,
         text_key: str = "sequence",
         batch_size: int = 10,
-    ) -> Dataset:
+        layer: int = 30,
+        retries: int = 3,
+    ) -> Dataset | None:
         dset = dset.add_column("uid", list(range(len(dset)))).sort("uid")
         df: pl.DataFrame = dset.to_polars()
         logger.info(f"{df.shape[0]} sequences to embed")
         cache: EmbeddingCache = EmbeddingCache(
             self.workdir, save_interval=self.save_interval, with_tokens=self.with_tokens
         )
+        error_message = "Evo2 failed to generate predictions"
 
         def run_evo2(sequences):
             with TemporaryDirectory() as d:
                 outdir: Path = Path(d)
-                ids = [f"seq_{i}" for i in range(len(sequences))]
-                id2seq = dict(zip(ids, sequences))
+                id2seq = dict(zip(range(len(sequences)), sequences))
                 fasta = [f">{id}\n{seq}" for id, seq in id2seq.items()]
                 input = outdir.joinpath("input.fasta")
                 input.write_text("\n".join(fasta))
+                token_flag = "" if not self.with_tokens else " --tokens"
+                flags = f"--layer {layer} -i {input} -o {outdir}{token_flag}"
                 evo_run = run(
-                    f"sbatch --wait --parsable {runscript} -i {input} -o {outdir}",
+                    f"sbatch --wait --parsable {runscript} {flags}",
                     shell=True,
                     capture_output=True,
                 )
@@ -469,86 +476,50 @@ class SeqEmbedder:
                         "Slurm stdout file not found. Did you delete it by accident?"
                     )
                 try:
-                    embeddings: pl.DataFrame = pl.read_parquet(
+                    embedding_lf: pl.LazyFrame = pl.scan_parquet(
                         outdir / "pred_input.parquet"
                     )
+                    with open(outdir / "seq_idx_map.json", "rb") as f:
+                        id_map: dict = json.load(f)
                 except FileNotFoundError:
                     logger.debug(
                         f"Evo2 failed to generate predictions\n-- BEGIN STDOUT -- \n{stdout}\n -- END STDOUT --"
                     )
-                    raise ValueError("Evo2 failed to generate predictions")
-                with open(outdir / "seq_idx_map.json", "rb") as f:
-                    id_map: dict = json.load(f)
-                lf: pl.LazyFrame = pl.scan_parquet(embeddings)
-                # for row in lf.
+                    raise ValueError(error_message)
                 # TODO: need to read this lazily, otherwise your memory is screwed
+                # TODO: [2025-12-17 Wed] check that this works now
                 id_df: pl.DataFrame = pl.DataFrame(
                     {"seqid": id_map.keys(), "id": id_map.values()}
                 )
-                joined = embeddings.join(id_df, on="id").drop("id")
-
-                return {
-                    s: (v, None)  # TODO: replace 'None' with token-level embeddings
-                    for s, v in zip(
-                        joined["seqid"], torch.unbind(joined.drop("seqid").to_torch())
-                    )
-                }
-
-        cache.save(df[text_key], fn=run_evo2, batch_size=batch_size)
-        return self._finalize_dataset(df, text_key, cache)
-
-    def _evo2_embed_batch(
-        self,
-        df: pl.DataFrame,
-        runscript: str,
-        seqids: tuple[str],
-        batch_name: str,
-        workdir: Path,
-    ):
-        """Write the fasta sequence (headers are uids) and embed with external evo2 script"""
-        target: Path = workdir.joinpath(f"{batch_name}.parquet")
-        if len(df["uid"].unique()) != len(df["fasta"].unique()):
-            raise ValueError(
-                "The number of unique sequence ids doesn't match the number of fasta representations"
-            )
-        if not target.exists():
-            df = df.filter(pl.col("seqid").is_in(seqids))
-            with TemporaryDirectory() as d:
-                outdir: Path = Path(d)
-                input = outdir.joinpath("input.fasta")
-                input.write_text("\n".join(df["fasta"]))
-                evo_run = run(
-                    f"sbatch --wait --parsable {runscript} -i {input} -o {outdir}",
-                    shell=True,
-                    capture_output=True,
+                joined = embedding_lf.collect().join(id_df, on="id").drop("id")
+                embeddings = torch.unbind(joined.select("embeddings").to_torch())
+                tokens = (
+                    [None] * len(embeddings)
+                    if not self.with_tokens
+                    else [torch.tensor(t) for t in joined["tokens"]]
                 )
-                jobid = evo_run.stdout.decode().strip()
-                outfile = Path(f"slurm-{jobid}.out")
-                logger.warning(f"{jobid=}")
-                evo_run.check_returncode()
-                if outfile.exists():
-                    stdout = outfile.read_text()
-                    outfile.unlink()
-                else:
-                    stdout = (
-                        "Slurm stdout file not found. Did you delete it by accident?"
-                    )
+                for s, v, t in zip(joined["seqid"], embeddings, tokens):
+                    yield s, v, t
+
+        def run_with_retries(sequences):
+            # BUG: [2025-12-17 Wed] workaround for the random segfaults you get from the script
+            for _ in range(retries):
                 try:
-                    embeddings: pl.DataFrame = pl.read_parquet(
-                        outdir / "pred_input.parquet"
-                    )
-                except FileNotFoundError:
-                    logger.debug(
-                        f"Evo2 failed to generate predictions\n-- BEGIN STDOUT -- \n{stdout}\n -- END STDOUT --"
-                    )
-                    raise ValueError("Evo2 failed to generate predictions")
-                with open(outdir / "seq_idx_map.json", "rb") as f:
-                    id_map: dict = json.load(f)
-                id_df: pl.DataFrame = pl.DataFrame(
-                    {"uid": id_map.keys(), "id": id_map.values()}
-                )
-                joined = embeddings.join(id_df, on="id").drop("id")
-                joined.write_parquet(target)
+                    return run_evo2(sequences)
+                except ValueError as e:
+                    if e.args[0] == error_message:
+                        logger.warning("Retrying...")
+                        continue
+                    raise e
+            logger.critical(f"Failure after {retries} retries")
+            raise ValueError(error_message)
+
+        if not retries:
+            cache.save(df[text_key], fn=run_evo2, batch_size=batch_size)
+        else:
+            cache.save(df[text_key], fn=run_with_retries, batch_size=batch_size)
+
+        return self._finalize_dataset(df, text_key, cache)
 
     def _seqlens_embed(
         self,
@@ -558,7 +529,7 @@ class SeqEmbedder:
         model_key: str = "omicseye/seqLens_4096_512_46M-Mp",
         batch_size: int = 64,
         pooling: Literal["mean", "cls", "max", "concat"] = "mean",
-    ) -> Dataset:
+    ) -> Dataset | None:
         """Generate embeddings of `dataset` with seqLens
 
         Parameters
@@ -596,7 +567,6 @@ class SeqEmbedder:
                 batched=True,
                 remove_columns=to_remove,
             )
-            logger.info("Tokenization complete")
             uid2seq = dict(zip(current["uid"][:], current[text_key][:]))
 
             loader = DataLoader(
@@ -641,11 +611,13 @@ class SeqEmbedder:
                     zip(torch.unbind(embedding, axis=0), torch.unbind(batch["uid"]))
                 ):
                     seq = uid2seq[uid.cpu().item()]
-                    token = hidden_masked[i, :, :] if self.with_tokens else None
+                    # WARNING: you got memory issues from the below line when
+                    # hidden_masked[i, :, :] came before None
+                    token = None if not self.with_tokens else hidden_masked[i, :, :]
                     yield seq, e, token
 
         with torch.no_grad():
-            cache.save(df[text_key], fn=seqlens, batch_size=ceil(df.height / 5))
+            cache.save(df[text_key], fn=seqlens, batch_size=batch_size * 3)
         df = df.drop("uid")
         return self._finalize_dataset(df, text_key, cache)
 
