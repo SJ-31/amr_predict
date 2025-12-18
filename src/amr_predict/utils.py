@@ -34,7 +34,7 @@ logger.disable("amr_predict")
 
 # * Utility functions
 
-TASK_TYPES: TypeAlias = Literal["classification", "regression"]
+TASK_TYPES: TypeAlias = Literal["classification", "regression", "reconstruction"]
 
 
 def encode_strs(
@@ -469,6 +469,14 @@ class ModuleConfig:
         self.task_weights: Tensor | None = task_weights
         self.seed = kws.get("seed", seed)
         self.kws: dict = kws
+
+    def get(self, key: str, default):
+        if key in self:
+            return self[key]
+        return default
+
+    def __contains__(self, key):
+        return key in dir(self) or key in self.kws
 
     def __getitem__(self, key: str):
         if key in dir(self):
