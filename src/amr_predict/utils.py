@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import itertools
+import subprocess
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import reduce
@@ -466,6 +467,7 @@ class ModuleConfig:
         self.cache: CACHE_OPTIONS | tuple[CACHE_OPTIONS] | None = cache
         self.task_type: TASK_TYPES = task_type
         self.task_weights: Tensor | None = task_weights
+        self.seed = kws.get("seed", seed)
         self.kws: dict = kws
 
     def __getitem__(self, key: str):
@@ -780,7 +782,6 @@ class EmbeddingCache:
                     tmp["token"].append(t)
 
                 lf = pl.LazyFrame(tmp, schema=schema)
-                logger.debug(lf.collect())
                 if not self._with_tokens:
                     lf = lf.with_columns(pl.lit(None).alias("token"))
                 elif self._token_prop is not None:

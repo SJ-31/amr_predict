@@ -13,11 +13,7 @@ import torchmetrics as tmet
 from amr_predict.metrics import multitask_all_reg, multitask_cross_entropy_loss
 from amr_predict.utils import CACHE_OPTIONS, TASK_TYPES, ModuleConfig, iter_cols
 from datasets.arrow_dataset import Dataset
-from lightning.pytorch.utilities.types import (
-    LRSchedulerType,
-    OptimizerConfig,
-    OptimizerLRSchedulerConfig,
-)
+from lightning.pytorch.utilities.types import OptimizerLRSchedulerConfig
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torchmetrics import MeanSquaredError
@@ -37,13 +33,13 @@ class Baseline:
         x_key: str = "x",
         device: str | torch.device = "cpu",
         model=XGBClassifier,
-        conf: ModuleConfig | None = None,
+        cfg: ModuleConfig | None = None,
         **kws,
     ):
         self.x_key = x_key
-        self.task_names: Sequence = conf.task_names
-        self.models: list = [model(**kws) for _ in range(conf.n_tasks)]
-        self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
+        self.task_names: Sequence | str = cfg.task_names
+        self.models: list = [model(**kws) for _ in range(cfg.n_tasks)]
+        self.conf: ModuleConfig = ModuleConfig() if cfg is None else cfg
         self.task_type: TASK_TYPES = self.conf.task_type
         self.device: torch.device = (
             device if isinstance(device, torch.device) else torch.device(device)
@@ -96,7 +92,7 @@ class BaseNN(L.LightningModule):
         self,
         in_features: int,
         x_key: str = "x",
-        conf: ModuleConfig | None = None,
+        cfg: ModuleConfig | None = None,
     ) -> None:
         """
         Parameters
@@ -107,27 +103,27 @@ class BaseNN(L.LightningModule):
         super().__init__()
         self.in_features: int = in_features
         self.x_key: str = x_key
-        self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
-        self.n_tasks: int = self.conf.n_tasks
+        self.cfg: ModuleConfig = ModuleConfig() if cfg is None else cfg
+        self.n_tasks: int = self.cfg.n_tasks
         self.metric_loggers: nn.ModuleList
         self.supervised: bool = True
-        self.task_type: TASK_TYPES = self.conf.task_type
+        self.task_type: TASK_TYPES = self.cfg.task_type
         self.n_classes: tuple[int] = (
-            (1,) if self.task_type == "regression" else self.conf.n_classes
+            (1,) if self.task_type == "regression" else self.cfg.n_classes
         )
-        if self.conf.record and self.task_type == "classification":
+        if self.cfg.record and self.task_type == "classification":
             self.metric_loggers = nn.ModuleList(
                 [Accuracy(task="multiclass", num_classes=n) for n in self.n_classes]
             )
-        elif self.conf.record:
+        elif self.cfg.record and self.task_type == "regression":
             self.metric_loggers = nn.ModuleList(
                 [MeanSquaredError(num_outputs=self.n_tasks)]
             )
 
-        if self.conf.task_names is None:
+        if self.cfg.task_names is None:
             self.task_names: Sequence[str] = [str(i) for i in range(self.n_tasks)]
         else:
-            self.task_names = self.conf.task_names
+            self.task_names = self.cfg.task_names
 
         # Cache results after iterations or validation for custom callbacks
         self.cache: dict[str, tuple[bool, list]] = {
@@ -138,10 +134,10 @@ class BaseNN(L.LightningModule):
             "test_loss": (False, []),
             "test_acc": (False, []),
         }
-        if isinstance(self.conf.cache, str):
-            self.set_cache(self.conf.cache)
-        elif self.conf.cache is not None:
-            for c in self.conf.cache:
+        if isinstance(self.cfg.cache, str):
+            self.set_cache(self.cfg.cache)
+        elif self.cfg.cache is not None:
+            for c in self.cfg.cache:
                 self.set_cache(c)
 
     def get_outlayer(self, i: int) -> nn.Module:
@@ -184,7 +180,7 @@ class BaseNN(L.LightningModule):
         opt_fn : Callable
             returns a Pytorch-compatible optimizer when called with named_parameters()
         """
-        self.conf.optimizer_fn = opt_fn
+        self.cfg.optimizer_fn = opt_fn
 
     def register_schedulers(
         self,
@@ -201,26 +197,26 @@ class BaseNN(L.LightningModule):
         lr_scheduler_config : dict
             lr_scheduler_config as defined by Pytorch lightning
         """
-        self.conf.scheduler_fn = scheduler_fn
-        self.conf.scheduler_config = lr_scheduler_config
+        self.cfg.scheduler_fn = scheduler_fn
+        self.cfg.scheduler_config = lr_scheduler_config
 
     @override
     def configure_optimizers(self) -> OptimizerLRSchedulerConfig:
-        if self.conf.optimizer_fn is not None:
-            optimizer = self.conf.optimizer_fn(self.named_parameters())
+        if self.cfg.optimizer_fn is not None:
+            optimizer = self.cfg.optimizer_fn(self.named_parameters())
         else:
             optimizer = optim.Adam(self.named_parameters(), lr=0.001)
         lr_scheduler_config = (
-            self.conf.scheduler_config.copy()
-            if self.conf.scheduler_config is not None
+            self.cfg.scheduler_config.copy()
+            if self.cfg.scheduler_config is not None
             else {"monitor": "train_loss"}
         )
-        if self.conf.scheduler_fn is None:
+        if self.cfg.scheduler_fn is None:
             lr_scheduler_config["scheduler"] = schedule.ReduceLROnPlateau(
                 optimizer=optimizer, patience=40
             )
         else:
-            lr_scheduler_config["scheduler"] = self.conf.scheduler_fn(optimizer)
+            lr_scheduler_config["scheduler"] = self.cfg.scheduler_fn(optimizer)
         return {"optimizer": optimizer, "lr_scheduler_config": lr_scheduler_config}
 
     @override
@@ -279,17 +275,21 @@ class BaseNN(L.LightningModule):
     @override
     def training_step(self, batch, batch_idx):
         x = batch[self.x_key]
-        if self.supervised:
+        if self.supervised and (
+            self.task_type == "classification" or self.task_type == "regression"
+        ):
             y: Tensor | None = torch.hstack(
                 [batch[t].reshape(-1, 1) for t in self.task_names]
             )
-        else:
+        elif not self.supervised:
             y = None
+        else:
+            y = batch[self.task_names]
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, batch=batch, context="train")
         self.log("train_loss", loss)
         self._try_cache_to("train_loss", loss)
-        if self.conf.record_norm:
+        if self.cfg.record_norm:
             norm = (
                 sum(
                     p.grad.norm(2).item() ** 2
@@ -320,9 +320,9 @@ class BaseNN(L.LightningModule):
         loss = self.criterion(y_pred=output, y_true=y, context=prefix)
         self.log(log_to, loss)
         self._try_cache_to(log_to, loss)
-        if self.conf.record and self.task_type == "classification":
+        if self.cfg.record and self.task_type == "classification":
             self._score_classification(output=output, y_true=y, prefix=prefix)
-        else:
+        elif self.cfg.record and self.task_type == "regression":
             self._score_regression(output=output, y_true=y, prefix=prefix)
         return output
 
@@ -367,9 +367,9 @@ class MLP(BaseNN):
         num_layers: int = 2,
         activation: Callable = nn.ReLU,
         x_key: str = "x",
-        conf: ModuleConfig | None = None,
+        cfg: ModuleConfig | None = None,
     ):
-        super().__init__(in_features=in_features, x_key=x_key, conf=conf)
+        super().__init__(in_features=in_features, x_key=x_key, cfg=cfg)
         self.save_hyperparameters()
         if hidden_dim == -1:
             hidden_dim = in_features
@@ -387,7 +387,7 @@ class MLP(BaseNN):
             self.outlayer = None
             layers.append(nn.Linear(hidden_dim, self.n_tasks))
         self.nn = nn.Sequential(*layers)
-        self.conf: ModuleConfig = conf or ModuleConfig()
+        self.conf: ModuleConfig = cfg or ModuleConfig()
 
     def criterion(
         self,

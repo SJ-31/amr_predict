@@ -142,7 +142,7 @@ if smk.rule in {"cross_validate", "holdout"}:
                         x_key=x_key,
                         device=smk.params["device"],
                         model=bmodel,
-                        conf=mconf,
+                        cfg=mconf,
                         **model_kws,
                     )
                     valid_dset = None
@@ -150,7 +150,7 @@ if smk.rule in {"cross_validate", "holdout"}:
                     trainer: L.Trainer | None = None
                 elif mname == "mlp":
                     model = MLP(
-                        in_features=in_features, x_key=x_key, conf=mconf, **model_kws
+                        in_features=in_features, x_key=x_key, cfg=mconf, **model_kws
                     )
                     trainer = L.Trainer(**trainer_kws)
                 eva_kws = dict(
