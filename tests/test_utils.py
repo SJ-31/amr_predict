@@ -13,7 +13,24 @@ logger.enable("amr_predict")
 
 rng = np.random.default_rng()
 
+list_of_arr = [np.random.rand(np.random.randint(3, 9), 10) for _ in range(10)]
+fixed_arr = [np.random.rand(10) for _ in range(10)]
+
+df = pl.DataFrame(
+    {"e": fixed_arr, "t": list_of_arr, "n": None},
+    schema={
+        "e": pl.Array(pl.Float64, 10),
+        "t": pl.List(pl.Array(pl.Float64, 10)),
+        "n": pl.Null,
+    },
+)
+
 dummy_df = pl.DataFrame({"a": list(ascii_letters), "b": torch.rand(len(ascii_letters))})
+
+pl.LazyFrame(
+    {"a": "a", "b": [torch.rand(9)]},
+    schema={"a": pl.String, "b": pl.Array(pl.Float64, 9)},
+).collect()
 
 dummy_df.with_columns(
     pl.when(pl.Series(rng.choice([True, False], p=[0.3, 0.7], size=dummy_df.height)))
@@ -38,6 +55,13 @@ def dummy_embed(texts):
             embed(t),
             torch.vstack([embed(t) for _ in range(torch.randint(2, 10, (1,)))]),
         )
+        # yield {
+        #     "key": t,
+        #     "seq": embed(t),
+        #     "token": torch.vstack(
+        #         [embed(t) for _ in range(torch.randint(2, 10, (1,)))]
+        #     ),
+        # }
 
 
 @pytest.fixture
