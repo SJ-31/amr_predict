@@ -797,6 +797,7 @@ class EmbeddingCache:
                 self._seen |= set(lf.select("key").collect()["key"])
                 lfs.append(lf)
                 if counter == self._save_interval:
+                    logger.info("Writing batch into cache")
                     self._write(lfs)
                     lfs = []
                     counter = 0
@@ -830,6 +831,8 @@ class EmbeddingCache:
             pl.col(new_col).is_not_null()
         )
         dset = Dataset.from_polars(joined).with_format("torch")
+        # BUG: the line above consumes a LOT of memory. But why? This is supposed to
+        # be zero-copy
         return dset
 
 
