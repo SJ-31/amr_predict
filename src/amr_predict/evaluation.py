@@ -1,12 +1,15 @@
 #!/usr/bin/env ipython
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable, Literal, TypeAlias
 
 import lightning as L
 import numpy as np
+import plotnine as gg
 import polars as pl
 import sklearn.model_selection as ms
+import torch
 import torch.nn as nn
 from amr_predict.metrics import (
     multitask_all_cls,
@@ -209,3 +212,153 @@ def make_splits(
         else:
             result[key] = dataset.select(spec)
     return result
+
+
+# * SAE metrics
+def categorize_latents(
+    activations: Tensor, dense_threshold: float = 1 / 10
+) -> dict[str, list | pl.Series]:
+    """Helper function to flag dead and dense latents by their activation values"""
+    result = {}
+    n_samples = activations.shape[0]
+    idx = torch.arange(activations.shape[1])
+    frac_active = (activations > 0).sum(dim=0) / n_samples
+    result["dead"] = idx[frac_active == 0].tolist()
+    result["dense"] = idx[frac_active > dense_threshold]
+    rest = idx[(frac_active != 0) & (frac_active <= dense_threshold)]
+    result["rest"] = rest
+    result["rest_df"] = pl.DataFrame(
+        activations[:, rest], schema=[f"latent_{i}" for i in rest]
+    )
+    return result
+
+
+def plot_activation_density(
+    activations: Tensor, latent_idx: int, obs: pl.DataFrame, label_cols: Sequence
+) -> dict[str, gg.ggplot]:
+    """Plot the activation distribution for a single latent `latent_idx`, showing
+    the relationship between it and the label classes in `label_cols`
+
+    Parameters
+    ----------
+    activations : Tensor
+        Tensor of shape n_samples x d_sae containing SAE activations
+    obs : DataFrame
+        DataFrame aligned to activations, containing annotations about samples
+    label_cols : Sequence
+        columns of `obs` to derive labels from
+
+    Returns
+    -------
+    Dictionary of plot objects, keyed by column in label_cols
+    """
+
+    def plot_one(label_col):
+        selected = activations[:, latent_idx]
+        frac_active = ((selected > 0).sum() / selected.shape[0]) * 100
+        to_df = pl.DataFrame({"Activation": selected, label_col: obs[label_col]})
+        title = f"Latent {latent_idx}"
+        return (
+            gg.ggplot(to_df, gg.aes(x="Activation", fill=label_col))
+            + gg.geom_histogram(binwidth=0.1)
+            + gg.ggtitle(title, subtitle=f"Activation density: {frac_active}%")
+            + gg.theme(title=gg.element_text(style="oblique"))
+        )
+
+    return {col: plot_one(col) for col in label_cols}
+
+
+def highest_activations(
+    activations: Tensor,
+    obs: pl.DataFrame,
+    label_col: str,
+    k: int = 5,
+    top_only: bool = True,
+) -> dict[str, pl.DataFrame]:
+    """Return the k latents that have the highest activations for each label in `label_col`
+
+    Parameters
+    ----------
+    activations : Tensor
+    obs : pl.DataFrame
+        DataFrame aligned to activations
+    top_only : bool
+        In each dataframe, return information only about latents that showed up at least
+        once in the top k for that label
+
+    Returns
+    -------
+    A dictionary keyed by label, mapping to a dataframe with statistics about the top latents
+        for that label.
+    The dataframe has 3 columns: latent, fraction_top, fraction_active, max
+    latent: the index of the latent
+    fraction_top: the fraction of samples at which the latent appears in the top k
+    fraction_active: the fraction of samples where the latent is nonzero
+    max, median, mean: the max, median, and mean activation value of the latent
+    """
+    result = {}
+    for label, group in obs.with_row_index().group_by(label_col):
+        current: Tensor = activations[group["index"], :]
+        n_samples = group.height
+        active_frac = (current > 0).sum(dim=0) / n_samples
+        latent_max = current.max(dim=0).values
+        latent_median = current.median(dim=0).values
+        latent_mean = current.mean(dim=0)
+        top = current.topk(k=k, dim=1)
+        top_counts = top.indices.flatten().unique(return_counts=True)
+        top_frac = pl.DataFrame(
+            {"latent": top_counts[0], "fraction_top": top_counts[1] / n_samples}
+        )
+        df: pl.DataFrame = (
+            pl.DataFrame(
+                {
+                    "max": latent_max,
+                    "mean": latent_mean,
+                    "median": latent_median,
+                    "fraction_active": active_frac,
+                }
+            )
+            .with_row_index("latent")
+            .join(top_frac, on="latent", how="inner")
+            .sort("mean", descending=True)
+        )
+        if top_only:
+            df = df.filter(pl.col("latent").is_in(top_counts[0]))
+        result[label[0]] = df
+    return result
+
+
+def activation_likelihood_ratios(
+    activations: Tensor,
+    latent_idx,
+    obs: pl.DataFrame,
+    label_cols: Sequence,
+    concat_labels: bool = True,
+) -> dict[str]:
+    """
+    Return the likelihood ratio that latent `latent_idx` is active for each
+        every combination of labels in
+        i.e. Pr(active | label)/Pr(active | not label)
+    TODO: or would it be better to just do Pr(active | label)/Pr(active)
+
+    Notes
+    -----
+    The idea of this is to provide a scoring for each latent and concept that is sensitive
+    to the frequency of the concept in the dataset
+
+    TODO: get a covariance matrix for the activations
+    """
+    df = pl.DataFrame()
+
+
+# def latents_mutual_info(
+#     activations: Tensor, obs: pl.DataFrame, label_cols: Sequence
+# ) -> dict[str, pl.Series]:
+#     """Compute the mutual information between each feature in `activations`
+#     and each of the labels sets in `labels_cols`
+#     are with `labels` i.e. higher mutual information
+
+#     Returns
+#     -------
+#     Dictionary of returning a list of latents sorted by how strongly associated they
+#     """
