@@ -10,4 +10,4 @@ evo_run = run(
     shell=True,
     capture_output=True,
 )
-print(evo_run.stdout.decode())
+print(evo_run)

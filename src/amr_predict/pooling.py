@@ -21,10 +21,8 @@ from torchmetrics.functional.pairwise import (
 )
 
 STATIC_POOLING_METHODS: TypeAlias = Literal[
-    "sum", "mean", "similarity", "swe", "concat", "only_gene"
+    "sum", "mean", "similarity", "swe", "concat"
 ]
-# TODO: [2025-12-09 Tue] write the only_gene method which just takes a single embedding from the set
-# based on gene identity
 LEARNING_POOLING_METHODS: TypeAlias = Literal["autoencoder", "swe"]
 
 
@@ -720,7 +718,7 @@ class AePooling(BaseNN):
         activation: nn.Module = nn.ReLU,
         conf: ModuleConfig | None = None,
     ) -> None:
-        super().__init__(in_features=0, x_key=x_key, cfg=conf)
+        super().__init__(in_features=0, x_key=x_key, conf=conf)
         self.task_names = [y_key]
         # self.pooling_weights: nn.Parameter = nn.Parameter(torch.)
         # TODO: probably want to review what's good here

@@ -64,7 +64,7 @@ def test_baseline(task_type, tasks):
         n_tasks=len(tasks),
         task_names=tasks,
     )
-    model = Baseline(x_key=X_KEY, device="cpu", model=model, cfg=mconf)
+    model = Baseline(x_key=X_KEY, device="cpu", model=model, conf=mconf)
     eva: Evaluator = Evaluator(model=model)
     print(eva.holdout(dataset=dset))
 
