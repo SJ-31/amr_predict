@@ -17,7 +17,7 @@ import polars as pl
 import skbio as sb
 import torch
 import torch.utils.data as td
-from datasets import DatasetDict, Features, Value
+from datasets import DatasetDict, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
@@ -797,6 +797,7 @@ class EmbeddingCache:
                 self._seen |= set(lf.select("key").collect()["key"])
                 lfs.append(lf)
                 if counter == self._save_interval:
+                    logger.info("Writing batch into cache")
                     self._write(lfs)
                     lfs = []
                     counter = 0
@@ -830,6 +831,8 @@ class EmbeddingCache:
             pl.col(new_col).is_not_null()
         )
         dset = Dataset.from_polars(joined).with_format("torch")
+        # BUG: the line above consumes a LOT of memory. But why? This is supposed to
+        # be zero-copy
         return dset
 
 
@@ -971,3 +974,31 @@ def translate_df(
 
     df = df.with_columns(pl.Series(map(translate, df[seq_col])).struct.unnest())
     return df
+
+
+def with_metadata(
+    dset: Dataset,
+    cfg: dict,
+    sample_col: str = "sample",
+    meta_options: tuple[str, ...] = ("sequence", "ast", "sample"),
+    align: bool = False,
+) -> Dataset | tuple[Dataset, pl.DataFrame]:
+    merging: pl.DataFrame = pl.DataFrame({sample_col: dset[sample_col][:]})
+    for m in meta_options:
+        if m == "sequence":
+            key = "tests" if cfg["tests"] else "root"
+            path = f"{cfg["out"][key]}/{cfg['in_date']}/seq_metadata.csv"
+            df = pl.read_csv(path)
+            key_col = "sample"
+        elif m in {"ast", "sample"}:
+            df = read_tabular(cfg[f"{m}_metadata"]["file"])
+            key_col = cfg[f"{m}_metadata"]["id_col"]
+        else:
+            raise ValueError(
+                f"metadata type `{m}` must be one of 'ast', 'sequence', 'sample'"
+            )
+        merging = merging.join(df, left_on=sample_col, right_on=key_col, how="left")
+    if not align:
+        to_merge = Dataset.from_polars(merging.drop(sample_col))
+        return concatenate_datasets([dset, to_merge])
+    return dset, merging

@@ -20,6 +20,7 @@ from amr_predict.utils import (
     encode_strs,
     load_as,
     train_test_from_dict,
+    with_metadata,
 )
 from datasets import Dataset
 from loguru import logger
@@ -100,6 +101,7 @@ if smk.rule in {"cross_validate", "holdout"}:
     for dpath in smk.params["datasets"]:
         dname = Path(dpath).stem
         dataset: Dataset = load_as(dpath)
+        dataset = with_metadata(dataset, smk.config, meta_options=("ast",))
         if smk.config.get("test"):
             dataset = modify_for_test(dataset, x_key)
         obs: pl.DataFrame | None = (

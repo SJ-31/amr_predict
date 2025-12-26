@@ -371,8 +371,9 @@ def main():
                     )
                     sp: StaticPooler = StaticPooler(
                         method=method,
-                        sample_metadata=CONFIG["sample_metadata"]["file"],
-                        sample_metadata_key=CONFIG["sample_metadata"]["id_col"],
+                        # NOTE: merge with metadata during evals to save space
+                        sample_metadata=None,
+                        sample_metadata_key=None,
                         **spec_kws,
                     )
                     dset = get_seq_level(texts_path, cache)
