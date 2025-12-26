@@ -4,6 +4,9 @@ include: "Snakefile"
 configfile: "models.yaml"
 
 
+from amr_predict.preprocessing import EMBEDDING_METHODS
+
+
 from pathlib import Path
 
 OUTDIRS = {
@@ -16,7 +19,11 @@ dpath = Path(f"{REMOTE}/{IN_DATE}/datasets")
 
 DATASETS = {
     "text": list(dpath.joinpath("processed_sequences").iterdir()),
-    "pooled": list(dpath.joinpath("pooled").iterdir()),
+    "pooled": [
+        d
+        for d in dpath.joinpath("pooled").iterdir()
+        if config["preprocessing"][d].get("method") not in EMBEDDING_METHODS
+    ],
 }
 LEVELS = [
     s
@@ -48,12 +55,22 @@ rule train_sae:
         models=all.input.models,
         # TODO: maybe add in the metrics as well?
     params:
-        caches="",
-        pooled="",
+        outdir=OUTDIRS["sae"],
+        caches=f"{OUT}/{IN_DATE}/datasets/embedded",
+        pooled=f"{OUT}/{IN_DATE}/datasets/pooled",
 
 
 rule eval_sae:
     input:
         train_sae.output.models,
+    output:
+        latent_summary_data=f"{OUTDIRS['sae']}/latent_summary.csv",
+        latent_summary_plot=f"{OUTDIRS['sae']}/latent_summary.png",
+        activation_plots=directory(
+            expand("{o}/activation_plots/{m}", o=OUTDIRS["sae"], m=all.input.models)
+        ),
     params:
         model_dict=MODELS,
+        outdir=OUTDIRS["sae"],
+        pooled=f"{OUT}/{IN_DATE}/datasets/pooled",
+        sequences=f"{OUT}/{IN_DATE}/datasets/processed_sequences",

@@ -226,8 +226,8 @@ def categorize_latents(
     result["dead"] = idx[frac_active == 0].tolist()
     result["dense"] = idx[frac_active > dense_threshold]
     rest = idx[(frac_active != 0) & (frac_active <= dense_threshold)]
-    result["rest"] = rest
-    result["rest_df"] = pl.DataFrame(
+    result["sparse"] = rest
+    result["sparse_df"] = pl.DataFrame(
         activations[:, rest], schema=[f"latent_{i}" for i in rest]
     )
     return result

@@ -1,17 +1,25 @@
 #!/usr/bin/env ipython
 
-import re
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal, TypeAlias, get_args
 
 import lightning as L
+import plotnine as gg
 import polars as pl
 import torch
+from amr_predict.evaluation import (
+    categorize_latents,
+    highest_activations,
+    plot_activation_density,
+)
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
-from amr_predict.utils import EmbeddingCache, ModuleConfig, load_as
+from amr_predict.utils import EmbeddingCache, ModuleConfig, load_as, with_metadata
 from datasets import Dataset, DatasetDict
 from lightning.pytorch.loggers import WandbLogger
 from loguru import logger
+from torch import Tensor
 from torch.utils.data import DataLoader
 
 try:
@@ -26,37 +34,58 @@ except ImportError:
     logger.add(smk.log[0])
     EMBEDDING = smk.config["embedding"]
     X_KEY = smk.config["pool_embeddings"]["key"]
+    SEED = smk.config["rng"]
 
 
-def train_sae(path: Path, level: str, key_df: pl.DataFrame, outdir: Path):
+EMBEDDING_LEVEL: TypeAlias = Literal["genome-level", "sequence-level", "token-level"]
+
+
+def get_dataset(
+    name: str,
+    level: EMBEDDING_LEVEL,
+    key_df: pl.DataFrame | None = None,
+    as_df: bool = False,
+) -> Dataset | pl.DataFrame:
+    if key_df is None:
+        seq_dset_name = name if level != "genome-level" else name.split("_")[0]
+        key_df = load_as(f"{smk.params["sequences"]}/{seq_dset_name}", "polars")
+    if level == "genome-level":
+        dset: Dataset = load_as(smk.params["pooled"].joinpath(name))
+        dset = dset.filter(lambda x: x["sample"] in key_df["sample"])
+        return dset
+    cache_path = Path(smk.params["caches"]).joinpath(f"{name}_{EMBEDDING}_cache")
+    cache: EmbeddingCache = EmbeddingCache(cache_path)
+    if level == "sequence-level":
+        dset = cache.to_dataset(df=key_df, key_col="sequence", new_col=X_KEY)
+    else:
+        tokens = cache.retrieve(key_df["sequence"], tokens=True).rename(
+            {"token": X_KEY}
+        )
+        key_df = key_df.join(tokens, left_on="sequence", right_on="key").explode(X_KEY)
+        dset = Dataset.from_polars(key_df)
+    return dset
+
+
+def train_routine(
+    path: Path, level: EMBEDDING_LEVEL, key_df: pl.DataFrame, outdir: Path
+):
     run_params: dict = RCONFIG[level]
+    # Don't use all samples for SAE training
     chosen_samples: list = (
-        key_df.unique("sample")
-        .sample(n=run_params["n"], seed=smk.config["rng"])["sample"]
-        .to_list()
+        key_df.unique("sample").sample(n=run_params["n"], seed=SEED)["sample"].to_list()
     )
     if level == "genome-level":
-        dset: Dataset = load_as(smk.params["pooled"].joinpath())
-        dset = dset.filter(lambda x: x["sample"] in chosen_samples)
+        subset = key_df.filter(pl.col("sample").is_in(chosen_samples))
     else:
-        cache_path = Path(smk.params["caches"]).joinpath(
-            f"{path.stem}_{EMBEDDING}_cache"
-        )
-        cache: EmbeddingCache = EmbeddingCache(cache_path)
         tmp = key_df.filter(pl.col("sample").is_in(chosen_samples))
         subset = pl.concat(
-            [df.sample(n=run_params["n_sequence"]) for _, df in tmp.group_by("sample")]
+            [
+                df.sample(n=run_params["n_sequence"], seed=SEED)
+                for _, df in tmp.group_by("sample")
+            ]
         )
-        if level == "sequence-level":
-            dset = cache.to_dataset(df=subset, key_col="sequence", new_col=X_KEY)
-        else:
-            tokens = cache.retrieve(subset["sequence"], tokens=True).rename(
-                {"token": X_KEY}
-            )
-            subset = subset.join(tokens, left_on="sequence", right_on="key").explode(
-                X_KEY
-            )
-            dset = Dataset.from_polars(subset)
+    dset: Dataset = get_dataset(name=path.stem, level=level, key_df=subset)
+
     dset_dict: DatasetDict = dset.train_test_split()
     train_kws = RCONFIG["trainer"]
     train_kws.update(run_params.get("trainer", {}))
@@ -64,9 +93,7 @@ def train_sae(path: Path, level: str, key_df: pl.DataFrame, outdir: Path):
     load_kws = RCONFIG["dataloader"]
     load_kws.update(run_params.get("dataloader", {}))
     trainer = L.Trainer(**train_kws)
-
     train = DataLoader(dset_dict["train"], **load_kws)
-
     model: L.LightningModule = get_model_with_defaults(train_dset=train)
     trainer.fit(model, train_dataloaders=train)
     save_path = outdir.joinpath(f"{level}_{path.stem}.pth")
@@ -85,14 +112,13 @@ def get_model_with_defaults(train_dset):
     return model
 
 
-# Output should be trained SAE for each dataset. Text datasets can be at
-# sequence level or the token level. Pooled datasets are just from their name
+# * Rules
 
-if smk.rule == "train_sae":
-    outdir = Path(smk.params["outdir"])
+
+def train_sae():
     wanted_cols = ("sample", "seqid")
-    for group, paths in smk.input.items():
-        for level in ("token-level", "genome-level", "sequence-level"):
+    for group, paths in smk.input.items():  # Input are either pooled or text datasets
+        for level in get_args(EMBEDDING_LEVEL):
             if (not RCONFIG[level]["run"]) or (
                 level == "genome-level" and group != "pooled"
             ):
@@ -103,16 +129,63 @@ if smk.rule == "train_sae":
             for path in paths:
                 keys: pl.Dataframe = load_as(path, "polars").select(cols)
                 # Takes processed datasets as input
-                train_sae(Path(path), level, keys, outdir)
-if smk.rule == "eval_sae":
-    for state_dict in smk.input:
-        level = re.sub("_.*", "", Path(state_dict).stem)
-        model: L.LightningModule = get_model_with_defaults()
-        model.load_state_dict(state_dict)
-        # TODO: you still need activations from the dataset, so wrap the dataset prep
-        # routine up in a function
-        # dset =
+                train_routine(Path(path), level, keys, Path(smk.params["outdir"]))
 
+
+def eval_sae():
+    latent_summary = {"type": [], "activation_source": [], "count": []}
+    for dict_path in smk.input:
+        level: EMBEDDING_LEVEL
+        level, dset_name = Path(dict_path).stem.split("_", 1)
+        model: L.LightningModule = get_model_with_defaults()
+        model.load_state_dict(dict_path)
+        dataset: Dataset = get_dataset(dset_name, level=level, key_df=None, as_df=True)
+        meta: pl.DataFrame
+        dataset, meta = with_metadata(dataset, smk.config, ("sample",), align=True)
+        # Retrieves the full dataset
+        sae_acts: Tensor = model.predict_step(dataset[X_KEY][:])
+        # neurons: Tensor = dataset[X_KEY][:]
+
+        latent_cats: dict = categorize_latents(sae_acts)
+        for ltype in ["dead", "dense", "sparse"]:
+            latent_summary["type"].append(ltype)
+            latent_summary["count"].append(len(latent_cats[ltype]))
+            latent_summary["activation_source"].append(dset_name)
+
+        alive = sae_acts[:, latent_cats["sparse"]]
+
+        concepts: Sequence = RCONFIG["concept_cols"][level]
+
+        for concept in concepts:
+            top_activations: dict = highest_activations(
+                alive, meta, concept, **RCONFIG["highest_activations"]
+            )
+        # TODO: write a function that automatically identifies the best latents for you
+        # to plot with plot_activation_density
+        best_latents = []
+        for idx in best_latents:
+            plots: dict = plot_activation_density(sae_acts, idx, meta, concepts)
+            for k, v in plots.items():
+                v: gg.ggplot
+                savepath = f"{smk.params['outdir']}/activation_plots/{k}.png"
+                v.save(savepath)
+
+    summary_df = pl.DataFrame(latent_summary)
+    summary_plot = (
+        gg.ggplot(summary_df, gg.aes(x="type", fill="activation_source"))
+        + gg.geom_bar(position="dodge")
+        + gg.ggtitle(title="Count of latent categories")
+    )
+    summary_plot.save(smk.output["latent_summary_plot"])
+    summary_df.write_csv(smk.output["latent_summary_data"])
+
+
+# * Entry
+
+if not (fn := globals().get(smk.rule)):
+    raise ValueError("Function for rule `{smk.rule}` not defined in this file")
+else:
+    fn()
 
 # TODO: run the sae metrics on the raw embeddings as well as the sae activations to
 # ensure that the latents represent concepts not found in the neurons
