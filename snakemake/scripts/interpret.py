@@ -12,6 +12,7 @@ from amr_predict.evaluation import (
     categorize_latents,
     highest_activations,
     plot_activation_density,
+    score_latents,
 )
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
@@ -152,23 +153,26 @@ def eval_sae():
             latent_summary["count"].append(len(latent_cats[ltype]))
             latent_summary["activation_source"].append(dset_name)
 
-        alive = sae_acts[:, latent_cats["sparse"]]
-
         concepts: Sequence = RCONFIG["concept_cols"][level]
 
+        # TODO: consider some preprocessing on concept cols to collapse them into a single
+        # label column. Otherwise, gonna have to look at overlapping label columns that
+        # you need to reconcile...
+        topk_plot = RCONFIG["activation_density_topk"]
         for concept in concepts:
-            top_activations: dict = highest_activations(
-                alive, meta, concept, **RCONFIG["highest_activations"]
-            )
-        # TODO: write a function that automatically identifies the best latents for you
-        # to plot with plot_activation_density
-        best_latents = []
-        for idx in best_latents:
-            plots: dict = plot_activation_density(sae_acts, idx, meta, concepts)
-            for k, v in plots.items():
-                v: gg.ggplot
-                savepath = f"{smk.params['outdir']}/activation_plots/{k}.png"
-                v.save(savepath)
+            # top_activations: dict = highest_activations(
+            #     alive, meta, concept, **RCONFIG["highest_activations"]
+            # )
+            best_latents: pl.DataFrame = score_latents(
+                sae_acts, labels=meta[concept]
+            ).sort("max_activation_prop", descending=True)
+            best_latents.write_csv(smk.output[""])
+            for idx in best_latents["latent_idx"][:topk_plot]:
+                plots: dict = plot_activation_density(sae_acts, idx, meta, [concept])
+                for k, v in plots.items():
+                    v: gg.ggplot
+                    savepath = f"{smk.params['outdir']}/activation_plots/{k}.png"
+                    v.save(savepath)
 
     summary_df = pl.DataFrame(latent_summary)
     summary_plot = (

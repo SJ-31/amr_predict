@@ -20,6 +20,7 @@ from amr_predict.models import Baseline
 from amr_predict.utils import TASK_TYPES, Preprocessor, load_as
 from datasets import Dataset, DatasetDict
 from loguru import logger
+from sklearn.preprocessing import LabelBinarizer
 from torch import Tensor
 from torch.utils.data import DataLoader
 
@@ -328,37 +329,57 @@ def highest_activations(
     return result
 
 
-def activation_likelihood_ratios(
-    activations: Tensor,
-    latent_idx,
-    obs: pl.DataFrame,
-    label_cols: Sequence,
-    concat_labels: bool = True,
-) -> dict[str]:
-    """
-    Return the likelihood ratio that latent `latent_idx` is active for each
-        every combination of labels in
-        i.e. Pr(active | label)/Pr(active | not label)
-    TODO: or would it be better to just do Pr(active | label)/Pr(active)
+def score_latents(activations: Tensor, labels: Sequence) -> pl.DataFrame:
+    """Identify the best (most interpretable and monosemantic) latents in `activations`
+
+    Parameters
+    ----------
+    activations : Tensor
+        Tensor of SAE activations, of shape n_samples x d_sae
+    labels : Sequence
+        Labels for each sample in `activations`
+
+    Returns
+    -------
+    Dataframe with the following columns
+
+    latent_idx: latent index
+    label_max: label that the latent has the highest average activation for
+    max_activation_avg: average of highest activation for `label_max`
+    max_activation: the highest activation observed for `label_max`
+    max_activation_prop: the proportion of `label_max`'s activations
+        across the samples, out of the total average activation of the latent on all samples.
+        A perfectly monosemantic latent should only fire for one label so
+        the proportion should be one
+        Averaging should alleviate issues of label imbalance
+
+        The main metric for scoring latents, as it takes into account latents' activations
+        on other labels
+
 
     Notes
     -----
-    The idea of this is to provide a scoring for each latent and concept that is sensitive
-    to the frequency of the concept in the dataset
-
-    TODO: get a covariance matrix for the activations
+    The resulting top latents are equivalent to those found with a contrastive approach
+    that involves subtracting average activation values for each latent
     """
-    df = pl.DataFrame()
+    tmp: dict = {"latent_idx": range(activations.shape[1])}
+    encoder = LabelBinarizer()
+    ones: Tensor = torch.tensor(encoder.fit_transform(labels)).to(
+        torch.get_default_dtype()
+    )
+    avg_acts = torch.t(activations).matmul(ones) / ones.sum(dim=0)
+    maxes, idx = avg_acts.max(dim=1)
+    tmp["max_activation_avg"] = maxes
+    tmp["max_activation_prop"] = (maxes / avg_acts.sum(dim=1)).numpy()
+    tmp["label_max"] = encoder.classes_[idx.numpy()]
 
-
-# def latents_mutual_info(
-#     activations: Tensor, obs: pl.DataFrame, label_cols: Sequence
-# ) -> dict[str, pl.Series]:
-#     """Compute the mutual information between each feature in `activations`
-#     and each of the labels sets in `labels_cols`
-#     are with `labels` i.e. higher mutual information
-
-#     Returns
-#     -------
-#     Dictionary of returning a list of latents sorted by how strongly associated they
-#     """
+    # t(activations) has shape d_sae x n
+    # ones has shape n x k
+    # expand to d_sae x n x 1
+    # and       1 x n x k
+    a_expanded = torch.t(activations).unsqueeze(2)
+    mvals, _ = torch.where(ones == 1, a_expanded, -torch.inf).max(dim=1)
+    tmp["max_activation"] = [
+        mvals[lt, o] for lt, o in zip(tmp["latent_idx"], tmp["idx"])
+    ]
+    return pl.DataFrame(tmp)
