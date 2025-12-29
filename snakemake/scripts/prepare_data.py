@@ -8,6 +8,7 @@ from typing import Literal, get_args
 import plotnine as gg
 import polars as pl
 import torch
+import torch.utils.data as td
 from amr_predict.profiling import memray_from_smk
 from amr_predict.utils import EmbeddingCache, load_as, translate_df
 from datasets import Dataset
@@ -31,7 +32,7 @@ logger.add(sink=smk.log["log"])
 # * Utilities
 
 
-def get_seq_level(text_dset_path, cache) -> Dataset:
+def get_seq_level(text_dset_path, cache) -> td.Dataset:
     df = load_as(text_dset_path, "polars", ["sample", "sequence"])
     if EMBEDDING == "esm":
         df = (
@@ -39,7 +40,7 @@ def get_seq_level(text_dset_path, cache) -> Dataset:
             .drop("sequence")
             .rename({"sequence_aa": "sequence"})
         )
-    dset: Dataset = cache.to_dataset(df=df, key_col="sequence", new_col="embedding")
+    dset: td.Dataset = cache.to_dataset(df=df, key_col="sequence", new_col="embedding")
     return dset
 
 

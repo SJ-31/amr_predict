@@ -890,8 +890,22 @@ class LinkedDataset(td.Dataset):
         self.x_key: str = x_key
         super().__init__()
 
+    @property
     def shape(self):
-        return self.meta.shape
+        n_col = self.meta.shape[1] + 1
+        if not self.token_level:
+            return self.meta.shape[0], n_col
+        key_df = pl.DataFrame({"key": self.meta[self.text_key]})
+        n_row = (
+            duckdb.query(f"""
+        SELECT t.key, LEN(t.token)
+        FROM '{self.cache._glob()}' t
+        INNER JOIN key_df k on k.key = t.key
+        """)
+            .pl()["len(t.token)"]
+            .sum()
+        )
+        return n_row, n_col
 
     def __len__(self):
         return self.meta.height

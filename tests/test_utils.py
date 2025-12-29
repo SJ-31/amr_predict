@@ -160,6 +160,11 @@ def test_dataset(default_cache):
     loader = DataLoader(ds, batch_size=3)
     assert ds[:2]["x"].shape[0] == 2
     assert next(iter(loader))["x"].shape[0] == 3
+    print(cache.pl(as_array=True).collect())
+    d2 = LinkedDataset(
+        meta=df, cache=cache, text_key="key", x_key="x", token_level=True
+    )
+    print(d2.shape)
 
 
 # cache = EmbeddingCache(
@@ -171,6 +176,8 @@ def test_dataset(default_cache):
 #     "/home/shannc/Bio_SDD/amr_predict/results/tests/seqlens_test/datasets/processed_sequences/orf_only",
 # )
 # ld = LinkedDataset(dset.select_columns(["sample", "seqid", "sequence"]), cache)
+
+
 # loader = td.DataLoader(ld, batch_size=6, collate_fn=None)
 # l2 = td.DataLoader(
 #     dset.select_columns(["sample", "seqid", "sequence"]), batch_size=6, collate_fn=None
