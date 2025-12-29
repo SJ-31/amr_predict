@@ -7,8 +7,6 @@ pool_embeddings:
     - method: sum
     - method: similarity
   # [2025-10-27 Mon] swe caused bus error
-  obs_keep:
-    ["AMK", "GEN", "IPM", "MEM", "CRO", "CAZ", "FEP", "TGC", "CST", "MIN"]
   key: "x"
 
 tasks:

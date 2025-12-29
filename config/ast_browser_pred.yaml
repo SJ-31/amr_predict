@@ -7,22 +7,6 @@ pool_embeddings:
     - method: mean
     - method: sum
     - method: similarity
-  obs_keep: [
-      # ACCESS
-      "gentamicin",
-      "tetracycline",
-      "trimethoprim-sulfamethoxazole",
-      "tetracycline_class",
-      "gentamicin_class",
-      "trimethoprim-sulfamethoxazole_class",
-      # WATCH
-      "ciprofloxacin",
-      "cefoxitin",
-      "meropenem",
-      "ciprofloxacin_class",
-      "cefoxitin_class",
-      "meropenem_class",
-    ]
   key: "x"
 
 tasks:
@@ -33,13 +17,11 @@ tasks:
       "trimethoprim-sulfamethoxazole_class",
       "ciprofloxacin_class",
       "cefoxitin_class",
-      "meropenem_class",
     ]
   regression:
     [
       "ciprofloxacin",
       "cefoxitin",
-      "meropenem",
       "gentamicin",
       "tetracycline",
       "trimethoprim-sulfamethoxazole",
