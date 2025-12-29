@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from functools import reduce
 from math import ceil
 from pathlib import Path
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, override
 
 import anndata as ad
 import duckdb
@@ -570,6 +570,7 @@ class Preprocessor:
         return self.transform(dataset)
 
 
+# * Cache
 class EmbeddingCache:
     """Cache for batched text embeddings
 
@@ -591,17 +592,21 @@ class EmbeddingCache:
         "_seed",
     ]
 
-    def retrieve(self, keys: Sequence, tokens: bool = False) -> pl.DataFrame:
+    def retrieve(
+        self, keys: Sequence, tokens: bool = False, as_array: bool = True
+    ) -> pl.DataFrame:
         col = "token" if tokens else "seq"
-        lf: pl.LazyFrame = (
-            duckdb.query(f"""
-        SELECT key, {col}
-        FROM '{self._glob()}'
-        """)
-            .pl(lazy=True)
-            .filter(pl.col("key").is_in(keys))
-        )
-        return pl.DataFrame({"key": keys}).join(lf.collect(), on="key", how="left")
+        key_df = pl.DataFrame({"key": keys})
+        lf: pl.LazyFrame = duckdb.query(f"""
+        SELECT t.key, t.{col}
+        FROM '{self._glob()}' t
+        INNER JOIN key_df k on k.key = t.key
+        """).pl(lazy=True)
+        if not lf.head(1).collect().height == 1:
+            raise ValueError("None of the keys are present in the cache")
+        if not as_array:
+            return lf.collect()
+        return self._make_array(lf).collect()
 
     def _mask_in_df(
         self, df: pl.LazyFrame, column: str, mask_prop: float, height: int
@@ -687,6 +692,19 @@ class EmbeddingCache:
             return f"{str(self._dir)}/{self._prefix}*.parquet"
         return f"{self._prefix}*.parquet"
 
+    def _make_array(self, lf: pl.LazyFrame) -> pl.LazyFrame:
+        seq_size, token_size = self._peek_size(lf)
+        schema = lf.collect_schema()
+        seq_type = schema["seq"].inner
+        new_schema = {
+            "seq": pl.Array(seq_type, seq_size),
+        }
+        if "token" in schema.names():
+            if lf.head(1).collect()["token"].item() is not None:
+                token_type = schema["token"].inner.inner
+                new_schema["token"] = pl.List(pl.Array(token_type, token_size))
+        return lf.cast(new_schema)
+
     def pl(self, as_array: bool = False) -> pl.LazyFrame:
         try:
             lf = (
@@ -701,16 +719,7 @@ class EmbeddingCache:
             return pl.LazyFrame()
         if not as_array:
             return lf
-        seq_size, token_size = self._peek_size(lf)
-        schema = lf.collect_schema()
-        seq_type = schema["seq"].inner
-        new_schema = {
-            "seq": pl.Array(seq_type, seq_size),
-        }
-        if lf.head(1).collect()["token"].item() is not None:
-            token_type = schema["token"].inner.inner
-            new_schema["token"] = pl.List(pl.Array(token_type, token_size))
-        return lf.cast(new_schema)
+        return self._make_array(lf)
 
     def __contains__(self, key: str) -> bool:
         return key in self._seen
@@ -727,8 +736,9 @@ class EmbeddingCache:
             raise ValueError("no cached files available")
 
     def _peek_size(self, df: pl.LazyFrame) -> tuple[int, int]:
+        cols = df.collect_schema().names()
         vals = df.head(1).collect()
-        tk = vals["token"].item()
+        tk = vals["token"].item() if "token" in cols else None
         return len(vals["seq"].item()), len(tk[0]) if tk is not None else 0
 
     def keys(self):
@@ -822,18 +832,121 @@ class EmbeddingCache:
         tokens: bool = False,
         new_col: str = "embedding",
         drop_null_columns: bool = True,
-    ) -> Dataset:
+        hf: bool = False,
+    ) -> Dataset | td.Dataset:
         if drop_null_columns:
             df = df[[s.name for s in df if not (s.null_count() == df.height)]]
-        col = "token" if tokens else "seq"
-        join_with = self.retrieve(df[key_col], tokens=tokens).rename({col: new_col})
-        joined = df.join(join_with, left_on=key_col, right_on="key").filter(
-            pl.col(new_col).is_not_null()
+        if hf:
+            col = "token" if tokens else "seq"
+            join_with = self.retrieve(df[key_col], tokens=tokens).rename({col: new_col})
+            joined = df.join(join_with, left_on=key_col, right_on="key").filter(
+                pl.col(new_col).is_not_null()
+            )
+            dset = Dataset.from_polars(joined).with_format("torch")
+            # WARNING: the line above consumes a LOT of memory. But why? This is supposed to
+            # be zero-copy
+            return dset
+        return LinkedDataset(
+            meta=df, text_key=key_col, cache=self, token_level=tokens, x_key=new_col
         )
-        dset = Dataset.from_polars(joined).with_format("torch")
-        # BUG: the line above consumes a LOT of memory. But why? This is supposed to
-        # be zero-copy
-        return dset
+
+
+# ** Dataset integration
+
+
+class LinkedDataset(td.Dataset):
+    """Dataset using duckdb (through EmbeddingCache) to stream large embedding data in
+    batches.
+
+    Provides access to the embeddings for a sequence or token dataset
+    Indexing returns dictionaries, like huggingface Datasets
+
+    Parameters
+    ----------
+    meta : pl.DataFrame | Dataset
+        Dataframe or dataset containing the metadata for each sequence
+    text_key : str
+        Key in the dictionary on indexing to store the embeddings
+
+    Notes
+    -----
+
+    """
+
+    def __init__(
+        self,
+        meta: pl.DataFrame | Dataset,
+        cache: EmbeddingCache,
+        token_level: bool = False,
+        x_key: str = "embedding",
+        text_key: str = "sequence",
+    ) -> None:
+        self.cache: EmbeddingCache = cache
+        self.meta: pl.DataFrame = (
+            meta if isinstance(meta, pl.DataFrame) else meta.to_polars()
+        )
+        self.text_key: str = text_key
+        self.token_level: bool = token_level
+        self.x_key: str = x_key
+        super().__init__()
+
+    def shape(self):
+        return self.meta.shape
+
+    def __len__(self):
+        return self.meta.height
+
+    def to_polars(self) -> pl.DataFrame:
+        embeddings: pl.DataFrame = self.cache.retrieve(
+            self.meta[self.text_key].unique(), tokens=self.token_level, as_array=True
+        )
+        return self.meta.join(embeddings, left_on=self.text_key, right_on="key")
+
+    @override
+    def __getitem__(self, index) -> dict:
+        level = "token" if self.token_level else "seq"
+        selected: pl.DataFrame = self.meta[index]
+        embeddings: pl.DataFrame = self.cache.retrieve(
+            selected[self.text_key].unique(), tokens=self.token_level, as_array=True
+        )
+        df = selected.join(embeddings, left_on=self.text_key, right_on="key")
+        can_convert = self.meta.select(pl.selectors.numeric()).columns
+        converted = {col: df[col].to_torch() for col in can_convert}
+        x = df[level].to_torch()
+        result = df.drop([level, self.text_key] + can_convert).to_dict(as_series=False)
+        result[self.x_key] = x
+        result.update(converted)
+        return result
+
+    def __getitems__(self, indices) -> list:
+        # Code taken from huggingface dataset, required to prevent nesting when using
+        # torch DataLoader
+        batch = self.__getitem__(indices)
+        n_examples = len(batch[next(iter(batch))])
+        return [
+            {col: array[i] for col, array in batch.items()} for i in range(n_examples)
+        ]
+
+    def select_columns(self, columns: Sequence) -> LinkedDataset:
+        return LinkedDataset(
+            meta=self.meta.select(columns),
+            cache=self.cache,
+            x_key=self.x_key,
+            text_key=self.text_key,
+            token_level=self.token_level,
+        )
+
+    def filter(self, fn: Callable) -> LinkedDataset:
+        return LinkedDataset(
+            meta=self.meta.filter(fn(self.meta)),
+            cache=self.cache,
+            x_key=self.x_key,
+            text_key=self.text_key,
+            token_level=self.token_level,
+        )
+
+
+# ** Cache utilities
 
 
 def gen_from_cached(

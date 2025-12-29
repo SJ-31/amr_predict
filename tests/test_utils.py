@@ -6,8 +6,9 @@ import numpy as np
 import polars as pl
 import pytest
 import torch
-from amr_predict.utils import EmbeddingCache
+from amr_predict.utils import EmbeddingCache, LinkedDataset
 from loguru import logger
+from torch.utils.data import DataLoader
 
 logger.enable("amr_predict")
 
@@ -149,3 +150,29 @@ def test_cache2(default_cache):
     print(null_count)
     print(df.height * prop)
     assert pytest.approx(null_count, abs=2) == df.height * prop
+
+
+def test_dataset(default_cache):
+    cache: EmbeddingCache
+    cache, words = default_cache
+    df = pl.DataFrame({"key": words[:5]})
+    ds = LinkedDataset(meta=df, cache=cache, text_key="key", x_key="x")
+    loader = DataLoader(ds, batch_size=3)
+    assert ds[:2]["x"].shape[0] == 2
+    assert next(iter(loader))["x"].shape[0] == 3
+
+
+# cache = EmbeddingCache(
+#     Path(
+#         "/home/shannc/Bio_SDD/amr_predict/results/tests/seqlens_test/datasets/embedded/orf_only_seqLens_cache"
+#     )
+# )
+# dset = load_as(
+#     "/home/shannc/Bio_SDD/amr_predict/results/tests/seqlens_test/datasets/processed_sequences/orf_only",
+# )
+# ld = LinkedDataset(dset.select_columns(["sample", "seqid", "sequence"]), cache)
+# loader = td.DataLoader(ld, batch_size=6, collate_fn=None)
+# l2 = td.DataLoader(
+#     dset.select_columns(["sample", "seqid", "sequence"]), batch_size=6, collate_fn=None
+# )
+# batch = next(iter(loader))

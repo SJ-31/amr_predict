@@ -9,7 +9,7 @@ import polars as pl
 import torch
 import torch.nn as nn
 from amr_predict.models import BaseNN
-from amr_predict.utils import ModuleConfig, load_as, read_tabular
+from amr_predict.utils import LinkedDataset, ModuleConfig, load_as, read_tabular
 from datasets import Array2D, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from sklearn.preprocessing import LabelEncoder
@@ -68,8 +68,16 @@ class SeqPooler:
         self.key: str = key
         self.kws: dict = kws
 
-    def apply_whitelist(self, dataset: Dataset) -> Dataset:
-        return dataset.filter(lambda x: x[self.whitelist_col] in self.feature_whitelist)
+    def apply_whitelist(
+        self, dataset: Dataset | LinkedDataset
+    ) -> Dataset | LinkedDataset:
+        if isinstance(dataset, Dataset):
+            return dataset.filter(
+                lambda x: x[self.whitelist_col] in self.feature_whitelist
+            )
+        return dataset.filter(
+            lambda x: x[self.whitelist_col].isin(self.feature_whitelist)
+        )
 
     def _finalize_dataset(
         self,
