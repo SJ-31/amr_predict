@@ -695,14 +695,16 @@ class EmbeddingCache:
     def _make_array(self, lf: pl.LazyFrame) -> pl.LazyFrame:
         seq_size, token_size = self._peek_size(lf)
         schema = lf.collect_schema()
-        seq_type = schema["seq"].inner
-        new_schema = {
-            "seq": pl.Array(seq_type, seq_size),
-        }
-        if "token" in schema.names():
+        new_schema = {}
+        if "seq" in schema:
+            seq_type = schema["seq"].inner
+            new_schema["seq"] = pl.Array(seq_type, seq_size)
+        if "token" in schema:
             if lf.head(1).collect()["token"].item() is not None:
                 token_type = schema["token"].inner.inner
                 new_schema["token"] = pl.List(pl.Array(token_type, token_size))
+        if not new_schema:
+            raise ValueError("Neither `seq` nor `token` was present")
         return lf.cast(new_schema)
 
     def pl(self, as_array: bool = False) -> pl.LazyFrame:
@@ -739,7 +741,8 @@ class EmbeddingCache:
         cols = df.collect_schema().names()
         vals = df.head(1).collect()
         tk = vals["token"].item() if "token" in cols else None
-        return len(vals["seq"].item()), len(tk[0]) if tk is not None else 0
+        sq = len(vals["seq"].item()) if "seq" in cols else None
+        return sq or 0, len(tk[0]) if tk is not None else 0
 
     def keys(self):
         return self._seen
@@ -914,7 +917,10 @@ class LinkedDataset(td.Dataset):
         embeddings: pl.DataFrame = self.cache.retrieve(
             self.meta[self.text_key].unique(), tokens=self.token_level, as_array=True
         )
-        return self.meta.join(embeddings, left_on=self.text_key, right_on="key")
+        joined = self.meta.join(embeddings, left_on=self.text_key, right_on="key")
+        if self.token_level:
+            joined = joined.explode("token")
+        return joined
 
     @override
     def __getitem__(self, index) -> dict:
@@ -924,6 +930,8 @@ class LinkedDataset(td.Dataset):
             selected[self.text_key].unique(), tokens=self.token_level, as_array=True
         )
         df = selected.join(embeddings, left_on=self.text_key, right_on="key")
+        if self.token_level:
+            df = df.explode("token")
         can_convert = self.meta.select(pl.selectors.numeric()).columns
         converted = {col: df[col].to_torch() for col in can_convert}
         x = df[level].to_torch()

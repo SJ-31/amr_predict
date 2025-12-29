@@ -155,7 +155,7 @@ def test_cache2(default_cache):
 def test_dataset(default_cache):
     cache: EmbeddingCache
     cache, words = default_cache
-    df = pl.DataFrame({"key": words[:5]})
+    df = pl.DataFrame({"key": words[:5], "sample": range(5)})
     ds = LinkedDataset(meta=df, cache=cache, text_key="key", x_key="x")
     loader = DataLoader(ds, batch_size=3)
     assert ds[:2]["x"].shape[0] == 2
@@ -164,6 +164,7 @@ def test_dataset(default_cache):
     d2 = LinkedDataset(
         meta=df, cache=cache, text_key="key", x_key="x", token_level=True
     )
+    print(d2[:2])
     print(d2.shape)
 
 
