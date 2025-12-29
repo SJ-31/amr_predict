@@ -10,7 +10,7 @@ import polars as pl
 import torch
 import torch.utils.data as td
 from amr_predict.profiling import memray_from_smk
-from amr_predict.utils import EmbeddingCache, load_as, translate_df
+from amr_predict.utils import EmbeddingCache, load_as, read_tabular, translate_df
 from datasets import Dataset
 from loguru import logger
 from scipy import stats
@@ -305,6 +305,11 @@ def main():
                 dataset.save_to_disk(dataset_path=savepath)
                 logger.success(f"Finished proceessing with {method}")
             else:
+                if (remap_file := CONFIG.get("fasta_remap")) and Path(
+                    remap_file
+                ).exists():
+                    id_remap = dict(read_tabular(remap_file).iter_rows())
+                    kws["id_remap"] = id_remap
                 if kws["split_method"] == "bakta":
                     anno = Path(CONFIG["seq_metadata"]["bakta"])
                 else:

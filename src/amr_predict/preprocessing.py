@@ -645,12 +645,15 @@ class SeqPreprocessor:
         utr_amount: tuple[float | int, float | int] | None = None,
         upstream_context: int = 0,
         downstream_context: int = 0,
+        id_remap: dict | None = None,
     ):
         """Initialize preprocesser
 
         Parameters
         ----------
-        param : argument
+        id_remap : dict
+            Optional dictionary to transform id names from the fasta file stem.
+            If this is provided, samples that can't be remapped are ignored
 
         Returns
         -------
@@ -681,6 +684,7 @@ class SeqPreprocessor:
                 "`anno_path` file must be provided unless split_rule is `bin`!"
             )
         self.split_method: SPLIT_METHODS = split_method
+        self.id_remap: dict | None = id_remap
         self.annotations: Path = anno_path
         self.max_length: int = max_length
         self.utr_amount: tuple[float | int, float | int] | None = utr_amount
@@ -815,6 +819,14 @@ class SeqPreprocessor:
         """Return generator object, for use with Datasets.from_generator"""
         for fasta in self.fastas:
             id = fasta.stem
+            if (self.id_remap is not None) and ((id := self.id_remap.get(id)) is None):
+                logger.warning(
+                    f"""
+                    Fasta file '{fasta.name}' could not be remapped with `id_remap`\n
+                    Skipping...
+                    """
+                )
+                continue
             if self.split_method == "bakta":
                 try:
                     anno = pl.read_csv(
