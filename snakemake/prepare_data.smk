@@ -68,7 +68,9 @@ POOLED_ALREADY = [
     if k.get("method") in get_args(EMBEDDING_METHODS)
 ]
 TO_POOL = [d for d in PREPROCESSING.keys() if d not in POOLED_ALREADY]
-POOLED_PLOTS = expand("{o}/{d}-{p}.png", o=PLOT_OUT, d=TO_POOL, p=pooling_methods)
+POOLED_PLOTS = expand(
+    "{o}/{d}-{e}-{p}.png", o=PLOT_OUT, d=TO_POOL, e=EMBEDDING, p=pooling_methods
+)
 
 CACHE_CHECKS = ([f"{DATA_OUTS['E']}/{d}_{EMBEDDING}_cache.complete" for d in TO_POOL],)
 
@@ -82,8 +84,9 @@ def default_log(rule_name):
 
 def get_pooled_out(as_dir: bool = False):
     expanded = expand(
-        "{o}/{d}-{p}",
+        "{o}/{d}-{e}-{p}",
         o=DATA_OUTS["P"],
+        e=EMBEDDING,
         d=TO_POOL,
         p=pooling_methods,
     )

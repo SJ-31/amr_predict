@@ -241,174 +241,179 @@ def format_bakta(
     return pl.concat(dfs)
 
 
-# * Generate metadata
-def main():
-    if smk.rule == "get_seq_metadata":
-        dfs = []
-        seq_meta = CONFIG["seq_metadata"]
-        rename_kws = seq_meta["renaming_rules"]
-        if seq_meta.get("hamronization"):
-            dfs.append(format_hamronization(seq_meta["hamronization"], **rename_kws))
-        if seq_meta.get("bakta"):
-            dfs.append(format_bakta(Path(seq_meta["bakta"]), **rename_kws))
-        if seq_meta.get("combgc"):
-            dfs.append(format_combgc(Path(seq_meta["combgc"]), **rename_kws))
-        if seq_meta.get("ampcombi"):
-            dfs.append(format_ampcombi(seq_meta["ampcombi"], **rename_kws))
-        if dfs:
-            df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed")
-            df.write_csv(smk.output[0])
-        else:
-            pl.DataFrame().write_csv(smk.output[0])
+# * Rules
 
-    # * Make text datasets
-    elif smk.rule == "make_text_datasets":
-        embedding_method: EMBEDDING_METHODS = CONFIG["embedding"]
-        if embedding_method == "seqLens":
-            max_length = 512
-        elif embedding_method == "Evo2":
-            max_length = 1800
-        elif embedding_method == "esm":
-            max_length = 2048 * 3  # context length * 3 for codons
-        for name, kws in smk.params["preprocessing"].items():
-            savepath = Path(f"{smk.params['outdir']}/{name}")
-            if (method := kws.pop("method", None)) in get_args(EMBEDDING_METHODS):
-                # Deterministic embedding methods that can process whole genomes
-                # - kmer
-                # - feature_presence
-                logger.info(f"Begin processing data with {method}")
-                savepath = Path(f"{smk.params['outdir_pooled']}/{name}")
-                if method == "kmer":
-                    kws.update({"fastas": Path(CONFIG["genomes"])})
-                elif method == "feature_presence":
-                    if (source := kws.pop("source", "bakta")) == "bakta":
-                        anno = Path(CONFIG["seq_metadata"]["bakta"])
-                        feature_cols = ["Gene", "Product"]
-                    elif source == "hamr":
-                        anno = Path(smk.input[0])
-                        feature_cols = ["hamr_gene_symbol", "hamr_drug_class"]
-                    kws.update(
-                        {
-                            "fasta_annotations": anno,
-                            "feature_cols": feature_cols,
-                            "read_kws": {"comment_prefix": "# "},
-                            "metadata_pattern": "*_bakta.tsv",
-                        }
-                    )
-                sem = SeqEmbedder(
-                    method=method,
-                    id_col=CONFIG["sample_metadata"]["id_col"],
-                    metadata=CONFIG["sample_metadata"]["file"],
-                    **kws,
+
+# ** Generate metadata
+def get_seq_metadata():
+    dfs = []
+    seq_meta = CONFIG["seq_metadata"]
+    rename_kws = seq_meta["renaming_rules"]
+    if seq_meta.get("hamronization"):
+        dfs.append(format_hamronization(seq_meta["hamronization"], **rename_kws))
+    if seq_meta.get("bakta"):
+        dfs.append(format_bakta(Path(seq_meta["bakta"]), **rename_kws))
+    if seq_meta.get("combgc"):
+        dfs.append(format_combgc(Path(seq_meta["combgc"]), **rename_kws))
+    if seq_meta.get("ampcombi"):
+        dfs.append(format_ampcombi(seq_meta["ampcombi"], **rename_kws))
+    if dfs:
+        df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed")
+        df.write_csv(smk.output[0])
+    else:
+        pl.DataFrame().write_csv(smk.output[0])
+
+
+def make_text_datasets():
+    embedding_method: EMBEDDING_METHODS = CONFIG["embedding"]
+    if embedding_method == "seqLens":
+        max_length = 512
+    elif embedding_method == "Evo2":
+        max_length = 1800
+    elif embedding_method == "esm":
+        max_length = 2048 * 3  # context length * 3 for codons
+    for name, kws in smk.params["preprocessing"].items():
+        savepath = Path(f"{smk.params['outdir']}/{name}")
+        if (method := kws.pop("method", None)) in get_args(EMBEDDING_METHODS):
+            # Deterministic embedding methods that can process whole genomes
+            # - kmer
+            # - feature_presence
+            logger.info(f"Begin processing data with {method}")
+            savepath = Path(f"{smk.params['outdir_pooled']}/{name}")
+            if method == "kmer":
+                kws.update(
+                    {
+                        "fastas": Path(CONFIG["genomes"]),
+                        "id_col": CONFIG["sample_metadata"]["id_col"],
+                        "id_rename": "sample",
+                    }
                 )
-                dataset = sem(None)
-                dataset.save_to_disk(dataset_path=savepath)
-                logger.success(f"Finished proceessing with {method}")
-            else:
-                if (remap_file := CONFIG.get("fasta_remap")) and Path(
-                    remap_file
-                ).exists():
-                    id_remap = dict(read_tabular(remap_file).iter_rows())
-                    kws["id_remap"] = id_remap
-                if kws["split_method"] == "bakta":
+            elif method == "feature_presence":
+                if (source := kws.pop("source", "bakta")) == "bakta":
                     anno = Path(CONFIG["seq_metadata"]["bakta"])
-                else:
-                    anno = None
-                SeqDataset.save_from_fastas(
-                    fastas=CONFIG["genomes"],
-                    savepath=savepath,
-                    id_col=CONFIG["sample_metadata"]["id_col"],
-                    annotations=anno,
-                    seq_metadata=smk.input[0],
-                    max_length=max_length,
+                    feature_cols = ["Gene", "Product"]
+                elif source == "hamr":
+                    anno = Path(smk.input[0])
+                    feature_cols = ["hamr_gene_symbol", "hamr_drug_class"]
+                kws.update(
+                    {
+                        "fasta_annotations": anno,
+                        "feature_cols": feature_cols,
+                        "id_col": "sample",
+                        "read_kws": {"comment_prefix": "# "},
+                        "metadata_pattern": "*_bakta.tsv",
+                    }
+                )
+            sem = SeqEmbedder(method=method, **kws)
+            dataset = sem(None)
+            dataset.save_to_disk(dataset_path=savepath)
+            logger.success(f"Finished proceessing with {method}")
+        else:
+            if (remap_file := CONFIG.get("fasta_remap")) and Path(remap_file).exists():
+                id_remap = dict(read_tabular(remap_file).iter_rows())
+                kws["id_remap"] = id_remap
+            if kws["split_method"] == "bakta":
+                anno = Path(CONFIG["seq_metadata"]["bakta"])
+            else:
+                anno = None
+            SeqDataset.save_from_fastas(
+                fastas=CONFIG["genomes"],
+                savepath=savepath,
+                id_col=CONFIG["sample_metadata"]["id_col"],
+                annotations=anno,
+                seq_metadata=smk.input[0],
+                max_length=max_length,
+                **kws,
+            )
+
+
+def make_embedded_datasets():
+    params: dict = CONFIG["embedding_methods"][EMBEDDING]
+    kws: dict = params.copy()
+    for seq_ds in smk.input:
+        inpath = Path(seq_ds)
+        cache_name = f"{inpath.stem}_{EMBEDDING}_cache"
+        if inpath.stem in smk.params["ignore"]:
+            continue
+        savepath = Path(smk.params["outdir"]) / f"{cache_name}.complete"
+        workdir = Path(f"{smk.params['outdir']}") / cache_name
+        workdir.mkdir(exist_ok=True)
+        if EMBEDDING == "Evo2":
+            kws["runscript"] = CONFIG["evo2_runscript"]
+        elif EMBEDDING == "seqLens" or EMBEDDING == "esm":
+            kws["huggingface"] = CONFIG["huggingface"]
+        if not savepath.exists():
+            logger.info(f"Embedding dataset `{inpath.stem}` started")
+            dset = SeqDataset(
+                inpath,
+                embedder=SeqEmbedder(
+                    method=EMBEDDING,
+                    workdir=workdir,
+                    only_cache=True,  # WARNING: [2025-12-16 Tue] cache.to_dataset is
+                    # highly memory-intensive, so don't use it
+                    with_tokens=CONFIG["save_tokens"],
+                    token_prop=CONFIG["token_prop"],
+                    text_key="sequence",
                     **kws,
-                )
-    # * Embed
-    elif smk.rule == "make_embedded_datasets":
-        params: dict = CONFIG["embedding_methods"][EMBEDDING]
-        kws: dict = params.copy()
-        for seq_ds in smk.input:
-            inpath = Path(seq_ds)
-            cache_name = f"{inpath.stem}_{EMBEDDING}_cache"
-            if inpath.stem in smk.params["ignore"]:
-                continue
-            savepath = Path(smk.params["outdir"]) / f"{cache_name}.complete"
-            workdir = Path(f"{smk.params['outdir']}") / cache_name
-            workdir.mkdir(exist_ok=True)
-            if EMBEDDING == "Evo2":
-                kws["runscript"] = CONFIG["evo2_runscript"]
-            elif EMBEDDING == "seqLens" or EMBEDDING == "esm":
-                kws["huggingface"] = CONFIG["huggingface"]
+                ),
+            )
+            dset.embed(None)
+            savepath.write_text("TRUE")
+            logger.success(f"Embedding dataset `{inpath.stem}` complete")
+
+
+def pool_embeddings():
+    methods: list[dict] = RCONFIG.pop("methods")
+    for embedding_ds in smk.input:
+        inpath = Path(embedding_ds).with_suffix("")
+        cache = EmbeddingCache(dir=inpath)
+        ds_name = inpath.stem.removesuffix(f"_{EMBEDDING}_cache")
+        texts_path = Path(smk.params["textdir"]).joinpath(ds_name)
+        for spec in methods:
+            method = spec["method"]
+            name = spec.get("name", method)
+
+            spec_kws = RCONFIG.copy()
+            spec_kws.update(spec.get("kws", {}))
+            savepath = Path(smk.params["outdir"]) / f"{ds_name}-{EMBEDDING}-{name}"
+            figpath = Path(smk.params["plotdir"]) / f"{ds_name}-{EMBEDDING}-{name}.png"
             if not savepath.exists():
-                logger.info(f"Embedding dataset `{inpath.stem}` started")
-                dset = SeqDataset(
-                    inpath,
-                    embedder=SeqEmbedder(
-                        method=EMBEDDING,
-                        workdir=workdir,
-                        only_cache=True,  # WARNING: [2025-12-16 Tue] cache.to_dataset is
-                        # highly memory-intensive, so don't use it
-                        with_tokens=CONFIG["save_tokens"],
-                        token_prop=CONFIG["token_prop"],
-                        text_key="sequence",
-                        **kws,
-                    ),
+                logger.info(f"Pooling for {inpath.stem} with method `{method}` started")
+                sp: StaticPooler = StaticPooler(
+                    method=method,
+                    # NOTE: merge with metadata during evals to save space
+                    sample_metadata=None,
+                    sample_metadata_key=None,
+                    **spec_kws,
                 )
-                dset.embed(None)
-                savepath.write_text("TRUE")
-                logger.success(f"Embedding dataset `{inpath.stem}` complete")
-    # * Pool
-    elif smk.rule == "pool_embeddings":
-        methods: list[dict] = RCONFIG.pop("methods")
-        for embedding_ds in smk.input:
-            inpath = Path(embedding_ds).with_suffix("")
-            cache = EmbeddingCache(dir=inpath)
-            ds_name = inpath.stem.removesuffix(f"_{EMBEDDING}_cache")
-            texts_path = Path(smk.params["textdir"]).joinpath(ds_name)
-            for spec in methods:
-                method = spec["method"]
-                name = spec.get("name", method)
-                spec_kws = RCONFIG.copy()
-                spec_kws.update(spec.get("kws", {}))
-                savepath = Path(smk.params["outdir"]) / f"{ds_name}-{method}"
-                figpath = Path(smk.params["plotdir"]) / f"{ds_name}-{method}.png"
-                if not savepath.exists():
-                    logger.info(
-                        f"Pooling for {inpath.stem} with method `{method}` started"
-                    )
-                    sp: StaticPooler = StaticPooler(
-                        method=method,
-                        # NOTE: merge with metadata during evals to save space
-                        sample_metadata=None,
-                        sample_metadata_key=None,
-                        **spec_kws,
-                    )
-                    dset = get_seq_level(texts_path, cache)
-                    pooled = sp(dset)
-                    pooled.save_to_disk(dataset_path=savepath)
-                    logger.success("Pooling complete")
-                else:
-                    pooled = load_as(savepath)
-                original = get_seq_level(texts_path, cache)
-                comparison = compare_pooled(
-                    original,
-                    pooled,
-                    o_key=RCONFIG["embedding_key"],
-                    p_key=RCONFIG["key"],
-                    sample_key=RCONFIG["sample_key"],
+                dset = get_seq_level(texts_path, cache)
+                pooled = sp(dset)
+                pooled.save_to_disk(dataset_path=savepath)
+                logger.success("Pooling complete")
+            else:
+                pooled = load_as(savepath)
+            original = get_seq_level(texts_path, cache)
+            comparison = compare_pooled(
+                original,
+                pooled,
+                o_key=RCONFIG["embedding_key"],
+                p_key=RCONFIG["key"],
+                sample_key=RCONFIG["sample_key"],
+            )
+            corr = stats.spearmanr(comparison["d_original"], comparison["d_pooled"])
+            plot = (
+                gg.ggplot(comparison, gg.aes(x="d_original", y="d_pooled"))
+                + gg.geom_point()
+                + gg.ggtitle(
+                    title="Spearman correlation between distances of contig embeddings & genome embeddings",
+                    subtitle=f"rho = {round(corr.statistic, 2)}, p-value: {round(corr.pvalue, 2)}",
                 )
-                corr = stats.spearmanr(comparison["d_original"], comparison["d_pooled"])
-                plot = (
-                    gg.ggplot(comparison, gg.aes(x="d_original", y="d_pooled"))
-                    + gg.geom_point()
-                    + gg.ggtitle(
-                        title="Spearman correlation between distances of contig embeddings & genome embeddings",
-                        subtitle=f"rho = {round(corr.statistic, 2)}, p-value: {round(corr.pvalue, 2)}",
-                    )
-                    + gg.xlab("Contig distance")
-                    + gg.ylab("Genome distance")
-                )
-                plot.save(filename=figpath, verbose=False)
+                + gg.xlab("Contig distance")
+                + gg.ylab("Genome distance")
+            )
+            plot.save(filename=figpath, verbose=False)
 
 
-memray_from_smk(CONFIG, main, smk.log["profile"])
+# * Run
+
+memray_from_smk(CONFIG, locals()[smk.rule], smk.log["profile"])
