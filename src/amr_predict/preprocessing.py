@@ -53,10 +53,12 @@ class SeqEmbedder:
         with_tokens: bool = True,
         save_interval: int = 10,
         only_cache: bool = True,
+        token_prop: float | None = None,
         **kwargs,
     ):
         self.method: EMBEDDING_METHODS = method
         self.kwargs: dict = kwargs
+        self.token_prop: float | None = token_prop
         self.with_tokens = with_tokens
         if self.with_tokens:
             logger.warning(
@@ -95,6 +97,7 @@ class SeqEmbedder:
         accepted_suffixes: tuple,
         key: str,
         embed_fn: Callable,
+        id_rename: str | None = None,
         pattern: str | None = None,
         features: tuple | list | None = None,
         save_features_to: Path | None = None,
@@ -120,6 +123,8 @@ class SeqEmbedder:
         if metadata is not None:
             meta = read_tabular(metadata)
             df = df.join(meta, on=id_col)
+        if id_rename is not None:
+            df = df.rename({id_col: id_rename})
         arr = np.array(df.select(feature_cols))
         if not features:
             variance: np.ndarray = arr.var(axis=0)
@@ -321,7 +326,10 @@ class SeqEmbedder:
         os.environ["HF_HOME"] = huggingface
         get_hidden: bool = hidden_layer is not None
         cache: EmbeddingCache = EmbeddingCache(
-            self.workdir, with_tokens=self.with_tokens, save_interval=self.save_interval
+            self.workdir,
+            with_tokens=self.with_tokens,
+            save_interval=self.save_interval,
+            token_prop=self.token_prop,
         )
 
         if model == "esm3-open":
@@ -446,7 +454,10 @@ class SeqEmbedder:
         df: pl.DataFrame = dset.to_polars()
         logger.info(f"{df.shape[0]} sequences to embed")
         cache: EmbeddingCache = EmbeddingCache(
-            self.workdir, save_interval=self.save_interval, with_tokens=self.with_tokens
+            self.workdir,
+            save_interval=self.save_interval,
+            with_tokens=self.with_tokens,
+            token_prop=self.token_prop,
         )
         error_message = "Evo2 failed to generate predictions"
 
@@ -552,7 +563,10 @@ class SeqEmbedder:
         dataset = dset.add_column("uid", list(range(len(dset))))
         df: pl.DataFrame = dataset.to_polars()
         cache: EmbeddingCache = EmbeddingCache(
-            self.workdir, save_interval=self.save_interval, with_tokens=self.with_tokens
+            self.workdir,
+            save_interval=self.save_interval,
+            with_tokens=self.with_tokens,
+            token_prop=self.token_prop,
         )
         to_remove = [c for c in dset.column_names if c != "uid"]
 
