@@ -920,8 +920,22 @@ class LinkedDataset(td.Dataset):
             joined = joined.explode("token")
         return joined
 
+    @property
+    def columns(self):
+        return self.meta.columns + [self.x_key]
+
+    def _get_col(self, col) -> Tensor | pl.Series:
+        if col == self.x_key:
+            collected = self.cache.pl(as_array=True).collect()
+            if self.token_level:
+                return collected["token"].to_torch()
+            return collected["seq"].to_torch()
+        return self.meta[col]
+
     @override
-    def __getitem__(self, index) -> dict:
+    def __getitem__(self, index) -> dict | Tensor | pl.Series:
+        if isinstance(index, str):
+            return self._get_col(index)
         level = "token" if self.token_level else "seq"
         selected: pl.DataFrame = self.meta[index]
         embeddings: pl.DataFrame = self.cache.retrieve(
@@ -948,6 +962,13 @@ class LinkedDataset(td.Dataset):
         ]
 
     def select_columns(self, columns: Sequence) -> LinkedDataset:
+        if isinstance(columns, str):
+            columns = [columns]
+        elif not isinstance(columns, list):
+            columns = list(columns)
+        if self.text_key not in columns:
+            columns.append(self.text_key)
+        columns = [c for c in columns if c != self.x_key]
         return LinkedDataset(
             meta=self.meta.select(columns),
             cache=self.cache,
