@@ -56,14 +56,12 @@ def get_dataset(
         return dset
     cache_path = Path(smk.params["caches"]).joinpath(f"{name}_{EMBEDDING}_cache")
     cache: EmbeddingCache = EmbeddingCache(cache_path)
-    if level == "sequence-level":
-        dset = cache.to_dataset(df=key_df, key_col="sequence", new_col=X_KEY)
-    else:
-        tokens = cache.retrieve(key_df["sequence"], tokens=True).rename(
-            {"token": X_KEY}
-        )
-        key_df = key_df.join(tokens, left_on="sequence", right_on="key").explode(X_KEY)
-        dset = Dataset.from_polars(key_df)
+    dset = cache.to_dataset(
+        df=key_df,
+        key_col="sequence",
+        new_col=X_KEY,
+        tokens=level != "sequence-level",
+    )
     return dset
 
 

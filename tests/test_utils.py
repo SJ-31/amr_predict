@@ -166,6 +166,8 @@ def test_dataset(default_cache):
     )
     print(d2[:2])
     print(d2.shape)
+    assert ds.meta.shape[0] == ds["x"].shape[0]
+    assert ds.meta.shape[0] == ds[:]["x"].shape[0]
 
 
 # cache = EmbeddingCache(

@@ -12,6 +12,7 @@ from amr_predict.models import BaseNN
 from amr_predict.utils import LinkedDataset, ModuleConfig, load_as, read_tabular
 from datasets import Array2D, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
+from loguru import logger
 from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
 from torchmetrics.functional.pairwise import (
@@ -20,11 +21,11 @@ from torchmetrics.functional.pairwise import (
     pairwise_linear_similarity,
 )
 
+logger.disable("amr_predict")
+
 STATIC_POOLING_METHODS: TypeAlias = Literal[
-    "sum", "mean", "similarity", "swe", "concat", "only_gene"
+    "sum", "mean", "similarity", "swe", "concat", "seq_subset"
 ]
-# TODO: [2025-12-09 Tue] write the only_gene method which just takes a single embedding from the set
-# based on gene identity
 LEARNING_POOLING_METHODS: TypeAlias = Literal["autoencoder", "swe"]
 
 
@@ -81,7 +82,7 @@ class SeqPooler:
 
     def _finalize_dataset(
         self,
-        dataset: Dataset,
+        dataset: Dataset | LinkedDataset,
         aggregated: Tensor,
         mpath: Path | None = None,
         obs_keep: list | None = None,
@@ -179,6 +180,8 @@ class StaticPooler(SeqPooler):
             x = self._similarity_weighted(d, **self.kws)
         elif self.method == "swe":
             x = self._swe(d, **self.kws)
+        elif self.method == "seq_subset":
+            x = self._seq_subset(d, **self.kws)
         elif self.method == "concat":
             padded = self._pad_embeddings(d)
             x = padded.reshape(padded.shape[0], -1)
@@ -238,6 +241,91 @@ class StaticPooler(SeqPooler):
             d_in=d_in, num_slices=num_slices, num_ref_points=m, freeze_swe=True
         )
         return pooler(self._pad_embeddings(dataset))
+
+    def _seq_subset(
+        self,
+        dataset: LinkedDataset | Dataset,
+        priority: list,
+        subset_col: str,
+        agg: Literal["mean", "max", None] = None,
+        split: str | None = None,
+        rng: int | None = None,
+    ) -> Tensor:
+        """
+        Pooling method that selects a specific sequence to use as representative of
+        the sample, or aggregates a subset of sequences
+
+        Parameters
+        ----------
+        priority : list
+            List of sample labels in subset_col, in order of decreasing importance,
+            to use for selecting sequences of a sample
+            EX: passing the list ["geneK", "mucin", "pump"], embeddings from
+            sequences labeled as "geneK" in `subset_col` will be prioritized
+            If for a given sample, none of its sequences are in `priority`, they are all
+            aggregated or a random sequence is chosen
+        agg : Aggregation method when multiple sequences bear the highest priority
+            label
+        rng : int
+            Random seed for sampling
+        """
+        meta: pl.DataFrame = (
+            dataset.meta if isinstance(dataset, LinkedDataset) else dataset.to_polars()
+        )
+        not_in_meta = set(priority) - set(meta[subset_col])
+        if len(not_in_meta) > 0:
+            logger.warning(
+                f"The following entries of `priority` {not_in_meta} are not present in the dataset and will be removed. Removing..."
+            )
+            priority = [p for p in priority if p not in not_in_meta]
+        if not priority:
+            raise ValueError(
+                f"No values specified in `priority` were found in column `{subset_col}`"
+            )
+        if split is not None:
+            meta = meta.with_columns(pl.col(subset_col).str.split(split))
+            list_check = True
+        else:
+            list_check = False
+
+        mapping = {p: len(priority) - i for i, p in enumerate(priority)}
+
+        def score_list(lst: list) -> int:
+            return max(map(lambda x: mapping.get(x, 0), lst))
+
+        meta = meta.with_row_index()
+        samples = self._encode_samples(dataset)
+        embeddings = dataset[self.embedding_key][:]
+        unique_samples = torch.unique(samples, sorted=True)
+        tmp = []
+        # If the current sample is `null` for subset col, take a random element
+        # Otherwise, take elements according to the priority list
+        if not list_check:
+            meta = meta.with_columns(
+                pl.col(subset_col).replace_strict(mapping, default=0).alias("score")
+            )
+        else:
+            meta = meta.with_columns(
+                pl.col(subset_col)
+                .map_elements(
+                    lambda x: score_list(x) if x is not None else 0,
+                    return_dtype=pl.Int32,
+                )
+                .alias("score")
+            )
+
+        for sample in unique_samples:
+            mask = dataset[self.sample_key][:] == sample
+            current = meta.filter(mask)
+            current = current.filter(pl.col("score") == current["score"].max())
+            if agg is None:
+                sampled = current.sample(1, seed=rng)["index"]
+                tmp.append(embeddings[sampled, :])
+            elif agg == "mean":
+                tmp.append(embeddings[mask].sum(dim=1))
+            elif agg == "max":
+                tmp.append(embeddings[mask].max(dim=1)[0])
+        return torch.stack(tmp)
 
     def _sum(
         self, dataset: Dataset, weigh: bool = True, weight_fn: Callable | None = None
