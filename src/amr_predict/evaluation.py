@@ -341,7 +341,7 @@ def score_latents(activations: Tensor, labels: Sequence) -> pl.DataFrame:
 
     Returns
     -------
-    Dataframe with the following columns
+    Dataframe with the following columns:
 
     latent_idx: latent index
     label_max: label that the latent has the highest average activation for
@@ -356,30 +356,52 @@ def score_latents(activations: Tensor, labels: Sequence) -> pl.DataFrame:
         The main metric for scoring latents, as it takes into account latents' activations
         on other labels
 
+    Classification metrics, with respect to label_max, computed
+        with one-vs-rest.
 
     Notes
     -----
     The resulting top latents are equivalent to those found with a contrastive approach
     that involves subtracting average activation values for each latent
+
+    In each row, classification metrics for the given latent are defined with respect to
+    the current `label_max` and against all other labels.
+        so true positives are the count of samples with `label_max` where the latent had
+        nonzero activations, true negatives are the sum of zero activations for all other
+        labels and so on.
     """
-    tmp: dict = {"latent_idx": range(activations.shape[1])}
+    lidx = torch.arange(activations.shape[1])
+    tmp: dict = {"latent_idx": lidx}
     encoder = LabelBinarizer()
-    ones: Tensor = torch.tensor(encoder.fit_transform(labels)).to(
-        torch.get_default_dtype()
-    )
+    dtype = torch.get_default_dtype()
+    ones: Tensor = torch.tensor(encoder.fit_transform(labels)).to(dtype)
     avg_acts = torch.t(activations).matmul(ones) / ones.sum(dim=0)
     maxes, idx = avg_acts.max(dim=1)
     tmp["max_activation_avg"] = maxes
-    tmp["max_activation_prop"] = (maxes / avg_acts.sum(dim=1)).numpy()
+    tmp["max_activation_prop"] = (maxes / avg_acts.sum(dim=1)).tolist()
     tmp["label_max"] = encoder.classes_[idx.numpy()]
 
     # t(activations) has shape d_sae x n
-    # ones has shape n x k
-    # expand to d_sae x n x 1
+    # ones  has shape n x k
+    # expands to d_sae x n x 1
     # and       1 x n x k
     a_expanded = torch.t(activations).unsqueeze(2)
     mvals, _ = torch.where(ones == 1, a_expanded, -torch.inf).max(dim=1)
-    tmp["max_activation"] = [
-        mvals[lt, o] for lt, o in zip(tmp["latent_idx"], tmp["idx"])
-    ]
+    tmp["max_activation"] = mvals[lidx, idx].tolist()
+
+    # Classifier scoring
+    nonzero_counts = torch.t(activations > 0).to(dtype).matmul(ones)
+    zero_counts = torch.t(activations == 0).to(dtype).matmul(ones)
+
+    tp = nonzero_counts[lidx, idx]
+    fn = zero_counts[lidx, idx]
+    tn = zero_counts.sum(dim=1) - fn
+    fp = nonzero_counts.sum(dim=1) - tp
+    tmp["f1"] = ((2 * tp) / (2 * tp + fp + fn)).tolist()
+    tmp["precision"] = tp / (tp + fp)
+    tmp["fpr"] = fp / (fp + tn)
+    tmp["fnr"] = fn / (fn + tp)
+    tmp["sensitivity"] = tp / (tp + fn)
+    tmp["specificity"] = tn / (tn + fp)
+
     return pl.DataFrame(tmp)
