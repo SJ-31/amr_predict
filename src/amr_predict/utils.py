@@ -593,6 +593,7 @@ class EmbeddingCache:
     def retrieve(
         self, keys: Sequence, tokens: bool = False, as_array: bool = True
     ) -> pl.DataFrame:
+        key_length = len(keys)
         col = "token" if tokens else "seq"
         key_df = pl.DataFrame({"key": keys})
         lf: pl.LazyFrame = duckdb.query(f"""
@@ -602,9 +603,12 @@ class EmbeddingCache:
         """).pl(lazy=True)
         if not lf.head(1).collect().height == 1:
             raise ValueError("None of the keys are present in the cache")
-        if not as_array:
-            return lf.collect()
-        return self._make_array(lf).collect()
+        collected = lf.collect() if not as_array else self._make_array(lf).collect()
+        if collected.shape[0] != key_length:
+            raise ValueError(
+                f"Number of keys {key_length} != shape of array {collected}"
+            )
+        return collected
 
     def _mask_in_df(
         self, df: pl.LazyFrame, column: str, mask_prop: float, height: int
@@ -915,7 +919,9 @@ class LinkedDataset(td.Dataset):
         embeddings: pl.DataFrame = self.cache.retrieve(
             self.meta[self.text_key].unique(), tokens=self.token_level, as_array=True
         )
-        joined = self.meta.join(embeddings, left_on=self.text_key, right_on="key")
+        joined = self.meta.join(
+            embeddings, left_on=self.text_key, right_on="key", how="left"
+        )
         if self.token_level:
             joined = joined.explode("token")
         return joined
@@ -924,9 +930,17 @@ class LinkedDataset(td.Dataset):
     def columns(self):
         return self.meta.columns + [self.x_key]
 
+    def _get_x(self, indices: Any | None = None) -> pl.DataFrame:
+        df: pl.DataFrame = self.meta[indices] if indices is not None else self.meta
+        x_df: pl.DataFrame = self.cache.retrieve(
+            df[self.text_key].unique(), tokens=self.token_level, as_array=True
+        )
+        joined = df.join(x_df, left_on=self.text_key, right_on="key", how="left")
+        return joined
+
     def _get_col(self, col) -> Tensor | pl.Series:
         if col == self.x_key:
-            collected = self.cache.pl(as_array=True).collect()
+            collected = self._get_x(None)
             if self.token_level:
                 return collected["token"].to_torch()
             return collected["seq"].to_torch()
@@ -937,11 +951,7 @@ class LinkedDataset(td.Dataset):
         if isinstance(index, str):
             return self._get_col(index)
         level = "token" if self.token_level else "seq"
-        selected: pl.DataFrame = self.meta[index]
-        embeddings: pl.DataFrame = self.cache.retrieve(
-            selected[self.text_key].unique(), tokens=self.token_level, as_array=True
-        )
-        df = selected.join(embeddings, left_on=self.text_key, right_on="key")
+        df = self._get_x(index)
         if self.token_level:
             df = df.explode("token")
         can_convert = self.meta.select(pl.selectors.numeric()).columns
