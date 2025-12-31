@@ -597,7 +597,7 @@ class EmbeddingCache:
         col = "token" if tokens else "seq"
         key_df = pl.DataFrame({"key": keys})
         lf: pl.LazyFrame = duckdb.query(f"""
-        SELECT t.key, t.{col}
+        SELECT DISTINCT ON (t.key) t.key, t.{col}
         FROM '{self._glob()}' t
         INNER JOIN key_df k on k.key = t.key
         """).pl(lazy=True)
@@ -674,7 +674,7 @@ class EmbeddingCache:
 
     def rewrite(self, n_rows: int = 100_000, token_prop: float | None = None) -> None:
         "Read all entries into memory, remove duplicates and re-write cache to contain N parquet files"
-        lf: pl.LazyFrame = self.pl()
+        lf: pl.LazyFrame = self.pl().unique("seq")
         if token_prop:
             col = lf.select("token").collect()["token"].is_not_null()
             if col.any():
@@ -903,7 +903,7 @@ class LinkedDataset(td.Dataset):
         key_df = pl.DataFrame({"key": self.meta[self.text_key]})
         n_row = (
             duckdb.query(f"""
-        SELECT t.key, LEN(t.token)
+        SELECT DISTINCT ON (t.key) t.key, LEN(t.token)
         FROM '{self.cache._glob()}' t
         INNER JOIN key_df k on k.key = t.key
         """)
