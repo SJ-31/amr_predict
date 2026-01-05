@@ -523,12 +523,14 @@ class Preprocessor:
         self.kws: dict = kws or {}
 
     def _filter_idx(self, batch):
-        batch[self.x_key] = batch[self.x_key][self.feature_idx]
+        batch[self.x_key] = batch[self.x_key][:, self.feature_idx]
         return batch
 
     def transform(self, dataset: Dataset) -> Dataset:
         if self.method in {"variance"}:
-            filtered = dataset.map(self._filter_idx)
+            filtered = dataset.map(
+                self._filter_idx, batched=True, batch_size=dataset.shape[0]
+            )
             return filtered
         else:
             raise NotImplementedError()
