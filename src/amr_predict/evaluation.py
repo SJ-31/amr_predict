@@ -75,8 +75,8 @@ class Evaluator:
 
         Parameters
         ----------
-        validation : float
-            optional, the proportion of the dataset to keep for validation
+        validation_kws : dict
+            optional, keyword arguments for the proportion of the dataset to keep for validation
         stratify_by : str | None
             for classification tasks, the name of the task (column in dataset) to stratify
         kws : dict
@@ -114,12 +114,17 @@ class Evaluator:
         self,
         dataset: Path | DatasetDict | Dataset,
         splits: dict[str, tuple[str, str, str | None | Dataset]] | None = None,
+        validation_kws: dict | None = None,
         **kws,
     ) -> pl.DataFrame:
         """Holdout evaluation on a dataset dict, possibly saved on disk
 
         Parameters
         ----------
+        validation_kws : dict
+            Dictionary of keyword arguments for generating a validation set from
+            the TRAIN data in splits. The "test" split is interpreted as the validation
+            split
         splits : Sequence of (train, test, validation) tuple names. Validation set is
             optional
 
@@ -151,11 +156,16 @@ class Evaluator:
             if isinstance(dataset, Path):
                 train_dset: Dataset = load_as(dataset / train)
                 test_dset: Dataset = load_as(dataset / test)
-            else:
-                train_dset = dataset[test]
+            else:  # Interpret train, test to be keys and dataset to be DatasetDict
+                train_dset = dataset[train]
                 test_dset = dataset[test]
             logger.info(f"Holdout on key {key}")
             logger.info(f"Train, test shape: {train_dset.shape}, {test_dset.shape}")
+
+            if validation_kws is not None:
+                val_split = train_dset.train_test_split(**validation_kws)
+                train_dset = val_split["train"]
+                val_dset = val_split["test"]
 
             if val_dset is not None:
                 logger.info(f"Validation set shape: {val_dset.shape}")
