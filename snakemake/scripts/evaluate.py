@@ -143,7 +143,7 @@ def cv_wrapper(
                 control_col=control,
                 seed=RNG,
                 add=True,
-                added_name=target,  # Just replace the target column with the randomized control
+                added_name=target,  # Replace the target column with the randomized control
             )
     eva = ae.Evaluator(how="cv", **evaluator_kws)
     result: pl.DataFrame = eva.cv(

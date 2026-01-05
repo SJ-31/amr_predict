@@ -225,6 +225,47 @@ def make_splits(
     return result
 
 
+def make_control_task(
+    data: pl.DataFrame | Dataset,
+    target_task: str,
+    control_col: str,
+    seed: int | None = None,
+    add: bool = False,
+    added_name: str | None = None,
+) -> dict | pl.DataFrame | Dataset:
+    rng = np.random.default_rng(seed)
+    targets = list(set(data[target_task][:]))
+    control_labels = list(set(data[control_col][:]))
+    rng.shuffle(targets)
+    rng.shuffle(control_labels)
+    if len(control_labels) < len(targets):
+        raise ValueError(
+            "The number of unique control labels needs to be at least equal to the number of target labels"
+        )
+    mapping: dict = {}
+    # Map at least one of control labels to targets
+    for t in targets:
+        chosen = rng.choice(control_labels, 1, replace=False).item()
+        mapping[chosen] = t
+        control_labels.remove(chosen)
+    # If any control labels remain, keep adding mappings
+    while control_labels:
+        cl = rng.choice(control_labels, 1, replace=False).item()
+        mapping[cl] = rng.choice(targets, 1, replace=False).item()
+        control_labels.remove(cl)
+    if not add:
+        return mapping
+    new_col = added_name or f"control_task_{target_task}-{control_col}"
+    if isinstance(data, pl.DataFrame):
+        return data.with_columns(pl.col(control_col).replace(mapping).alias(new_col))
+
+    def replace(batch):
+        batch[new_col] = [mapping[ctrl] for ctrl in batch[control_col]]
+        return batch
+
+    return data.map(replace, batched=True, batch_size=data.shape[0])
+
+
 # * SAE metrics
 def categorize_latents(
     activations: Tensor, dense_threshold: float = 1 / 10

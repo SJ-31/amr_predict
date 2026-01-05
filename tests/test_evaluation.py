@@ -6,8 +6,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 import tomllib
+import torch
 import yaml
-from amr_predict.evaluation import Evaluator
+from amr_predict.evaluation import Evaluator, make_control_task
 from amr_predict.models import Baseline
 from amr_predict.utils import (
     ModuleConfig,
@@ -15,7 +16,10 @@ from amr_predict.utils import (
     data_spec,
     encode_strs,
     load_as,
+    read_tabular,
+    with_metadata,
 )
+from datasets import Dataset
 from loguru import logger
 from pyhere import here
 from xgboost import XGBClassifier, XGBRegressor
@@ -28,6 +32,8 @@ with open(here("snakemake", "env.yaml"), "rb") as f:
 
 REMOTE = here("data", "remote")
 JIA = here(REMOTE, "2025-10-22_jia_seqlens", "datasets")
+
+RNG = np.random.default_rng(ENV["rng"])
 
 DIRS: dict = {
     "evo2": here("results", "tests", "with_evo2"),
@@ -45,13 +51,55 @@ REGRESSION_TASKS = ["AMK", "GEN"]
 CLASSIFICATION_TASKS = ["AMK", "GEN"]
 
 
+@pytest.fixture
+def dset() -> Dataset:
+    loaded: Dataset = load_as(
+        here(DIRS["seqlens"], "datasets", "pooled", "bin-mean"), "huggingface"
+    )
+    return loaded
+
+
+def toy_dset(samples, x_size, column_spec: dict) -> Dataset:
+    to_dset = {"sample": samples, "x": torch.rand(len(samples), x_size)}
+    for col, choices in column_spec.items():
+        to_dset[col] = RNG.choice(choices, len(samples), replace=True)
+    return Dataset.from_dict(to_dset)
+
+
+def test_add_ctrl():
+    obs = read_tabular(ENV["sample_metadata"]["file"])
+    dset = toy_dset(
+        obs["BioSample"][:500],
+        500,
+        {"amr_class": ["resistant", "susceptible", "intermediate"]},
+    )
+    assert dset.shape[0] == 500
+    dset = with_metadata(
+        dset,
+        ENV,
+        sample_col="sample",
+        meta_options=("sample",),
+    )
+    assert dset.shape[0] == 500
+    assert None not in dset["amr_class"][:]
+    mapping: dict = make_control_task(
+        dset, target_task="amr_class", control_col="species"
+    )
+    assert set(mapping.keys()) == set(dset["species"])
+    assert set(mapping.values()) == set(dset["amr_class"])
+    old_target = list(dset["amr_class"][:])
+    dset = make_control_task(
+        dset, target_task="amr_class", control_col="species", add=True, added_name="foo"
+    )
+    assert list(dset["foo"][:]) != old_target
+
+
 @pytest.mark.skip(reason="passed")
 @pytest.mark.parametrize(
     "task_type,tasks",
     [("classification", CLASSIFICATION_TASKS), ("regression", REGRESSION_TASKS)],
 )
-def test_baseline(task_type, tasks):
-    dset = load_as(here(DIRS["seqlens"], "datasets", "pooled", "bin-mean"))
+def test_baseline(dset, task_type, tasks):
     dset, _ = encode_strs(dset, tasks)
     if task_type == "classification":
         model = XGBClassifier
