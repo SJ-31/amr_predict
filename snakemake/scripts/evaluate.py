@@ -22,7 +22,7 @@ from amr_predict.utils import (
     train_test_from_dict,
     with_metadata,
 )
-from datasets import Dataset
+from datasets import Dataset, DatasetDict
 from loguru import logger
 from xgboost import XGBClassifier, XGBRegressor
 
@@ -40,6 +40,10 @@ MODEL_ENV: dict = smk.config["models"]
 os.environ["HF_HOME"] = smk.config["huggingface"]
 torch.set_default_dtype(torch.float32)
 
+X_KEY, SAMPLE_KEY = (
+    smk.config["pool_embeddings"]["key"],
+    smk.config["pool_embeddings"]["sample_key"],
+)
 
 RCONFIG["validation_kws"]["seed"] = RNG
 DEFAULT_TRAIN = smk.config.get("trainer", {})
@@ -47,26 +51,6 @@ DEFAULT_LOADER = smk.config.get("dataloader", {})
 
 if smk.rule == "cross_validate":
     RCONFIG["k_fold"]["random_state"] = RNG
-
-
-def holdout_helper(
-    dataset: Dataset,
-    eva: ae.Evaluator,
-    obs: pl.DataFrame,
-    validation: Dataset | None = None,
-) -> pl.DataFrame:
-    holdout_splits = {}
-    split_methods = {}
-    for split_name, spec in RCONFIG["splits"].items():
-        train_mask, test_mask = train_test_from_dict(df=obs, spec=spec)
-        hsplit_lst = []
-        for t, m in zip(["train", "test"], [train_mask, test_mask]):
-            split_methods[f"{split_name}_{t}"] = m
-            hsplit_lst.append(f"{split_name}_{t}")
-        hsplit_lst.append(validation)
-        holdout_splits[split_name] = hsplit_lst
-    split_dset = ae.make_splits(dataset, split_methods=split_methods)
-    return eva.holdout(split_dset, holdout_splits)
 
 
 def randomize_dset(dset: Dataset, x_key: str) -> Dataset:
@@ -93,25 +77,112 @@ def modify_for_test(dataset, x_key) -> Dataset:
     return dataset
 
 
-if smk.rule in {"cross_validate", "holdout"}:
-    x_key, sample_key = (
-        smk.config["pool_embeddings"]["key"],
-        smk.config["pool_embeddings"]["sample_key"],
+def make_eval_kws(
+    model_name, bmodel, module_cfg, preprocessor, in_features
+) -> tuple[dict, dict]:
+    model_kws = (MODEL_ENV[model_name] or {}).get("kws", {})
+    trainer_kws = (MODEL_ENV[model_name] or {}).get("trainer", DEFAULT_TRAIN)
+    loader_kws = (MODEL_ENV[model_name] or {}).get("dataloader", DEFAULT_LOADER)
+    val_kws = RCONFIG.get("validation_kws", {})
+    if model_name == "baseline":
+        model = Baseline(
+            x_key=X_KEY,
+            device=smk.params["device"],
+            model=bmodel,
+            cfg=module_cfg,
+            **model_kws,
+        )
+        trainer: L.Trainer | None = None
+        val_kws = {}
+    elif model_name == "mlp":
+        model = MLP(in_features=in_features, x_key=X_KEY, cfg=module_cfg, **model_kws)
+        trainer = L.Trainer(**trainer_kws)
+    else:
+        raise ValueError(f"model name {model_name} not recognized")
+    return dict(
+        model=model,
+        trainer=trainer,
+        preprocessor=preprocessor,
+        **loader_kws,
+    ), val_kws
+
+
+# * Rule functions
+def holdout(
+    evaluator_kws: dict, dataset: Dataset, model_name: str, validation_kws: dict
+) -> pl.DataFrame:
+    logger.info(f"Running holdout with {model_name}")
+    holdout_splits = {}
+    split_methods = {}
+    eva = ae.Evaluator(how="holdout", **evaluator_kws)
+    obs: pl.DataFrame | None = dataset.remove_columns(X_KEY).to_polars()
+    for split_name, spec in RCONFIG["splits"].items():
+        train_mask, test_mask = train_test_from_dict(df=obs, spec=spec)
+        hsplit_lst = []
+        for t, m in zip(["train", "test"], [train_mask, test_mask]):
+            split_methods[f"{split_name}_{t}"] = m
+            hsplit_lst.append(f"{split_name}_{t}")
+        holdout_splits[split_name] = hsplit_lst
+    split_dset: DatasetDict = ae.make_splits(dataset, split_methods=split_methods)
+    result = eva.holdout(split_dset, holdout_splits, validation_kws=validation_kws)
+    logger.info(f"Holdout with {model_name} complete")
+    return result
+
+
+def cv_wrapper(
+    evaluator_kws,
+    dataset: Dataset,
+    validation_kws,
+    add_control_tasks: bool = False,
+) -> pl.DataFrame:
+    if add_control_tasks and (ctask_spec := RCONFIG["control_tasks"]):
+        for target, control in ctask_spec.items():
+            dataset = ae.make_control_task(
+                dataset,
+                target_task=target,
+                control_col=control,
+                seed=RNG,
+                add=True,
+                added_name=target,  # Just replace the target column with the randomized control
+            )
+    eva = ae.Evaluator(how="cv", **evaluator_kws)
+    result: pl.DataFrame = eva.cv(
+        dataset,
+        validation_kws=validation_kws,  # No need when using baseline
+        **RCONFIG["k_fold"],
     )
+    return result
+
+
+def cross_validate(model_name, **kws) -> pl.DataFrame:
+    logger.info(f"Running cross validation with {model_name}")
+    result = cv_wrapper(**kws, add_control_tasks=False)
+    logger.success("Cross validation complete")
+    return result
+
+
+def cv_control_tasks(model_name, **kws) -> pl.DataFrame:
+    logger.info(f"Running cv control tasks with {model_name}")
+    result = cv_wrapper(**kws, add_control_tasks=True)
+    logger.success("Cross validation with control tasks complete")
+    return result
+
+
+# * Entry
+
+
+if smk.rule in {"cross_validate", "holdout"}:
     for dpath in smk.params["datasets"]:
         dname = Path(dpath).stem
         dataset: Dataset = load_as(dpath)
-        dataset = with_metadata(dataset, smk.config, meta_options=("ast",))
+        dataset = with_metadata(dataset, smk.config, meta_options=("ast", "sample"))
         if smk.config.get("test"):
-            dataset = modify_for_test(dataset, x_key)
-        obs: pl.DataFrame | None = (
-            dataset.remove_columns("x").to_polars() if smk.rule == "holdout" else None
-        )
+            dataset = modify_for_test(dataset, X_KEY)
         baseline_re = "|".join(map(lambda x: x + ".*", get_args(EMBEDDING_METHODS)))
         # The above re is fine because FM embeddings are named after pooling methods
         if re.match(baseline_re, dname):
             pp: Preprocessor | None = Preprocessor(
-                x_key=x_key, **smk.config.get("baseline_filtering", {})
+                x_key=X_KEY, **smk.config.get("baseline_filtering", {})
             )
         else:
             pp = None
@@ -121,10 +192,10 @@ if smk.rule in {"cross_validate", "holdout"}:
                 continue
             if ttype == "classification":
                 dataset, _ = encode_strs(dataset, task_names)
-                in_features, n_classes = data_spec(dataset, y=task_names, x_key=x_key)
+                in_features, n_classes = data_spec(dataset, y=task_names, x_key=X_KEY)
                 bmodel = XGBClassifier
             else:
-                in_features, n_classes = dataset[x_key][:].shape[1], None
+                in_features, n_classes = dataset[X_KEY][:].shape[1], None
                 bmodel = XGBRegressor
             mconf = ModuleConfig(
                 task_type=ttype,
@@ -136,45 +207,18 @@ if smk.rule in {"cross_validate", "holdout"}:
                 outfile = f"{smk.params["outdir"]}/{mname}/{dname}_{ttype}.csv"
                 if Path(outfile).exists():
                     continue
-                model_kws = (MODEL_ENV[mname] or {}).get("kws", {})
-                trainer_kws = (MODEL_ENV[mname] or {}).get("trainer", DEFAULT_TRAIN)
-                loader_kws = (MODEL_ENV[mname] or {}).get("dataloader", DEFAULT_LOADER)
-                if mname == "baseline":
-                    model = Baseline(
-                        x_key=x_key,
-                        device=smk.params["device"],
-                        model=bmodel,
-                        cfg=mconf,
-                        **model_kws,
-                    )
-                    valid_dset = None
-                    validation_kws = None
-                    trainer: L.Trainer | None = None
-                elif mname == "mlp":
-                    model = MLP(
-                        in_features=in_features, x_key=x_key, cfg=mconf, **model_kws
-                    )
-                    trainer = L.Trainer(**trainer_kws)
-                eva_kws = dict(
-                    model=model,
-                    trainer=trainer,
+                eva_kws, validation_kws = make_eval_kws(
+                    mname,
+                    bmodel=bmodel,
+                    module_cfg=mconf,
                     preprocessor=pp,
-                    **loader_kws,
+                    in_features=in_features,
                 )
-                if smk.rule == "cross_validate":
-                    logger.info(f"Running cross validation with {mname}")
-                    eva = ae.Evaluator(how="cv", **eva_kws)
-                    result: pl.DataFrame = eva.cv(
-                        dataset,
-                        validation_kws=validation_kws,  # No need when using baseline
-                        **RCONFIG["k_fold"],
-                    )
-                    logger.success("Cross validation complete")
-                elif smk.rule == "holdout":
-                    logger.info(f"Running holdout with {mname}")
-                    eva = ae.Evaluator(how="holdout", **eva_kws)
-                    result = holdout_helper(
-                        dataset=dataset, eva=eva, obs=obs, validation=valid_dset
-                    )
-                    logger.success("Holdout complete")
+                fn = globals()[smk.rule]
+                result = fn(
+                    evaluator_kws=eva_kws,
+                    model_name=mname,
+                    dataset=dataset,
+                    validation_kws=validation_kws,
+                )
                 result.write_csv(outfile)
