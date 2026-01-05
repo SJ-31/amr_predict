@@ -9,6 +9,7 @@ from pathlib import Path
 OUTDIRS = {
     "cv": f"{OUT}/{DATE}/evaluation/cv",
     "holdout": f"{OUT}/{DATE}/evaluation/holdout",
+    "cv_ctrl": f"{OUT}/{DATE}/evaluation/cv_control",
 }
 DEVICE = config.get("device", "cuda")
 DATASETS = list(Path(f"{REMOTE}/{IN_DATE}/datasets/pooled").iterdir())
@@ -46,17 +47,22 @@ if TEST:
 
 all_results = expand(
     "{o}/{m}/{d}_{t}.csv",
-    o=[OUTDIRS["cv"], OUTDIRS["holdout"]],
+    o=[OUTDIRS["cv"], OUTDIRS["holdout"], OUTDIRS["cv_ctrl"]],
     m=config["cross_validate"]["models"],
     d=[d.stem for d in DATASETS],
     t=["regression", "classification"],
 )
 
 cv_results = list(filter(lambda x: x.startswith(OUTDIRS["cv"]), all_results))
+cv_ctrl_results = list(filter(lambda x: x.startswith(OUTDIRS["cv_ctrl"]), all_results))
 holdout_results = list(filter(lambda x: x.startswith(OUTDIRS["holdout"]), all_results))
 
 RESULTS = {
     "cv": {
+        "cv_r": list(filter(lambda x: x.endswith("_regression.csv"), cv_results)),
+        "cv_c": list(filter(lambda x: x.endswith("_classification.csv"), cv_results)),
+    },
+    "cv_ctrl": {
         "cv_r": list(filter(lambda x: x.endswith("_regression.csv"), cv_results)),
         "cv_c": list(filter(lambda x: x.endswith("_classification.csv"), cv_results)),
     },
@@ -80,12 +86,14 @@ if not config["holdout"]["splits"]:
     rule all:
         input:
             **RESULTS["cv"],
+            **RESULTS["cv_ctrl"],
 
 else:
 
     rule all:
         input:
             **RESULTS["cv"],
+            **RESULTS["cv_ctrl"],
             **RESULTS["holdout"],
 
 
@@ -98,6 +106,19 @@ rule cross_validate:
         default_log("cross_validate"),
     output:
         **RESULTS["cv"],
+    script:
+        "scripts/evaluate.py"
+
+
+rule cv_control_tasks:
+    params:
+        datasets=DATASETS,
+        device=DEVICE,
+        outdir=OUTDIRS["cv_ctrl"],
+    log:
+        default_log("cross_validate_control"),
+    output:
+        **RESULTS["cv_ctrl"],
     script:
         "scripts/evaluate.py"
 
