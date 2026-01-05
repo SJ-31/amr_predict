@@ -6,7 +6,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import tomllib
-import torch
 import yaml
 from amr_predict.evaluation import Evaluator, make_control_task
 from amr_predict.models import Baseline
@@ -24,16 +23,9 @@ from loguru import logger
 from pyhere import here
 from xgboost import XGBClassifier, XGBRegressor
 
-with open(here("tests", "env.toml"), "rb") as f:
-    ENV: dict = tomllib.load(f)
-
-with open(here("snakemake", "env.yaml"), "rb") as f:
-    ENV.update(yaml.safe_load(f))
-
 REMOTE = here("data", "remote")
 JIA = here(REMOTE, "2025-10-22_jia_seqlens", "datasets")
 
-RNG = np.random.default_rng(ENV["rng"])
 
 DIRS: dict = {
     "evo2": here("results", "tests", "with_evo2"),
@@ -59,15 +51,8 @@ def dset() -> Dataset:
     return loaded
 
 
-def toy_dset(samples, x_size, column_spec: dict) -> Dataset:
-    to_dset = {"sample": samples, "x": torch.rand(len(samples), x_size)}
-    for col, choices in column_spec.items():
-        to_dset[col] = RNG.choice(choices, len(samples), replace=True)
-    return Dataset.from_dict(to_dset)
-
-
-def test_add_ctrl():
-    obs = read_tabular(ENV["sample_metadata"]["file"])
+def test_add_ctrl(toy_dset, env):
+    obs = read_tabular(env["sample_metadata"]["file"])
     dset = toy_dset(
         obs["BioSample"][:500],
         500,
@@ -76,7 +61,7 @@ def test_add_ctrl():
     assert dset.shape[0] == 500
     dset = with_metadata(
         dset,
-        ENV,
+        env,
         sample_col="sample",
         meta_options=("sample",),
     )
