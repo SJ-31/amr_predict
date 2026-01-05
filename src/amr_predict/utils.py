@@ -1161,8 +1161,10 @@ def with_metadata(
             raise ValueError(
                 f"metadata type `{m}` must be one of 'ast', 'sequence', 'sample'"
             )
-        merging = merging.join(df, left_on=sample_col, right_on=key_col, how="left")
+        merging = merging.join(
+            df, left_on=sample_col, right_on=key_col, how="left", maintain_order="left"
+        )
     if not align:
         to_merge = Dataset.from_polars(merging.drop(sample_col))
-        return concatenate_datasets([dset, to_merge])
+        return concatenate_datasets([dset, to_merge], axis=1)
     return dset, merging
