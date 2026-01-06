@@ -24,7 +24,7 @@ from torchmetrics.functional.pairwise import (
 logger.disable("amr_predict")
 
 STATIC_POOLING_METHODS: TypeAlias = Literal[
-    "sum", "mean", "similarity", "swe", "concat", "seq_subset"
+    "sum", "mean", "similarity", "swe", "concat", "seq_subset", "random"
 ]
 LEARNING_POOLING_METHODS: TypeAlias = Literal["autoencoder", "swe"]
 
@@ -100,6 +100,7 @@ class SeqPooler:
                 left_on=self.sample_key,
                 right_on=self.sample_metadata_key,
                 how="left",
+                maintain_order="left",
             )
         obs = (
             obs.drop(self.embedding_key)
@@ -182,6 +183,8 @@ class StaticPooler(SeqPooler):
             x = self._swe(d, **self.kws)
         elif self.method == "seq_subset":
             x = self._seq_subset(d, **self.kws)
+        elif self.method == "random":
+            x = self._random(d, **self.kws)
         elif self.method == "concat":
             padded = self._pad_embeddings(d)
             x = padded.reshape(padded.shape[0], -1)
@@ -241,6 +244,51 @@ class StaticPooler(SeqPooler):
             d_in=d_in, num_slices=num_slices, num_ref_points=m, freeze_swe=True
         )
         return pooler(self._pad_embeddings(dataset))
+
+    def _random(
+        self,
+        dataset: LinkedDataset | Dataset,
+        n_per: int = 5,
+        agg: Literal["mean", "max", "sum"] = "sum",
+        rng: int | None = None,
+    ) -> Tensor:
+        """
+        Pooling method that represents a sample by aggregating random sequences
+
+        Parameters
+        ----------
+        n_per : int
+            Number of random sequence embeddings to use to represent a sample
+        """
+        samples = self._encode_samples(dataset)
+        embeddings = dataset[self.embedding_key][:]
+        unique_samples = torch.unique(samples, sorted=True)
+        gen = torch.Generator()
+        if rng:
+            gen.manual_seed(rng)
+
+        def sample_fn(sample):
+            indices = torch.where(samples == sample)[0]
+            n_seqs = min(n_per, len(indices))
+            if n_seqs == len(indices):
+                logger.warning(
+                    "All of a genome's sequences are being used for `random` pooling. Defaulting to half of genome sequences"
+                )
+                n_seqs = len(indices) // 3
+            choices = torch.randint(high=len(indices), size=(n_seqs,), generator=gen)
+            current = torch.zeros_like(samples)
+            result = torch.scatter(
+                current, 0, index=choices, src=torch.ones_like(choices)
+            )
+            return result
+
+        mask = torch.stack([sample_fn(s) for s in unique_samples]).to(
+            torch.get_default_dtype()
+        )
+        if agg == "sum":
+            return torch.matmul(mask, embeddings)
+        elif agg == "mean":
+            return torch.matmul(mask, embeddings).mul(mask.sum(axis=1).reshape(-1, 1))
 
     def _seq_subset(
         self,
