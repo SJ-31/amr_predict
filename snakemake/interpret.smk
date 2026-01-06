@@ -13,6 +13,8 @@ from pathlib import Path
 if TEST:
     IN_DATE = "esm_test"
     config["train_sae"]["token-level"]["run"] = False
+    config["train_sae"]["sequence-level"]["n"] = 9
+    config["train_sae"]["genome-level"]["n"] = 9
 
 
 def default_log(rule_name):

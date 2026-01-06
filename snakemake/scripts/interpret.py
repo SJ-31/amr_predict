@@ -29,17 +29,16 @@ try:
 except ImportError:
     smk = type("snakemake", (), {"rule": None, "config": {}, "log": [0]})
 
-    RCONFIG = smk.config(smk.rule)
-    RNG: int = smk.config["rng"]
 
-    logger.enable("amr_predict")
-    logger.add(smk.log[0])
-    EMBEDDING = smk.config["embedding"]
-    X_KEY = smk.config["pool_embeddings"]["key"]
-    SEED = smk.config["rng"]
-    OUTDIR = smk.params["outdir"]
+logger.enable("amr_predict")
+logger.add(smk.log[0])
 
-
+RCONFIG = smk.config[smk.rule]
+RNG: int = smk.config["rng"]
+EMBEDDING = smk.config["embedding"]
+X_KEY = smk.config["pool_embeddings"]["key"]
+SEED = smk.config["rng"]
+OUTDIR = smk.params["outdir"]
 EMBEDDING_LEVEL: TypeAlias = Literal["genome-level", "sequence-level", "token-level"]
 
 
