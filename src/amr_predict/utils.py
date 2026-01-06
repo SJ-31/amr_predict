@@ -12,6 +12,7 @@ import anndata as ad
 import duckdb
 import numpy as np
 import polars as pl
+import polars.selectors as cs
 import skbio as sb
 import torch
 import torch.utils.data as td
@@ -972,6 +973,15 @@ class LinkedDataset(td.Dataset):
         return [
             {col: array[i] for col, array in batch.items()} for i in range(n_examples)
         ]
+
+    def select(self, indices) -> LinkedDataset:
+        return LinkedDataset(
+            meta=self.meta[indices],
+            cache=self.cache,
+            token_level=self.token_level,
+            x_key=self.x_key,
+            text_key=self.text_key,
+        )
 
     def select_columns(self, columns: Sequence) -> LinkedDataset:
         if isinstance(columns, str):
