@@ -380,6 +380,21 @@ def highest_activations(
     return result
 
 
+
+def max_by_label(activations: Tensor, labels: Sequence) -> Tensor:
+    if len(set(labels)) > 2:
+        encoder = LabelBinarizer()
+        label_mat = encoder.fit_transform(labels)
+    else:
+        encoder = OneHotEncoder(sparse_output=False)
+        label_mat = encoder.fit_transform(np.array(labels).reshape(-1, 1))
+    dtype = torch.get_default_dtype()
+    ones: Tensor = torch.tensor(label_mat).to(dtype)
+    expanded = torch.t(activations).unsqueeze(2)
+    mvals, _ = torch.where(ones == 1, expanded, -torch.inf).max(dim=1)
+    return mvals
+
+
 def score_latents(activations: Tensor, labels: Sequence) -> pl.DataFrame:
     """Identify the best (most interpretable and monosemantic) latents in `activations`
 
@@ -436,9 +451,7 @@ def score_latents(activations: Tensor, labels: Sequence) -> pl.DataFrame:
     # ones  has shape n x k
     # expands to d_sae x n x 1
     # and       1 x n x k
-    a_expanded = torch.t(activations).unsqueeze(2)
-    mvals, _ = torch.where(ones == 1, a_expanded, -torch.inf).max(dim=1)
-    tmp["max_activation"] = mvals[lidx, idx].tolist()
+    tmp["max_activation"] = max_by_label(activations, labels)
 
     # Classifier scoring
     nonzero_counts = torch.t(activations > 0).to(dtype).matmul(ones)

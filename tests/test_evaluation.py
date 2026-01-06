@@ -5,9 +5,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import tomllib
-import yaml
-from amr_predict.evaluation import Evaluator, make_control_task
+import torch
+from amr_predict.evaluation import Evaluator, make_control_task, max_by_label
 from amr_predict.models import Baseline
 from amr_predict.utils import (
     ModuleConfig,
@@ -34,10 +33,6 @@ DIRS: dict = {
 
 logger.enable("amr_predict")
 
-X_KEY, SAMPLE_KEY = (
-    ENV["pool_embeddings"]["key"],
-    ENV["pool_embeddings"]["sample_key"],
-)
 
 REGRESSION_TASKS = ["AMK", "GEN"]
 CLASSIFICATION_TASKS = ["AMK", "GEN"]
@@ -84,22 +79,43 @@ def test_add_ctrl(toy_dset, env):
     "task_type,tasks",
     [("classification", CLASSIFICATION_TASKS), ("regression", REGRESSION_TASKS)],
 )
-def test_baseline(dset, task_type, tasks):
+def test_baseline(dset, task_type, tasks, keys):
+    x_key, sample_key = keys
     dset, _ = encode_strs(dset, tasks)
     if task_type == "classification":
         model = XGBClassifier
     else:
         model = XGBRegressor
-    in_features, n_classes = data_spec(dset, y=tasks, x_key=X_KEY)
+    in_features, n_classes = data_spec(dset, y=tasks, x_key=x_key)
     mconf = ModuleConfig(
         task_type=task_type,
         n_classes=n_classes,
         n_tasks=len(tasks),
         task_names=tasks,
     )
-    model = Baseline(x_key=X_KEY, device="cpu", model=model, cfg=mconf)
+    model = Baseline(x_key=x_key, device="cpu", model=model, cfg=mconf)
     eva: Evaluator = Evaluator(model=model)
     print(eva.holdout(dataset=dset))
+
+
+def test_max_by_lab():
+    acts = torch.tensor(
+        [
+            [0.1, 0.9, 0.2, 0.3, 0.1],
+            [0.2, 0.3, 0.9, 0.0, 0.3],
+            [0.9, 0.2, 0.3, 0.1, 0.1],
+            [0.2, 0.1, 0.3, 0.8, 0.2],
+            [0.8, 0.2, 0.1, 0.2, 0.9],
+            [0.3, 0.3, 0.7, 0.1, 0.3],
+        ]
+    )
+    labels = ["A", "A", "A", "B", "B", "B"]
+    ans = max_by_label(acts, labels)
+    assert ans.shape[0] == acts.shape[1]
+    assert (
+        ans
+        == torch.tensor([[0.9, 0.8], [0.9, 0.3], [0.9, 0.7], [0.3, 0.8], [0.3, 0.9]])
+    ).all()
 
 
 def test_pp(tmp_path):

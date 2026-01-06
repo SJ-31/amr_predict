@@ -15,6 +15,11 @@ from torch import Tensor
 # [1] https://github.com/decoderesearch/SAELens/blob/main/sae_lens/saes/jumprelu_sae.py
 #
 
+# TODO: looks like this has no dead feature resampling
+#
+# TODO: no bias initialization, but newer tutorials don't mention this as being necessary
+# i.e. "initializing decoder bias with geometric median of activations"
+
 
 class BatchTopK(BaseNN):
     def __init__(self, cfg: ModuleConfig, x_key: str = "embedding") -> None:
