@@ -1164,10 +1164,19 @@ def with_metadata(
         if m == "sequence":
             key = "tests" if cfg["tests"] else "root"
             path = f"{cfg["out"][key]}/{cfg['in_date']}/seq_metadata.csv"
-            df = pl.read_csv(path)
+            df = pl.read_csv(path).with_columns(
+                pl.any_horizontal(cs.contains("gene").is_not_null()).alias("in_gene")
+            )
             key_col = "sample"
         elif m in {"ast", "sample"}:
-            df = read_tabular(cfg[f"{m}_metadata"]["file"])
+            df = read_tabular(cfg[f"{m}_metadata"]["file"]).with_columns(
+                pl.any_horizontal(cs.ends_with("_class") == "resistant").alias(
+                    "any_resistant"
+                ),
+                pl.any_horizontal(cs.ends_with("_class") == "susceptible").alias(
+                    "any_susceptible"
+                ),
+            )
             key_col = cfg[f"{m}_metadata"]["id_col"]
         else:
             raise ValueError(
