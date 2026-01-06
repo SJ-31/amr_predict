@@ -15,6 +15,10 @@ if TEST:
     config["train_sae"]["token-level"]["run"] = False
 
 
+def default_log(rule_name):
+    return f"{LOGDIR}/interpret-{rule_name}.log"
+
+
 OUTDIRS = {
     "sae": f"{OUT}/{DATE}/sae",
 }
@@ -57,26 +61,36 @@ rule train_sae:
     input:
         **DATASETS,
     output:
-        models=all.input.models,
+        models=rules.all.input.models,
         # TODO: maybe add in the metrics as well?
     params:
         outdir=OUTDIRS["sae"],
         caches=f"{OUT}/{IN_DATE}/datasets/embedded",
         pooled=f"{OUT}/{IN_DATE}/datasets/pooled",
+    log:
+        default_log("train_sae"),
+    script:
+        "scripts/interpret.py"
 
 
 rule eval_sae:
     input:
-        train_sae.output.models,
+        rules.train_sae.output.models,
     output:
         latent_summary_data=f"{OUTDIRS['sae']}/latent_summary.csv",
         concept_scoring_data=f"{OUTDIRS['sae']}/concept_scoring.csv",
         latent_summary_plot=f"{OUTDIRS['sae']}/latent_summary.png",
         activation_plots=directory(
-            expand("{o}/activation_plots/{m}", o=OUTDIRS["sae"], m=all.input.models)
+            expand(
+                "{o}/activation_plots/{m}", o=OUTDIRS["sae"], m=rules.all.input.models
+            )
         ),
     params:
+        caches=f"{OUT}/{IN_DATE}/datasets/embedded",
         model_dict=MODELS,
         outdir=OUTDIRS["sae"],
         pooled=f"{OUT}/{IN_DATE}/datasets/pooled",
-        sequences=f"{OUT}/{IN_DATE}/datasets/processed_sequences",
+    log:
+        default_log("eval_sae"),
+    script:
+        "scripts/interpret.py"
