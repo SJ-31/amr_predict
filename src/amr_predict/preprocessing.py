@@ -295,6 +295,7 @@ class SeqEmbedder:
         hidden_layer: int | None = None,
         batch_size=5,
         degenerate_handling: Literal["ignore", "random", "error"] = "random",
+        save_dset: Path | None = None,
     ) -> Dataset | None:
         """Embed nucleotide sequences with an esm model after translating into protein
 
@@ -318,9 +319,13 @@ class SeqEmbedder:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         tkey = f"{text_key}_aa"
         df: pl.DataFrame = dset.to_polars()
-        df = translate_df(
-            df, text_key, new_col=None, degenerate_handling=degenerate_handling
-        )
+        if tkey not in df.columns:
+            df = translate_df(
+                df, text_key, new_col=None, degenerate_handling=degenerate_handling
+            )
+            if save_dset is not None:
+                logger.info("Saving dataset with translated aa column")
+                Dataset.from_polars(df).save_to_disk(save_dset)
 
         torch.set_default_dtype(torch.float32)
         os.environ["HF_HOME"] = huggingface

@@ -342,6 +342,8 @@ def make_embedded_datasets():
             kws["runscript"] = CONFIG["evo2_runscript"]
         elif EMBEDDING == "seqLens" or EMBEDDING == "esm":
             kws["huggingface"] = CONFIG["huggingface"]
+        if EMBEDDING == "esm":
+            kws["save_dset"] = inpath
         if not savepath.exists():
             logger.info(f"Embedding dataset `{inpath.stem}` started")
             dset = SeqDataset(
