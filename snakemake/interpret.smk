@@ -5,6 +5,7 @@ configfile: "models.yaml"
 
 
 from amr_predict.preprocessing import EMBEDDING_METHODS
+from typing import get_args
 
 
 from pathlib import Path
@@ -21,14 +22,14 @@ DEVICE = config.get("device", "cuda")
 
 dpath = Path(f"{REMOTE}/{IN_DATE}/datasets")
 
-DATASETS = {
-    "text": list(dpath.joinpath("processed_sequences").iterdir()),
-    "pooled": [
-        d
-        for d in dpath.joinpath("pooled").iterdir()
-        if config["preprocessing"][d].get("method") not in EMBEDDING_METHODS
-    ],
-}
+
+DATASETS = {"text": list(dpath.joinpath("processed_sequences").iterdir()), "pooled": []}
+for d in dpath.joinpath("pooled").iterdir():
+    name = d.stem.split("-", 1)[0]
+    if (config["preprocessing"][name]).get("method") not in get_args(EMBEDDING_METHODS):
+        DATASETS["pooled"].append(d)
+
+
 LEVELS = [
     s
     for s in ("sequence-level", "token-level", "genome-level")
