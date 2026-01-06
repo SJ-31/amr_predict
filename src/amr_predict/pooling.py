@@ -363,7 +363,7 @@ class StaticPooler(SeqPooler):
             )
 
         for sample in unique_samples:
-            mask = dataset[self.sample_key][:] == sample
+            mask = (samples == sample).numpy()
             current = meta.filter(mask)
             current = current.filter(pl.col("score") == current["score"].max())
             if agg is None:
@@ -396,7 +396,7 @@ class StaticPooler(SeqPooler):
         if weight_fn is None:
             mask = torch.stack([samples == s for s in unique_samples]).to(
                 torch.get_default_dtype()
-            )
+            )  # shape of n_samples x sequences
         else:
             mask = torch.stack(
                 [weight_fn(embeddings, samples == s) for s in unique_samples]
