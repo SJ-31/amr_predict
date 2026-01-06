@@ -2,7 +2,6 @@
 
 from collections.abc import Sequence
 from pathlib import Path
-from sys import meta_path
 from typing import Literal, TypeAlias, get_args
 
 import lightning as L
@@ -11,16 +10,22 @@ import polars as pl
 import torch
 from amr_predict.evaluation import (
     categorize_latents,
-    highest_activations,
     plot_activation_density,
     score_latents,
 )
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
-from amr_predict.utils import EmbeddingCache, ModuleConfig, load_as, with_metadata
+from amr_predict.utils import (
+    EmbeddingCache,
+    LinkedDataset,
+    ModuleConfig,
+    load_as,
+    with_metadata,
+)
 from datasets import Dataset, DatasetDict
 from lightning.pytorch.loggers import WandbLogger
 from loguru import logger
+from sklearn.model_selection import train_test_split
 from torch import Tensor
 from torch.utils.data import DataLoader
 
@@ -37,6 +42,7 @@ RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
 EMBEDDING = smk.config["embedding"]
 X_KEY = smk.config["pool_embeddings"]["key"]
+TEST = smk.config["test"]
 SEED = smk.config["rng"]
 OUTDIR = smk.params["outdir"]
 EMBEDDING_LEVEL: TypeAlias = Literal["genome-level", "sequence-level", "token-level"]
@@ -45,11 +51,11 @@ EMBEDDING_LEVEL: TypeAlias = Literal["genome-level", "sequence-level", "token-le
 def get_dataset(
     name: str,
     level: EMBEDDING_LEVEL,
+    model_name: str,
     key_df: pl.DataFrame | None = None,
 ) -> Dataset | pl.DataFrame:
     if key_df is None:
-        seq_dset_name = name if level != "genome-level" else name.split("_")[0]
-        key_df = load_as(f"{smk.params["sequences"]}/{seq_dset_name}", "polars")
+        key_df = load_as(smk.params["model_dict"][model_name], "polars")
     if level == "genome-level":
         dset: Dataset = load_as(smk.params["pooled"].joinpath(name))
         dset = dset.filter(lambda x: x["sample"] in key_df["sample"])
@@ -83,31 +89,48 @@ def train_routine(
                 for _, df in tmp.group_by("sample")
             ]
         )
-    dset: Dataset = get_dataset(name=path.stem, level=level, key_df=subset)
+    model_name = f"{level}_{path.stem}.pth"
+    dset: Dataset | LinkedDataset = get_dataset(
+        name=path.stem, model_name=model_name, level=level, key_df=subset
+    )
 
-    dset_dict: DatasetDict = dset.train_test_split()
-    train_kws = RCONFIG["trainer"]
-    train_kws.update(run_params.get("trainer", {}))
-    train_kws["logger"] = WandbLogger(f"sae_training:{level}", project="amr_predict")
+    # TODO: review you to train saes
+    # Fairly certain you don't need to do train-test splits when training SAEs
+    # dset_dict: DatasetDict = DatasetDict()
+    # train_idx, test_idx = train_test_split(range(dset.shape[0]), **RCONFIG["splits"])
+    # dset_dict["train"] = dset.select(train_idx)
+    # dset_dict["test"] = dset.select(test_idx)
     load_kws = RCONFIG["dataloader"]
-    load_kws.update(run_params.get("dataloader", {}))
+    load_kws.update(run_params.get("dataloader", {}) or {})
+    # train = DataLoader(dset_dict["train"], **load_kws)
+    # test = DataLoader(dset_dict["test"], **load_kws)
+    test = None
+
+    train_kws = RCONFIG["trainer"]
+    train_kws.update(run_params.get("trainer", {}) or {})
+    run_name = f"sae_training:{level}{"-test" if TEST else ""}"
+    train_kws["logger"] = WandbLogger(run_name, project="amr_predict")
     trainer = L.Trainer(**train_kws)
-    train = DataLoader(dset_dict["train"], **load_kws)
+    train = DataLoader(dset, **load_kws)
+
     model: L.LightningModule = get_model_with_defaults(train_dset=train)
     trainer.fit(model, train_dataloaders=train)
-    save_path = outdir.joinpath(f"{level}_{path.stem}.pth")
+    save_path = outdir.joinpath(model_name)
     torch.save(model.state_dict(), save_path)
 
 
 def get_model_with_defaults(train_dset):
     model_name: str = RCONFIG["model"]
     defaults = get_default_cfg()
-    defaults.update(smk.config["models"][model_name])
+    if smk.config["test"]:
+        defaults["device"] = "cpu"
+    defaults.update(smk.config["models"][model_name]["kws"] or {})
     if train_dset is not None:
-        defaults["act_size"] = next(iter(train_dset))[X_KEY].shape[0]
+        defaults["act_size"] = next(iter(train_dset))[X_KEY].shape[1]
+        defaults["dict_size"] = defaults["act_size"] * RCONFIG["expansion_factor"]
     cfg = ModuleConfig(**defaults)
     if model_name == "BatchTopK":
-        model = BatchTopK(cfg, x_key="embedding")
+        model = BatchTopK(cfg, x_key=X_KEY)
     return model
 
 
@@ -122,9 +145,7 @@ def train_sae():
                 level == "genome-level" and group != "pooled"
             ):
                 continue
-            cols = wanted_cols.copy()
-            if group != "pooled":
-                cols += ("sequence",)
+            cols = wanted_cols + ("sequence",) if group != "pooled" else wanted_cols
             for path in paths:
                 keys: pl.Dataframe = load_as(path, "polars").select(cols)
                 # Takes processed datasets as input
@@ -139,7 +160,9 @@ def eval_sae():
         level, dset_name = Path(dict_path).stem.split("_", 1)
         model: L.LightningModule = get_model_with_defaults()
         model.load_state_dict(dict_path)
-        dataset: Dataset = get_dataset(dset_name, level=level, key_df=None)
+        dataset: Dataset = get_dataset(
+            dset_name, model_name=Path(dict_path).name, level=level, key_df=None
+        )
         meta: pl.DataFrame
         meta_cols = ["sample"]
         meta_cols = ("sample",) if level == "genome-level" else ("sample", "sequence")
@@ -197,6 +220,6 @@ def eval_sae():
 # * Entry
 
 if not (fn := globals().get(smk.rule)):
-    raise ValueError("Function for rule `{smk.rule}` not defined in this file")
+    raise ValueError(f"Function for rule `{smk.rule}` not defined in this file")
 else:
     fn()
