@@ -9,9 +9,13 @@ from amr_predict.preprocessing import EMBEDDING_METHODS
 
 from pathlib import Path
 
+if TEST:
+    IN_DATE = "esm_test"
+    config["train_sae"]["token-level"]["run"] = False
+
+
 OUTDIRS = {
     "sae": f"{OUT}/{DATE}/sae",
-    "holdout": f"{OUT}/{DATE}/evaluation/holdout",
 }
 DEVICE = config.get("device", "cuda")
 
@@ -65,6 +69,7 @@ rule eval_sae:
         train_sae.output.models,
     output:
         latent_summary_data=f"{OUTDIRS['sae']}/latent_summary.csv",
+        concept_scoring_data=f"{OUTDIRS['sae']}/concept_scoring.csv",
         latent_summary_plot=f"{OUTDIRS['sae']}/latent_summary.png",
         activation_plots=directory(
             expand("{o}/activation_plots/{m}", o=OUTDIRS["sae"], m=all.input.models)

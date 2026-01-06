@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from pathlib import Path
+from sys import meta_path
 from typing import Literal, TypeAlias, get_args
 
 import lightning as L
@@ -36,6 +37,7 @@ except ImportError:
     EMBEDDING = smk.config["embedding"]
     X_KEY = smk.config["pool_embeddings"]["key"]
     SEED = smk.config["rng"]
+    OUTDIR = smk.params["outdir"]
 
 
 EMBEDDING_LEVEL: TypeAlias = Literal["genome-level", "sequence-level", "token-level"]
@@ -45,7 +47,6 @@ def get_dataset(
     name: str,
     level: EMBEDDING_LEVEL,
     key_df: pl.DataFrame | None = None,
-    as_df: bool = False,
 ) -> Dataset | pl.DataFrame:
     if key_df is None:
         seq_dset_name = name if level != "genome-level" else name.split("_")[0]
@@ -128,58 +129,70 @@ def train_sae():
             for path in paths:
                 keys: pl.Dataframe = load_as(path, "polars").select(cols)
                 # Takes processed datasets as input
-                train_routine(Path(path), level, keys, Path(smk.params["outdir"]))
+                train_routine(Path(path), level, keys, Path(OUTDIR))
 
 
 def eval_sae():
-    latent_summary = {"type": [], "activation_source": [], "count": []}
+    latent_summary = {"type": [], "dataset": [], "count": [], "activation_source": []}
+    concept_scoring = []
     for dict_path in smk.input:
         level: EMBEDDING_LEVEL
         level, dset_name = Path(dict_path).stem.split("_", 1)
         model: L.LightningModule = get_model_with_defaults()
         model.load_state_dict(dict_path)
-        dataset: Dataset = get_dataset(dset_name, level=level, key_df=None, as_df=True)
+        dataset: Dataset = get_dataset(dset_name, level=level, key_df=None)
         meta: pl.DataFrame
-        dataset, meta = with_metadata(dataset, smk.config, ("sample",), align=True)
-        # Retrieves the full dataset
-        sae_acts: Tensor = model.predict_step(dataset[X_KEY][:])
-        # neurons: Tensor = dataset[X_KEY][:]
-
-        latent_cats: dict = categorize_latents(sae_acts)
-        for ltype in ["dead", "dense", "sparse"]:
-            latent_summary["type"].append(ltype)
-            latent_summary["count"].append(len(latent_cats[ltype]))
-            latent_summary["activation_source"].append(dset_name)
-
+        meta_cols = ["sample"]
+        meta_cols = ("sample",) if level == "genome-level" else ("sample", "sequence")
+        dataset, meta = with_metadata(dataset, smk.config, meta_cols, align=True)
         concepts: Sequence = RCONFIG["concept_cols"][level]
 
-        # TODO: consider some preprocessing on concept cols to collapse them into a single
-        # label column. Otherwise, gonna have to look at overlapping label columns that
-        # you need to reconcile...
-        topk_plot = RCONFIG["activation_density_topk"]
-        for concept in concepts:
-            # top_activations: dict = highest_activations(
-            #     alive, meta, concept, **RCONFIG["highest_activations"]
-            # )
-            best_latents: pl.DataFrame = score_latents(
-                sae_acts, labels=meta[concept]
-            ).sort("max_activation_prop", descending=True)
-            best_latents.write_csv(smk.output[""])
-            for idx in best_latents["latent_idx"][:topk_plot]:
-                plots: dict = plot_activation_density(sae_acts, idx, meta, [concept])
-                for k, v in plots.items():
-                    v: gg.ggplot
-                    savepath = f"{smk.params['outdir']}/activation_plots/{k}.png"
-                    v.save(savepath)
+        # Retrieves the full dataset
+        for group, from_sae in zip(("sae", "model_raw"), (True, False)):
+            acts: Tensor = (
+                model.predict_step(dataset[X_KEY][:]) if from_sae else dataset[X_KEY][:]
+            )
+            latent_cats: dict = categorize_latents(acts)
+            for ltype in ["dead", "dense", "sparse"]:
+                latent_summary["type"].append(ltype)
+                latent_summary["count"].append(len(latent_cats[ltype]))
+                latent_summary["dataset"].append(dset_name)
+                latent_summary["activation_source"].append(group)
+
+            # TODO: consider some preprocessing on concept cols to collapse them into a single
+            # label column. Otherwise, gonna have to look at overlapping label columns that
+            # you need to reconcile...
+            topk_plot = RCONFIG["activation_density_topk"]
+            for concept in concepts:
+                best_latents: pl.DataFrame = (
+                    score_latents(acts, labels=meta[concept])
+                    .sort("max_activation_prop", descending=True)
+                    .with_columns(
+                        pl.lit(concept).alias("concept"),
+                        pl.lit(dataset).alias("dataset"),
+                        pl.lit(group).alias("activation_source"),
+                    )
+                )
+                concept_scoring.append(best_latents)
+                for idx in best_latents["latent_idx"][:topk_plot]:
+                    plots: dict = plot_activation_density(acts, idx, meta, [concept])
+                    for k, v in plots.items():
+                        v: gg.ggplot
+                        savepath = (
+                            f"{OUTDIR}/activation_plots/{dataset}/{k}_{group}.png"
+                        )
+                        v.save(savepath)
 
     summary_df = pl.DataFrame(latent_summary)
     summary_plot = (
-        gg.ggplot(summary_df, gg.aes(x="type", fill="activation_source"))
+        gg.ggplot(summary_df, gg.aes(x="type", fill="dataset"))
         + gg.geom_bar(position="dodge")
         + gg.ggtitle(title="Count of latent categories")
     )
     summary_plot.save(smk.output["latent_summary_plot"])
     summary_df.write_csv(smk.output["latent_summary_data"])
+    concept_df: pl.DataFrame = pl.concat(concept_scoring)
+    concept_df.write_csv(smk.output["concept_scoring_data"])
 
 
 # * Entry
@@ -188,6 +201,3 @@ if not (fn := globals().get(smk.rule)):
     raise ValueError("Function for rule `{smk.rule}` not defined in this file")
 else:
     fn()
-
-# TODO: run the sae metrics on the raw embeddings as well as the sae activations to
-# ensure that the latents represent concepts not found in the neurons
