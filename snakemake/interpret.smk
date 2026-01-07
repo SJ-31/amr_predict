@@ -11,10 +11,14 @@ from typing import get_args
 from pathlib import Path
 
 if TEST:
-    IN_DATE = "esm_test"
+    IN_DATE = "for_interpret"
     config["train_sae"]["token-level"]["run"] = False
     config["train_sae"]["sequence-level"]["n"] = 9
     config["train_sae"]["genome-level"]["n"] = 9
+    config["train_sae"]["expansion_factor"] = 3
+    config["train_sae"]["trainer"]["max_epochs"] = 3
+    config["embedding"] = "seqLens"
+    config["train_sae"]["dataloader"]["batch_size"] = 3
 
 
 def default_log(rule_name):
@@ -42,16 +46,26 @@ LEVELS = [
     if config["train_sae"][s]["run"]
 ]
 
-MODELS = {}
+MODELS = {}  # Mapping of model file name to the dataset containing the sample metadata
 for group, paths in DATASETS.items():
     for path in paths:
         if group == "pooled":
-            MODELS[f"genome-level_{path}.pth"] = path
-        else:
-            if group == "text" and "token-level" in LEVELS:
-                MODELS[f"token-level_{path}.pth"] = path
-            if group == "text" and "sequence-level" in LEVELS:
-                MODELS[f"sequence-level_{path}.pth"] = path
+            MODELS[f"genome-level_{path.stem}.pth"] = path
+        if group == "text" and "token-level" in LEVELS:
+            MODELS[f"token-level_{path.stem}.pth"] = path
+        if group == "text" and "sequence-level" in LEVELS:
+            MODELS[f"sequence-level_{path.stem}.pth"] = path
+
+
+def sae_plotting_paths(intermediate, as_dir):
+    dataset_names = [Path(v).stem for v in MODELS.values()]
+    ex = expand("{o}/{i}/{s}", o=OUTDIRS["sae"], i=intermediate, s=dataset_names)
+    if as_dir:
+        return directory(ex)
+    return ex
+
+
+# * Rules
 
 
 rule all:
@@ -82,11 +96,8 @@ rule eval_sae:
         latent_summary_data=f"{OUTDIRS['sae']}/latent_summary.csv",
         concept_scoring_data=f"{OUTDIRS['sae']}/concept_scoring.csv",
         latent_summary_plot=f"{OUTDIRS['sae']}/latent_summary.png",
-        activation_plots=directory(
-            expand(
-                "{o}/activation_plots/{m}", o=OUTDIRS["sae"], m=rules.all.input.models
-            )
-        ),
+        activation_plots=sae_plotting_paths("activation_plots", True),
+        umaps=sae_plotting_paths("latent_umap", True),
     params:
         caches=f"{OUT}/{IN_DATE}/datasets/embedded",
         model_dict=MODELS,
