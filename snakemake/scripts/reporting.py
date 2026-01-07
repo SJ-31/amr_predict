@@ -40,6 +40,7 @@ except ImportError:
 RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
 GEN: Generator = np.random.default_rng(seed=RNG)
+EMBEDDING = smk.config["embedding"]
 X_KEY = smk.config["pool_embeddings"]["key"]
 
 logger.enable("amr_predict")
@@ -432,20 +433,17 @@ def _compare(is_embeddings: bool = True):
     for d in smk.params["datasets"]:
         dir: Path = Path(d)
         if is_embeddings:
-            cache: EmbeddingCache = EmbeddingCache(dir)
-            dset_name = dir.stem.split("_")[0]
-            seqs: str = smk.params["seq_path"] / dset_name
-            dset: LinkedDataset = cache.to_dataset(load_as(seqs, "polars"), "sequence")
+            cache_path = smk.params["caches"] / f"{dir.stem}_{EMBEDDING}_cache"
+            cache: EmbeddingCache = EmbeddingCache(cache_path)
+            dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), "sequence")
             adata = ad.AnnData(x=dset[dset.x_key][:].numpy(), obs=dset.meta)
         else:
-            adata = with_metadata(
-                load_as(dir, "adata", x_key=X_KEY), smk.config, "sample", ("sample",)
-            )
-            dset_name = dir.stem
+            adata = load_as(dir, "adata", x_key=X_KEY)
+        adata = with_metadata(adata, smk.config, "sample", ("sample",))
         adata.obs = adata.obs.replace(
             to_replace={c: np.nan for c in RCONFIG["cluster_on"]}, value="unknown"
         )
-        run_bootstrap(adata, df_acc=all_dfs, dset_name=dset_name)
+        run_bootstrap(dset_name=dir.stem, adata=adata, df_acc=all_dfs)
     pl.concat(all_dfs, how="diagonal_relaxed").write_csv(
         smk.output["metrics"], null_value="NaN"
     )
