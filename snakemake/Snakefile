@@ -3,7 +3,9 @@ configfile: "env.yaml"
 
 from datetime import date
 import pandas as pd
+from pathlib import Path
 import os
+import sys
 
 os.environ["HF_HOME"] = config["huggingface"]
 
@@ -11,6 +13,14 @@ TODAY = date.today().isoformat()
 DATE = config.get("date", "no_date")
 IN_DATE = config.get("in_date", DATE)
 TEST = config["test"]
+PROFILE = "default"
+if "--profile" in sys.argv:
+    idx = sys.argv.index("--profile")
+    if idx + 1 < len(sys.argv):
+        PROFILE = sys.argv[idx + 1]
+if (Path(PROFILE).exists() and Path(PROFILE).stem == "test") or PROFILE == "test":
+    TEST = config["test"] = True
+    print("INFO: Inferring test run from profile name...")
 
 RAW = config["data"]["raw"]
 PROCESSED = config["data"]["processed"] if not TEST else config["out"]["tests"]
@@ -22,6 +32,7 @@ OUT = config["out"]["root"] if not config["test"] else config["out"]["tests"]
 BIN = config["bin"]
 SRC = config["src"]
 LOGDIR = f"{OUT}/{DATE}/logs"
+
 
 if TEST:
     GPU20 = {
