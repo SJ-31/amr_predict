@@ -37,7 +37,7 @@ for k, v, r in zip(["S", "P"], to_compare, ["compare_embeddings", "compare_poole
         "plots": expand(
             "{o}/plots/{i}_{d}_{p}{s}.png",
             o=OUTDIRS[k],
-            d=[d.stem for d in DATASETS[k]],
+            d=[d.stem if k == "P" else d.stem.split("_")[0] for d in DATASETS[k]],
             p=["pca", "umap"],
             s=["-d", "-c"] if k == "P" else [""],
             i=range(config[r]["bootstrap_rounds"]),
@@ -61,6 +61,7 @@ rule all:
 rule compare_embeddings:
     params:
         datasets=DATASETS["S"],
+        seq_path=Path(f"{REMOTE}/{IN_DATE}/datasets/processed_sequences"),
         outdir=OUTDIRS["S"],
     output:
         metrics=RESULTS["S"]["metrics"],

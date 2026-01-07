@@ -16,7 +16,7 @@ import polars as pl
 import scanpy as sc
 from amr_predict.metrics import nn_proportions
 from amr_predict.plotting import plot_adata
-from amr_predict.utils import load_as
+from amr_predict.utils import EmbeddingCache, LinkedDataset, load_as, with_metadata
 from fastcluster import linkage, pdist
 from loguru import logger
 from numpy.random import Generator
@@ -39,6 +39,8 @@ except ImportError:
 
 RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
+GEN: Generator = np.random.default_rng(seed=RNG)
+X_KEY = smk.config["pool_embeddings"]["key"]
 
 logger.enable("amr_predict")
 logger.add(smk.log[0])
@@ -54,7 +56,6 @@ class LongResults:
 
 
 os.environ["HF_HOME"] = smk.config["huggingface"]
-
 
 # * Utility functions
 
@@ -379,59 +380,87 @@ def comparison_routine(
 
 # * Rules
 
-# ** Embedding comparison
-if smk.rule in {"compare_embeddings", "compare_pooled"}:
-    rng: Generator = np.random.default_rng(seed=smk.config["rng"])
-    all_dfs = []
-    for dir in smk.params["datasets"]:
-        adata: ad.AnnData = load_as(
-            dir, "adata", x_key=smk.config["pool_embeddings"]["key"]
+
+def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
+    dfs = []
+    for i in range(RCONFIG["bootstrap_rounds"]):
+        logger.info(f"Start of bootstrap round {i}")
+        logger.info(f"Running with n = {adata.shape[0]} samples")
+        if n_samples := RCONFIG.get("n_samples_per"):
+            samples = GEN.choice(adata.obs["sample"].unique(), size=n_samples)
+            logger.info(f"Subsampled to n = {len(samples)}")
+        else:
+            samples = adata.obs["sample"].unique()
+        subsampled = adata[adata.obs["sample"].isin(samples), :]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            if smk.rule == "compare_embeddings":
+                color_keys = {"": "cluster_on"}
+            else:
+                color_keys = {"-d": "cluster_on", "-c": "continuous"}
+            cur = comparison_routine(
+                adata=subsampled,
+                dataset_name=dset_name,
+                color_keys=color_keys,
+                outdir=Path(smk.params["outdir"]),
+                round=i,
+            )
+            dfs.append(cur.with_columns(dataset=pl.lit(dset_name)))
+        logger.success(f"Bootstrap round {i} complete")
+    if len(dfs) > 1:
+        aggregated: pl.DataFrame = pl.concat(dfs)
+        aggregated = aggregated.group_by(["metric", "method", "name", "dataset"]).agg(
+            pl.col("value").mean().alias("mean"),
+            pl.col("value").std().alias("std"),
+            pl.col("value").median().alias("median"),
+            pl.col("p_value").map_batches(
+                lambda x: combine_pvalues(x).pvalue if all(x) != -1 else -1,
+                returns_scalar=True,
+                return_dtype=pl.Float64,
+            ),
         )
+        df_acc.append(aggregated)
+    else:
+        df_acc.extend(dfs)
+
+
+# ** Embedding comparison
+
+
+def _compare(is_embeddings: bool = True):
+    all_dfs = []
+    for d in smk.params["datasets"]:
+        dir: Path = Path(d)
+        if is_embeddings:
+            cache: EmbeddingCache = EmbeddingCache(dir)
+            dset_name = dir.stem.split("_")[0]
+            seqs: str = smk.params["seq_path"] / dset_name
+            dset: LinkedDataset = cache.to_dataset(load_as(seqs, "polars"), "sequence")
+            adata = ad.AnnData(x=dset[dset.x_key][:].numpy(), obs=dset.meta)
+        else:
+            adata = with_metadata(
+                load_as(dir, "adata", x_key=X_KEY), smk.config, "sample", ("sample",)
+            )
+            dset_name = dir.stem
         adata.obs = adata.obs.replace(
             to_replace={c: np.nan for c in RCONFIG["cluster_on"]}, value="unknown"
         )
-        dfs = []
-        for i in range(RCONFIG["bootstrap_rounds"]):
-            logger.info(f"Start of bootstrap round {i}")
-            logger.info(f"Running with n = {adata.shape[0]} samples")
-            if n_samples := RCONFIG.get("n_samples_per"):
-                samples = rng.choice(adata.obs["sample"].unique(), size=n_samples)
-                logger.info(f"Subsampled to n = {len(samples)}")
-            else:
-                samples = adata.obs["sample"].unique()
-            subsampled = adata[adata.obs["sample"].isin(samples), :]
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                if smk.rule == "compare_embeddings":
-                    color_keys = {"": "cluster_on"}
-                else:
-                    color_keys = {"-d": "cluster_on", "-c": "continuous"}
-                cur = comparison_routine(
-                    adata=subsampled,
-                    dataset_name=dir.stem,
-                    color_keys=color_keys,
-                    outdir=Path(smk.params["outdir"]),
-                    round=i,
-                )
-                dfs.append(cur.with_columns(dataset=pl.lit(dir.stem)))
-            logger.success(f"Bootstrap round {i} complete")
-        if len(dfs) > 1:
-            aggregated: pl.DataFrame = pl.concat(dfs)
-            aggregated = aggregated.group_by(
-                ["metric", "method", "name", "dataset"]
-            ).agg(
-                pl.col("value").mean().alias("mean"),
-                pl.col("value").std().alias("std"),
-                pl.col("value").median().alias("median"),
-                pl.col("p_value").map_batches(
-                    lambda x: combine_pvalues(x).pvalue if all(x) != -1 else -1,
-                    returns_scalar=True,
-                    return_dtype=pl.Float64,
-                ),
-            )
-            all_dfs.append(aggregated)
-        else:
-            all_dfs.extend(dfs)
+        run_bootstrap(adata, df_acc=all_dfs, dset_name=dset_name)
     pl.concat(all_dfs, how="diagonal_relaxed").write_csv(
         smk.output["metrics"], null_value="NaN"
     )
+
+
+def compare_embeddings():
+    _compare(True)
+
+
+def compare_pooled():
+    _compare(False)
+
+
+# * Entry
+if not (fn := globals().get(smk.rule)):
+    raise ValueError(f"Function for rule `{smk.rule}` not defined in this file")
+else:
+    fn()
