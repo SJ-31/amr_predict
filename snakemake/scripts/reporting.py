@@ -37,6 +37,7 @@ try:
 except ImportError:
     smk = type("snakemake", (), {"rule": None, "config": defaultdict(lambda: "")})
 
+
 RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
 GEN: Generator = np.random.default_rng(seed=RNG)
@@ -54,6 +55,16 @@ class LongResults:
     value: list[float] = field(default_factory=lambda: [])
     name: list[str] = field(default_factory=lambda: [])
     p_value: list[float] = field(default_factory=lambda: [])
+
+    def from_test(self, test, **kws):
+        self.add(p_value=test.pvalue, value=test.statistic, **kws)
+
+    def add(self, metric, method, value, name, p_value):
+        self.name.append(name)
+        self.p_value.append(p_value)
+        self.metric.append(metric)
+        self.method.append(method)
+        self.value.append(value)
 
 
 os.environ["HF_HOME"] = smk.config["huggingface"]
@@ -216,31 +227,47 @@ def compare_pair_distribution(
     """
     results: LongResults = LongResults()
     kws = kws or {}
+    metric = "pair_distribution"
     for col in columns:
         related, unrelated = sample_pairs(adata.obs, col, **kws)
         logger.info(f"Comparing pair distribution for column {col}")
         logger.info(f"n = {related.shape[0]} related pairs")
         logger.info(f"n = {unrelated.shape[0]} unrelated pairs")
 
-        r1, r2 = adata.X[related[:, 0]], adata.X[related[:, 1]]
-        u1, u2 = adata.X[unrelated[:, 0]], adata.X[unrelated[:, 1]]
-        rel_dist = paired_distances(r1, r2, metric=distance_metric)
-        unrel_dist = paired_distances(u1, u2, metric=distance_metric)
-        results.metric.append("pair_distribution")
-        results.method.append("ks_2samp")
-        test = ks_2samp(rel_dist, unrel_dist, alternative="greater")  # Alternative
-        # is defined in terms of CDFs
-        results.p_value.append(test.pvalue)
-        results.value.append(test.statistic)
-        results.name.append(col)
+        results.add(metric, "n_related_pairs", related.shape[0], col, np.nan)
+        results.add(metric, "n_unrelated_pairs", unrelated.shape[0], col, np.nan)
 
-        results.metric.append("pair_distribution")
-        results.method.append("kl_div")
-        results.value.append(entropy(rel_dist, unrel_dist))
-        results.p_value.append(-1)
-        results.name.append(col)
+        r1, r2 = adata.X[related[:, 0]], adata.X[related[:, 1]]
+        if unrelated.shape[0] != 0:
+            u1, u2 = adata.X[unrelated[:, 0]], adata.X[unrelated[:, 1]]
+            rel_dist = paired_distances(r1, r2, metric=distance_metric)
+            unrel_dist = paired_distances(u1, u2, metric=distance_metric)
+            test = ks_2samp(rel_dist, unrel_dist, alternative="greater")  # Alternative
+            # is defined in terms of CDFs
+            results.from_test(test, metric=metric, method="ks_2samp", name=col)
+
+            results.add(
+                metric,
+                "kl_div",
+                entropy(rel_dist, unrel_dist),
+                col,
+                np.nan,
+            )
+        else:
+            results.add(metric, "ks_2samp", np.nan, col, np.nan)
+            results.add(metric, "kl_div", np.nan, col, np.nan)
+
         logger.success(f"Pair distribution of {col} complete")
-    return pl.DataFrame(asdict(results))
+    return pl.DataFrame(
+        asdict(results),
+        schema={
+            "metric": pl.String,
+            "method": pl.String,
+            "value": pl.Float64,
+            "p_value": pl.Float64,
+            "name": pl.String,
+        },
+    )
 
 
 def covar_dist(
@@ -294,11 +321,12 @@ def covar_dist(
         test = spearmanr(edist, covar_dist)
         logger.info("Spearman correlation calculated")
         logger.info(test)
-        results.method.append(distance_metric)
-        results.metric.append("covariate_distance_correlation")
-        results.name.append(col)
-        results.value.append(test.statistic)
-        results.p_value.append(test.pvalue)
+        results.from_test(
+            test,
+            method=distance_metric,
+            metric="covariate_distance_correlation",
+            name=col,
+        )
         logger.success(f"Routine for column {col} complete")
     return pl.DataFrame(asdict(results))
 
@@ -330,6 +358,9 @@ def comparison_routine(
     for metric_group in RCONFIG["methods"]:
         cur_config = RCONFIG.get(metric_group, {})
         cols = cur_config.get("cols", None)
+        if cols:
+            for col in cols:
+                adata.obs[col].fillna("unknown", inplace=True)
         if metric_group == "clustering":
             precomputed = pdist(adata.X, metric="cosine")
             cur_df = clustering_helper(adata=adata, precomputed_dist=precomputed)
@@ -436,9 +467,12 @@ def _compare(is_embeddings: bool = True):
             cache_path = smk.params["caches"] / f"{dir.stem}_{EMBEDDING}_cache"
             cache: EmbeddingCache = EmbeddingCache(cache_path)
             dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), "sequence")
-            adata = ad.AnnData(x=dset[dset.x_key][:].numpy(), obs=dset.meta)
+            adata = ad.AnnData(X=dset[dset.x_key][:].numpy(), obs=dset.meta)
         else:
             adata = load_as(dir, "adata", x_key=X_KEY)
+        if adata.X.shape[1] <= 0:
+            logger.debug(adata.X.shape)
+            raise ValueError(f"embeddings for {d} have size 0")
         adata = with_metadata(adata, smk.config, "sample", ("sample",))
         adata.obs = adata.obs.replace(
             to_replace={c: np.nan for c in RCONFIG["cluster_on"]}, value="unknown"

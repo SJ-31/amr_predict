@@ -259,6 +259,8 @@ def get_seq_metadata():
         dfs.append(format_ampcombi(seq_meta["ampcombi"], **rename_kws))
     if dfs:
         df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed")
+        # The ideal way to merge these would be with a join, but is not possible due to
+        # the differing start, stop indices
         df.write_csv(smk.output[0])
     else:
         pl.DataFrame().write_csv(smk.output[0])
