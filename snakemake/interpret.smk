@@ -14,6 +14,7 @@ if TEST:
     IN_DATE = "for_interpret"
     config["train_sae"]["token-level"]["run"] = False
     config["train_sae"]["sequence-level"]["n"] = 9
+    config["train_sae"]["sequence-level"]["n_sequence"] = 5
     config["train_sae"]["genome-level"]["n"] = 9
     config["train_sae"]["expansion_factor"] = 3
     config["train_sae"]["trainer"]["max_epochs"] = 3
@@ -83,6 +84,8 @@ rule train_sae:
         outdir=OUTDIRS["sae"],
         caches=f"{OUT}/{IN_DATE}/datasets/embedded",
         pooled=f"{OUT}/{IN_DATE}/datasets/pooled",
+    resources:
+        **GPU20,
     log:
         default_log("train_sae"),
     script:

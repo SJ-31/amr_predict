@@ -22,3 +22,27 @@ OUT = config["out"]["root"] if not config["test"] else config["out"]["tests"]
 BIN = config["bin"]
 SRC = config["src"]
 LOGDIR = f"{OUT}/{DATE}/logs"
+
+if TEST:
+    GPU20 = {
+        "qos": "gpu20gh",
+        "gres": "gpu:3g.20gb:1",
+        "partition": "gpu",
+        "mem": "10G",
+    }
+    GPU40 = {}
+    BIG_MEM = {}
+else:
+    GPU20 = {
+        "mem": "30G",
+        "qos": "gpu20gh",
+        "gres": "gpu:3g.20gb:1",
+        "partition": "gpu",
+    }
+    BIG_MEM = {"mem": "70G"}
+    GPU40 = {
+        "mem": "64G",
+        "qos": "gpu40gh",
+        "gres": "gpu:7g.40gb:1",
+        "partition": "gpu",
+    }

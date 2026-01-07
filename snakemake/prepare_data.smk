@@ -47,6 +47,7 @@ DATA_OUTS = {
 pooling_methods = [
     d.get("name", d["method"]) for d in config["pool_embeddings"]["methods"]
 ]
+EMBEDDING_RES = GPU40.copy()
 if config["embedding"] == "esm":
     tmp = {}
     # Only use esm for pure ORFs
@@ -59,6 +60,9 @@ if config["embedding"] == "esm":
         ):
             tmp[k] = v
     PREPROCESSING = tmp
+elif config["embedding"] == "Evo2":
+    EMBEDDING_RES = {"qos": "cpu24h", "mem": "30G"}
+
 
 PLOT_OUT = f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation"
 
@@ -134,6 +138,8 @@ rule make_embedded_datasets:
         rules.make_text_datasets.output,
     log:
         **default_log("make_embedded_datasets"),
+    resources:
+        **EMBEDDING_RES,
     params:
         outdir=DATA_OUTS["E"],
         ignore=POOLED_ALREADY,
@@ -150,6 +156,8 @@ rule pool_embeddings:
         outdir=DATA_OUTS["P"],
         textdir=DATA_OUTS["S"],
         plotdir=PLOT_OUT,
+    resources:
+        **GPU40,
     log:
         **default_log("pool_embeddings"),
     output:
