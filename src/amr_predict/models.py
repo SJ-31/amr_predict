@@ -315,7 +315,8 @@ class BaseNN(L.LightningModule):
         return fn(forward_out)
 
     def _log_step(self, log_to, prefix: str, batch, batch_idx):
-        x, y = batch
+        x = batch[self.x_key]
+        y = batch.get("y")
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, context=prefix)
         self.log(log_to, loss)
