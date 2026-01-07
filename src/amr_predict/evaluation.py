@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Callable, Literal, TypeAlias
+from typing import Any, Callable, Literal, TypeAlias
 
 import lightning as L
 import numpy as np
@@ -11,6 +11,8 @@ import polars as pl
 import sklearn.model_selection as ms
 import torch
 import torch.nn as nn
+import umap
+import umap.plot
 from amr_predict.metrics import (
     multitask_all_cls,
     multitask_all_reg,
@@ -20,7 +22,14 @@ from amr_predict.models import Baseline
 from amr_predict.utils import TASK_TYPES, Preprocessor, load_as
 from datasets import Dataset, DatasetDict
 from loguru import logger
-from sklearn.preprocessing import LabelBinarizer
+from matplotlib.axes import Axes
+from sklearn.cluster import KMeans
+from sklearn.metrics import (
+    calinski_harabasz_score,
+    silhouette_samples,
+    silhouette_score,
+)
+from sklearn.preprocessing import LabelBinarizer, OneHotEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader
 
@@ -267,118 +276,275 @@ def make_control_task(
 
 
 # * SAE metrics
-def categorize_latents(
-    activations: Tensor, dense_threshold: float = 1 / 10
-) -> dict[str, list | pl.Series]:
-    """Helper function to flag dead and dense latents by their activation values"""
-    result = {}
-    n_samples = activations.shape[0]
-    idx = torch.arange(activations.shape[1])
-    frac_active = (activations > 0).sum(dim=0) / n_samples
-    result["dead"] = idx[frac_active == 0].tolist()
-    result["dense"] = idx[frac_active > dense_threshold]
-    rest = idx[(frac_active != 0) & (frac_active <= dense_threshold)]
-    result["sparse"] = rest
-    result["sparse_df"] = pl.DataFrame(
-        activations[:, rest], schema=[f"latent_{i}" for i in rest]
-    )
-    return result
+class EvalSAE:
+    def __init__(self, activations: Tensor, labels: Sequence | None = None) -> None:
+        self.acts: Tensor = activations
+        self.labels: Sequence | None = labels
+        self.acts_grouped: Tensor | None = None
+        self.U: umap.UMAP | None = None
 
-
-def plot_activation_density(
-    activations: Tensor, latent_idx: int, obs: pl.DataFrame, label_cols: Sequence
-) -> dict[str, gg.ggplot]:
-    """Plot the activation distribution for a single latent `latent_idx`, showing
-    the relationship between it and the label classes in `label_cols`
-
-    Parameters
-    ----------
-    activations : Tensor
-        Tensor of shape n_samples x d_sae containing SAE activations
-    obs : DataFrame
-        DataFrame aligned to activations, containing annotations about samples
-    label_cols : Sequence
-        columns of `obs` to derive labels from
-
-    Returns
-    -------
-    Dictionary of plot objects, keyed by column in label_cols
-    """
-
-    def plot_one(label_col):
-        selected = activations[:, latent_idx]
-        frac_active = ((selected > 0).sum() / selected.shape[0]) * 100
-        to_df = pl.DataFrame({"Activation": selected, label_col: obs[label_col]})
-        title = f"Latent {latent_idx}"
-        return (
-            gg.ggplot(to_df, gg.aes(x="Activation", fill=label_col))
-            + gg.geom_histogram(binwidth=0.1)
-            + gg.ggtitle(title, subtitle=f"Activation density: {frac_active}%")
-            + gg.theme(title=gg.element_text(style="oblique"))
+    def categorize_latents(
+        self, dense_threshold: float = 1 / 10
+    ) -> dict[str, list | pl.Series]:
+        """Helper function to flag dead and dense latents by their activation values"""
+        result = {}
+        n_samples = self.acts.shape[0]
+        idx = torch.arange(self.acts.shape[1])
+        frac_active = (self.acts > 0).sum(dim=0) / n_samples
+        result["dead"] = idx[frac_active == 0].tolist()
+        result["dense"] = idx[frac_active > dense_threshold]
+        rest = idx[(frac_active != 0) & (frac_active <= dense_threshold)]
+        result["sparse"] = rest
+        result["sparse_df"] = pl.DataFrame(
+            self.acts[:, rest], schema=[f"latent_{i}" for i in rest]
         )
+        return result
 
-    return {col: plot_one(col) for col in label_cols}
+    def plot_activation_density(
+        self, latent_idx: int, obs: pl.DataFrame, label_cols: Sequence
+    ) -> dict[str, gg.ggplot]:
+        """Plot the activation distribution for a single latent `latent_idx`, showing
+        the relationship between it and the label classes in `label_cols`
 
+        Parameters
+        ----------
+        activations : Tensor
+            Tensor of shape n_samples x d_sae containing SAE activations
+        obs : DataFrame
+            DataFrame aligned to activations, containing annotations about samples
+        label_cols : Sequence
+            columns of `obs` to derive labels from
 
-def highest_activations(
-    activations: Tensor,
-    obs: pl.DataFrame,
-    label_col: str,
-    k: int = 5,
-    top_only: bool = True,
-) -> dict[str, pl.DataFrame]:
-    """Return the k latents that have the highest activations for each label in `label_col`
+        Returns
+        -------
+        Dictionary of plot objects, keyed by column in label_cols
+        """
 
-    Parameters
-    ----------
-    activations : Tensor
-    obs : pl.DataFrame
-        DataFrame aligned to activations
-    top_only : bool
-        In each dataframe, return information only about latents that showed up at least
-        once in the top k for that label
-
-    Returns
-    -------
-    A dictionary keyed by label, mapping to a dataframe with statistics about the top latents
-        for that label.
-    The dataframe has 3 columns: latent, fraction_top, fraction_active, max
-    latent: the index of the latent
-    fraction_top: the fraction of samples at which the latent appears in the top k
-    fraction_active: the fraction of samples where the latent is nonzero
-    max, median, mean: the max, median, and mean activation value of the latent
-    """
-    result = {}
-    for label, group in obs.with_row_index().group_by(label_col):
-        current: Tensor = activations[group["index"], :]
-        n_samples = group.height
-        active_frac = (current > 0).sum(dim=0) / n_samples
-        latent_max = current.max(dim=0).values
-        latent_median = current.median(dim=0).values
-        latent_mean = current.mean(dim=0)
-        top = current.topk(k=k, dim=1)
-        top_counts = top.indices.flatten().unique(return_counts=True)
-        top_frac = pl.DataFrame(
-            {"latent": top_counts[0], "fraction_top": top_counts[1] / n_samples}
-        )
-        df: pl.DataFrame = (
-            pl.DataFrame(
-                {
-                    "max": latent_max,
-                    "mean": latent_mean,
-                    "median": latent_median,
-                    "fraction_active": active_frac,
-                }
+        def plot_one(label_col):
+            selected = self.acts[:, latent_idx]
+            frac_active = ((selected > 0).sum() / selected.shape[0]) * 100
+            to_df = pl.DataFrame({"Activation": selected, label_col: obs[label_col]})
+            title = f"Latent {latent_idx}"
+            return (
+                gg.ggplot(to_df, gg.aes(x="Activation", fill=label_col))
+                + gg.geom_histogram(binwidth=0.1)
+                + gg.ggtitle(title, subtitle=f"Activation density: {frac_active}%")
+                + gg.theme(title=gg.element_text(style="oblique"))
             )
-            .with_row_index("latent")
-            .join(top_frac, on="latent", how="inner")
-            .sort("mean", descending=True)
-        )
-        if top_only:
-            df = df.filter(pl.col("latent").is_in(top_counts[0]))
-        result[label[0]] = df
-    return result
 
+        return {col: plot_one(col) for col in label_cols}
+
+    def highest_activations(
+        self,
+        obs: pl.DataFrame,
+        label_col: str,
+        k: int = 5,
+        top_only: bool = True,
+    ) -> dict[str, pl.DataFrame]:
+        """Return the k latents that have the highest activations for each label in `label_col`
+
+        Parameters
+        ----------
+        activations : Tensor
+        obs : pl.DataFrame
+            DataFrame aligned to activations
+        top_only : bool
+            In each dataframe, return information only about latents that showed up at least
+            once in the top k for that label
+
+        Returns
+        -------
+        A dictionary keyed by label, mapping to a dataframe with statistics about the top latents
+            for that label.
+        The dataframe has 3 columns: latent, fraction_top, fraction_active, max
+        latent: the index of the latent
+        fraction_top: the fraction of samples at which the latent appears in the top k
+        fraction_active: the fraction of samples where the latent is nonzero
+        max, median, mean: the max, median, and mean activation value of the latent
+        """
+        result = {}
+        for label, group in obs.with_row_index().group_by(label_col):
+            current: Tensor = self.acts[group["index"], :]
+            n_samples = group.height
+            active_frac = (current > 0).sum(dim=0) / n_samples
+            latent_max = current.max(dim=0).values
+            latent_median = current.median(dim=0).values
+            latent_mean = current.mean(dim=0)
+            top = current.topk(k=k, dim=1)
+            top_counts = top.indices.flatten().unique(return_counts=True)
+            top_frac = pl.DataFrame(
+                {"latent": top_counts[0], "fraction_top": top_counts[1] / n_samples}
+            )
+            df: pl.DataFrame = (
+                pl.DataFrame(
+                    {
+                        "max": latent_max,
+                        "mean": latent_mean,
+                        "median": latent_median,
+                        "fraction_active": active_frac,
+                    }
+                )
+                .with_row_index("latent")
+                .join(top_frac, on="latent", how="inner")
+                .sort("mean", descending=True)
+            )
+            if top_only:
+                df = df.filter(pl.col("latent").is_in(top_counts[0]))
+            result[label[0]] = df
+        return result
+
+    def umap(self, from_grouped: bool, **kws) -> None:
+        if from_grouped:
+            arr = self.acts_grouped.numpy()
+        else:
+            arr = torch.t(self.acts).numpy()
+        self.U = umap.UMAP(**kws)
+        self.U.fit(arr)
+
+    def plot_umap(self, labels: Sequence | None = None, **kws) -> Axes | Any:
+        if self.U is not None:
+            return umap.plot.points(self.U, labels=labels, **kws)
+        raise ValueError("UMAP object not found, run self.umap first")
+
+    def cluster_latents(
+        self,
+        from_grouped: bool,
+        cluster_obj: Callable = KMeans,
+        label_n_clusters: bool = False,
+        silhouette: bool = True,
+        ch_index: bool = True,
+        **kws,
+    ) -> pl.DataFrame:
+        """
+        Cluster latents by their activation values across samples
+
+        Parameters
+        ----------
+        labels : Sequence
+            Optional sequence of concept labels to aggregate latent activations by before
+            clustering
+        agg : str
+            Per-label aggregation method used when labels are supplied
+        cluster_obj : Callable
+            Sklearn-style clustering class. Needs `fit_predict` method that produces clusters
+        label_n_clusters : bool
+            Whether to supply the number of unique labels as a parameter "n_clusters"
+        kws : Keyword arguments
+            Passed to cluster_obj init
+        Returns
+        -------
+        A DataFrame describing latent cluster assignments and possibly clustering metrics
+        """
+        if from_grouped and self.acts_grouped is not None:
+            acts: Tensor = self.acts_grouped
+        elif from_grouped:
+            raise ValueError("Must call `group_by_labels` first to use `from_grouped`")
+        else:
+            acts = torch.t(self.acts)
+        # `acts` has shape feature_size x n_samples
+        arr: np.ndarray = acts.numpy()
+        if label_n_clusters and self.labels is not None:
+            kws["n_clusters"] = len(set(self.labels))
+        clst = cluster_obj(**kws)
+        assignments = clst.fit_predict(arr)
+        n_samples = arr.shape[0]
+        tmp = {"latent_idx": range(n_samples), "cluster": assignments}
+        if silhouette:
+            tmp["silhouette_samples"] = silhouette_samples(arr, assignments)
+            tmp["silhouette_score"] = [silhouette_score(arr, assignments)] * n_samples
+        if ch_index:
+            tmp["ch_index"] = [calinski_harabasz_score(arr, assignments)] * n_samples
+        return pl.DataFrame(tmp)
+
+    def group_by_labels(
+        self,
+        labels: Sequence | None = None,
+        agg: Literal["mean", "max", "sum"] = "mean",
+    ) -> None:
+        encoder = LabelBinarizer()
+        labels = labels or self.labels
+        dtype = torch.get_default_dtype()
+        ones: Tensor = torch.tensor(encoder.fit_transform(labels)).to(dtype)
+        self.acts_grouped = torch.t(self.acts).matmul(ones)
+        if agg == "mean":
+            self.acts_grouped = self.acts / ones.sum(dim=0)
+        elif agg == "max":
+            self.acts_grouped = max_by_label(self.acts, labels)
+
+    def score_latents(self, labels: Sequence) -> pl.DataFrame:
+        """Identify the best (most interpretable and monosemantic) latents in `activations`
+
+        Parameters
+        ----------
+        activations : Tensor
+            Tensor of SAE activations, of shape n_samples x d_sae
+        labels : Sequence
+            Labels for each sample in `activations`
+
+        Returns
+        -------
+        Dataframe with the following columns:
+
+        latent_idx: latent index
+        label_max: label that the latent has the highest average activation for
+        max_activation_avg: average of highest activation for `label_max`
+        max_activation: the highest activation observed for `label_max`
+        max_activation_prop: the proportion of `label_max`'s activations
+            across the samples, out of the total average activation of the latent on all samples.
+            A perfectly monosemantic latent should only fire for one label so
+            the proportion should be one
+            Averaging should alleviate issues of label imbalance
+
+            The main metric for scoring latents, as it takes into account latents' activations
+            on other labels
+
+        Classification metrics, with respect to label_max, computed
+            with one-vs-rest.
+
+        Notes
+        -----
+        The resulting top latents are equivalent to those found with a contrastive approach
+        that involves subtracting average activation values for each latent
+
+        In each row, classification metrics for the given latent are defined with respect to
+        the current `label_max` and against all other labels.
+            so true positives are the count of samples with `label_max` where the latent had
+            nonzero activations, true negatives are the sum of zero activations for all other
+            labels and so on.
+        """
+        lidx = torch.arange(self.acts.shape[1])
+        tmp: dict = {"latent_idx": lidx}
+        encoder = LabelBinarizer()
+        dtype = torch.get_default_dtype()
+        ones: Tensor = torch.tensor(encoder.fit_transform(labels)).to(dtype)
+        avg_acts = torch.t(self.acts).matmul(ones) / ones.sum(dim=0)
+        maxes, idx = avg_acts.max(dim=1)
+        tmp["max_activation_avg"] = maxes
+        tmp["max_activation_prop"] = (maxes / avg_acts.sum(dim=1)).tolist()
+        tmp["label_max"] = encoder.classes_[idx.numpy()]
+
+        # t(activations) has shape d_sae x n
+        # ones  has shape n x k
+        # expands to d_sae x n x 1
+        # and       1 x n x k
+        tmp["max_activation"] = max_by_label(self.acts, labels).max(dim=1).values
+
+        # Classifier scoring
+        nonzero_counts = torch.t(self.acts > 0).to(dtype).matmul(ones)
+        zero_counts = torch.t(self.acts == 0).to(dtype).matmul(ones)
+
+        tp = nonzero_counts[lidx, idx]
+        fn = zero_counts[lidx, idx]
+        tn = zero_counts.sum(dim=1) - fn
+        fp = nonzero_counts.sum(dim=1) - tp
+        tmp["f1"] = ((2 * tp) / (2 * tp + fp + fn)).tolist()
+        tmp["precision"] = tp / (tp + fp)
+        tmp["fpr"] = fp / (fp + tn)
+        tmp["fnr"] = fn / (fn + tp)
+        tmp["sensitivity"] = tp / (tp + fn)
+        tmp["specificity"] = tn / (tn + fp)
+
+        return pl.DataFrame(tmp).cast({"label_max": pl.Categorical})
 
 
 def max_by_label(activations: Tensor, labels: Sequence) -> Tensor:
@@ -393,79 +559,3 @@ def max_by_label(activations: Tensor, labels: Sequence) -> Tensor:
     expanded = torch.t(activations).unsqueeze(2)
     mvals, _ = torch.where(ones == 1, expanded, -torch.inf).max(dim=1)
     return mvals
-
-
-def score_latents(activations: Tensor, labels: Sequence) -> pl.DataFrame:
-    """Identify the best (most interpretable and monosemantic) latents in `activations`
-
-    Parameters
-    ----------
-    activations : Tensor
-        Tensor of SAE activations, of shape n_samples x d_sae
-    labels : Sequence
-        Labels for each sample in `activations`
-
-    Returns
-    -------
-    Dataframe with the following columns:
-
-    latent_idx: latent index
-    label_max: label that the latent has the highest average activation for
-    max_activation_avg: average of highest activation for `label_max`
-    max_activation: the highest activation observed for `label_max`
-    max_activation_prop: the proportion of `label_max`'s activations
-        across the samples, out of the total average activation of the latent on all samples.
-        A perfectly monosemantic latent should only fire for one label so
-        the proportion should be one
-        Averaging should alleviate issues of label imbalance
-
-        The main metric for scoring latents, as it takes into account latents' activations
-        on other labels
-
-    Classification metrics, with respect to label_max, computed
-        with one-vs-rest.
-
-    Notes
-    -----
-    The resulting top latents are equivalent to those found with a contrastive approach
-    that involves subtracting average activation values for each latent
-
-    In each row, classification metrics for the given latent are defined with respect to
-    the current `label_max` and against all other labels.
-        so true positives are the count of samples with `label_max` where the latent had
-        nonzero activations, true negatives are the sum of zero activations for all other
-        labels and so on.
-    """
-    lidx = torch.arange(activations.shape[1])
-    tmp: dict = {"latent_idx": lidx}
-    encoder = LabelBinarizer()
-    dtype = torch.get_default_dtype()
-    ones: Tensor = torch.tensor(encoder.fit_transform(labels)).to(dtype)
-    avg_acts = torch.t(activations).matmul(ones) / ones.sum(dim=0)
-    maxes, idx = avg_acts.max(dim=1)
-    tmp["max_activation_avg"] = maxes
-    tmp["max_activation_prop"] = (maxes / avg_acts.sum(dim=1)).tolist()
-    tmp["label_max"] = encoder.classes_[idx.numpy()]
-
-    # t(activations) has shape d_sae x n
-    # ones  has shape n x k
-    # expands to d_sae x n x 1
-    # and       1 x n x k
-    tmp["max_activation"] = max_by_label(activations, labels)
-
-    # Classifier scoring
-    nonzero_counts = torch.t(activations > 0).to(dtype).matmul(ones)
-    zero_counts = torch.t(activations == 0).to(dtype).matmul(ones)
-
-    tp = nonzero_counts[lidx, idx]
-    fn = zero_counts[lidx, idx]
-    tn = zero_counts.sum(dim=1) - fn
-    fp = nonzero_counts.sum(dim=1) - tp
-    tmp["f1"] = ((2 * tp) / (2 * tp + fp + fn)).tolist()
-    tmp["precision"] = tp / (tp + fp)
-    tmp["fpr"] = fp / (fp + tn)
-    tmp["fnr"] = fn / (fn + tp)
-    tmp["sensitivity"] = tp / (tp + fn)
-    tmp["specificity"] = tn / (tn + fp)
-
-    return pl.DataFrame(tmp)

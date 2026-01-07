@@ -467,7 +467,7 @@ def _compare(is_embeddings: bool = True):
             cache_path = smk.params["caches"] / f"{dir.stem}_{EMBEDDING}_cache"
             cache: EmbeddingCache = EmbeddingCache(cache_path)
             dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), "sequence")
-            adata = ad.AnnData(X=dset[dset.x_key][:].numpy(), obs=dset.meta)
+            adata = ad.AnnData(X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas())
         else:
             adata = load_as(dir, "adata", x_key=X_KEY)
         if adata.X.shape[1] <= 0:
