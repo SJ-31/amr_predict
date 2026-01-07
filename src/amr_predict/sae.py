@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from amr_predict.models import BaseNN
 from amr_predict.sae_external import BatchTopKSAE
 from amr_predict.utils import ModuleConfig
+from lightning.pytorch.loggers import WandbLogger
 from torch import Tensor
 
 # References
@@ -39,6 +40,10 @@ class BatchTopK(BaseNN):
         self.m = BatchTopKSAE(cfg)
         self.task_names = x_key
         self.threshold: Tensor = torch.tensor(0, dtype=self.dtype, device=self.device)
+
+    @override
+    def forward(self, X):
+        return self.predict_step(X)
 
     @override
     def predict_step(self, X: Tensor):
@@ -79,7 +84,11 @@ class BatchTopK(BaseNN):
             {
                 k: v
                 for k, v in output.items()
-                if k not in {"sae_out", "loss", "feature_acts"}
+                if k not in {"sae_out", "loss", "feature_acts", "num_dead_features"}
             }
         )
+        if isinstance(self.logger, WandbLogger):
+            self.logger.log_metrics({"num_dead_features": output["num_dead_features"]})
+        else:
+            self.log("num_dead_features", output["num_dead_features"])
         return loss
