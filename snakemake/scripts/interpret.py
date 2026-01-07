@@ -7,12 +7,10 @@ from typing import Literal, TypeAlias, get_args
 import lightning as L
 import plotnine as gg
 import polars as pl
+import polars.selectors as cs
 import torch
-from amr_predict.evaluation import (
-    categorize_latents,
-    plot_activation_density,
-    score_latents,
-)
+import umap
+from amr_predict.evaluation import EvalSAE
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
 from amr_predict.utils import (
@@ -60,7 +58,7 @@ def get_dataset(
         dset: Dataset = load_as(smk.params["pooled"].joinpath(name))
         dset = dset.filter(lambda x: x["sample"] in key_df["sample"])
         return dset
-    cache_path = Path(smk.params["caches"]).joinpath(f"{name}_{EMBEDDING}_cache")
+    cache_path = smk.params["caches"].joinpath(f"{name}_{EMBEDDING}_cache")
     cache: EmbeddingCache = EmbeddingCache(cache_path)
     dset = cache.to_dataset(
         df=key_df,
@@ -72,7 +70,7 @@ def get_dataset(
 
 
 def train_routine(
-    path: Path, level: EMBEDDING_LEVEL, key_df: pl.DataFrame, outdir: Path
+    path: Path, level: EMBEDDING_LEVEL, key_df: pl.DataFrame, outdir: Path, dset_name
 ):
     run_params: dict = RCONFIG[level]
     # Don't use all samples for SAE training
@@ -94,7 +92,7 @@ def train_routine(
         name=path.stem, model_name=model_name, level=level, key_df=subset
     )
 
-    # TODO: review you to train saes
+    # TODO: review how to train saes
     # Fairly certain you don't need to do train-test splits when training SAEs
     # dset_dict: DatasetDict = DatasetDict()
     # train_idx, test_idx = train_test_split(range(dset.shape[0]), **RCONFIG["splits"])
@@ -108,14 +106,14 @@ def train_routine(
 
     train_kws = RCONFIG["trainer"]
     train_kws.update(run_params.get("trainer", {}) or {})
-    run_name = f"sae_training:{level}{"-test" if TEST else ""}"
+    run_name = f"train_sae:{level}_{dset_name}{"-test" if TEST else ""}"
     train_kws["logger"] = WandbLogger(run_name, project="amr_predict")
     trainer = L.Trainer(**train_kws)
     train = DataLoader(dset, **load_kws)
 
     model: L.LightningModule = get_model_with_defaults(train_dset=train)
     trainer.fit(model, train_dataloaders=train)
-    save_path = outdir.joinpath(model_name)
+    save_path = outdir / "models" / model_name
     torch.save(model.state_dict(), save_path)
 
 
@@ -138,18 +136,29 @@ def get_model_with_defaults(train_dset):
 
 
 def train_sae():
-    wanted_cols = ("sample", "seqid")
+    wanted_cols = ("sample",)
+    valid_combs = (
+        ("pooled", "genome-level"),
+        ("text", "sequence-level"),
+        ("text", "token-level"),
+    )
     for group, paths in smk.input.items():  # Input are either pooled or text datasets
         for level in get_args(EMBEDDING_LEVEL):
-            if (not RCONFIG[level]["run"]) or (
-                level == "genome-level" and group != "pooled"
-            ):
+            allow_run = RCONFIG[level]["run"]
+            logger.debug(
+                f"{group} {level} {allow_run} {(group, level) not in valid_combs}"
+            )
+
+            if (not allow_run) or ((group, level) not in valid_combs):
                 continue
             cols = wanted_cols + ("sequence",) if group != "pooled" else wanted_cols
             for path in paths:
                 keys: pl.Dataframe = load_as(path, "polars").select(cols)
+                logger.debug(f"Passed {level} {group} {path} {keys.shape}")
                 # Takes processed datasets as input
-                train_routine(Path(path), level, keys, Path(OUTDIR))
+                train_routine(
+                    Path(path), level, keys, Path(OUTDIR), dset_name=Path(path).stem
+                )
 
 
 def eval_sae():
