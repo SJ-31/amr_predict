@@ -14,7 +14,7 @@ if TEST:
     IN_DATE = "for_interpret"
     config["train_sae"]["token-level"]["run"] = False
     config["train_sae"]["sequence-level"]["n"] = 9
-    config["train_sae"]["sequence-level"]["n_sequence"] = 5
+    config["train_sae"]["sequence-level"]["n_sequence"] = 3
     config["train_sae"]["genome-level"]["n"] = 9
     config["train_sae"]["expansion_factor"] = 3
     config["train_sae"]["trainer"]["max_epochs"] = 3
@@ -40,7 +40,6 @@ for d in dpath.joinpath("pooled").iterdir():
     if (config["preprocessing"][name]).get("method") not in get_args(EMBEDDING_METHODS):
         DATASETS["pooled"].append(d)
 
-
 LEVELS = [
     s
     for s in ("sequence-level", "token-level", "genome-level")
@@ -50,7 +49,7 @@ LEVELS = [
 MODELS = {}  # Mapping of model file name to the dataset containing the sample metadata
 for group, paths in DATASETS.items():
     for path in paths:
-        if group == "pooled":
+        if group == "pooled" and "genome-level" in LEVELS:
             MODELS[f"genome-level_{path.stem}.pth"] = path
         if group == "text" and "token-level" in LEVELS:
             MODELS[f"token-level_{path.stem}.pth"] = path
@@ -82,8 +81,8 @@ rule train_sae:
         # TODO: maybe add in the metrics as well?
     params:
         outdir=OUTDIRS["sae"],
-        caches=f"{OUT}/{IN_DATE}/datasets/embedded",
-        pooled=f"{OUT}/{IN_DATE}/datasets/pooled",
+        caches=Path(f"{OUT}/{IN_DATE}/datasets/embedded"),
+        pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
     resources:
         **GPU20,
     log:
