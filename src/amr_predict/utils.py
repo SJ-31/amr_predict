@@ -1152,16 +1152,26 @@ def translate_df(
     return df
 
 
+DSET_TYPES: TypeAlias = Dataset | LinkedDataset | ad.AnnData | pl.DataFrame
+
+
 def with_metadata(
-    dset: Dataset,
+    dset: DSET_TYPES,
     cfg: dict,
     sample_col: str = "sample",
-    meta_options: tuple[str, ...] = ("sequence", "ast", "sample"),
+    meta_options: tuple[str, ...] = ("ast", "sample"),
     align: bool = False,
-) -> Dataset | tuple[Dataset, pl.DataFrame]:
-    merging: pl.DataFrame = pl.DataFrame({sample_col: dset[sample_col][:]})
+) -> DSET_TYPES | tuple[DSET_TYPES, pl.DataFrame]:
+    if isinstance(dset, ad.AnnData):
+        merging: pl.DataFrame = pl.from_pandas(dset.obs)
+    elif isinstance(dset, pl.DataFrame):
+        merging = dset
+    else:
+        merging = pl.DataFrame({sample_col: dset[sample_col][:]})
     for m in meta_options:
         if m == "sequence":
+            # WARNING: this will be a huge many-to-many join, don't use it
+            df = dset
             key = "tests" if cfg["tests"] else "root"
             path = f"{cfg["out"][key]}/{cfg['in_date']}/seq_metadata.csv"
             df = pl.read_csv(path).with_columns(
@@ -1185,7 +1195,13 @@ def with_metadata(
         merging = merging.join(
             df, left_on=sample_col, right_on=key_col, how="left", maintain_order="left"
         )
-    if not align:
+    if not align and isinstance(dset, ad.AnnData):
+        new = dset.copy()
+        new.obs = merging.to_pandas()
+        return new
+    elif not align and isinstance(dset, pl.DataFrame):
+        return merging
+    elif not align:
         to_merge = Dataset.from_polars(merging.drop(sample_col))
         return concatenate_datasets([dset, to_merge], axis=1)
     return dset, merging
