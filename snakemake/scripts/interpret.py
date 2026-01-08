@@ -49,6 +49,9 @@ EMBEDDING_LEVEL: TypeAlias = Literal["sequence-level", "token-level", "genome-le
 TEXT_KEY = "sequence_aa" if EMBEDDING == "esm" else "sequence"
 
 
+logger.info(f"cuda available: {torch.cuda.is_available()} (rule {smk.rule})")
+
+
 def get_level_name(path: Path) -> tuple[EMBEDDING_LEVEL, str]:
     for level in get_args(EMBEDDING_LEVEL):
         if path.stem.startswith(level):
@@ -72,16 +75,68 @@ def get_dataset(
     cache: EmbeddingCache = EmbeddingCache(cache_path)
     dset = cache.to_dataset(
         df=key_df,
-        key_col="sequence",
+        key_col=TEXT_KEY,
         new_col=X_KEY,
         tokens=level != "sequence-level",
     )
     return dset
 
 
-def train_routine(
-    path: Path, level: EMBEDDING_LEVEL, key_df: pl.DataFrame, outdir: Path, dset_name
-):
+def get_model_with_defaults(train_dset):
+    config = smk.config["train_sae"]
+    model_name: str = config["model"]
+    defaults = get_default_cfg()
+    # if smk.config["test"]:
+    #     defaults["device"] = "cpu"
+    defaults.update(smk.config["models"][model_name]["kws"] or {})
+    if train_dset is not None:
+        defaults["act_size"] = next(iter(train_dset))[X_KEY].shape[1]
+        defaults["dict_size"] = defaults["act_size"] * config["expansion_factor"]
+    cfg = ModuleConfig(**defaults)
+    if model_name == "BatchTopK":
+        model = BatchTopK(cfg, x_key=X_KEY)
+    else:
+        raise ValueError("Model name not recognized")
+    return model
+
+
+def save_from_sae(reconstruct: bool = False):
+    for dict_path in smk.input:
+        level, dset_name = get_level_name(Path(dict_path))
+        logger.info(f"Saving for dataset {dset_name}")
+        out_name = dset_name if level == "genome-level" else f"{level}_{dset_name}"
+        out_name = f"recon_{out_name}" if reconstruct else f"sae-act_{out_name}"
+        save_to = smk.params["outdir"] / out_name
+        if str(save_to) not in smk.output:
+            logger.warning(f"ignoring dataset {save_to}")
+            continue
+        dataset: Dataset | LinkedDataset = get_dataset(
+            dset_name, model_name=Path(dict_path).name, level=level, key_df=None
+        )
+        model: L.LightningModule = get_model_with_defaults(dataset)
+        model.load_state_dict(dict_path)
+        if reconstruct:
+            vals: Tensor = model.reconstruct(dataset[X_KEY][:])
+            logger.success("Reconstruction complete")
+        else:
+            vals = model.predict_step(dataset[X_KEY][:])
+            logger.success("Generating activations complete")
+        if isinstance(dataset, LinkedDataset):
+            rec = Dataset.from_polars(dataset.meta)
+        else:
+            rec = dataset.remove_columns(X_KEY)
+        rec.add_column(X_KEY, vals.tolist()).with_format("torch").save_to_disk(save_to)
+
+
+# * Rules
+
+
+def train_sae():
+    level: EMBEDDING_LEVEL = smk.params["level"]
+    path: Path = Path(smk.input[0])
+    wanted_cols = ("sample",)
+    cols = wanted_cols + ("sequence",) if level != "genome-level" else wanted_cols
+    key_df = load_as(path, "polars").select(cols)
     run_params: dict = RCONFIG[level]
     # Don't use all samples for SAE training
     chosen_samples: list = (
@@ -97,9 +152,10 @@ def train_routine(
                 for _, df in tmp.group_by("sample")
             ]
         )
+    dset_name = path.stem
     model_name = f"{level}_{path.stem}.pth"
     dset: Dataset | LinkedDataset = get_dataset(
-        name=path.stem, model_name=model_name, level=level, key_df=subset
+        name=dset_name, model_name=model_name, level=level, key_df=subset
     )
 
     # TODO: review how to train saes
@@ -122,30 +178,10 @@ def train_routine(
     train = DataLoader(dset, **load_kws)
 
     model: L.LightningModule = get_model_with_defaults(train_dset=train)
+    logger.info("Training started")
     trainer.fit(model, train_dataloaders=train)
+    logger.success("Training complete")
     torch.save(model.state_dict(), smk.output[0])
-
-
-# def train_sae():
-#     valid_combs = (
-#         ("pooled", "genome-level"),
-#         ("text", "sequence-level"),
-#         ("text", "token-level"),
-#     )
-#     # Input are either pooled or text datasets
-#     for level in get_args(EMBEDDING_LEVEL):
-#         allow_run = RCONFIG[level]["run"]
-#         logger.debug(f"{group} {level} {allow_run} {(group, level) not in valid_combs}")
-
-#         if (not allow_run) or ((group, level) not in valid_combs):
-#             continue
-#         for path in paths:
-#             keys: pl.Dataframe = load_as(path, "polars").select(cols)
-#             logger.debug(f"Passed {level} {group} {path} {keys.shape}")
-#             # Takes processed datasets as input
-#             train_routine(
-#                 Path(path), level, keys, Path(OUTDIR), dset_name=Path(path).stem
-#             )
 
 
 def reconstruct_datasets():
@@ -231,7 +267,8 @@ def eval_sae():
 
 # * Entry
 
-if not (fn := globals().get(smk.rule)):
-    raise ValueError(f"Function for rule `{smk.rule}` not defined in this file")
-else:
+
+if fn := globals().get(smk.rule):
     fn()
+elif smk.rule.startswith("train_sae"):
+    train_sae()

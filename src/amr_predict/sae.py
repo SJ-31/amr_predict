@@ -62,6 +62,11 @@ class BatchTopK(BaseNN):
             relu_mask = (acts > self.threshold).to(acts.dtype)
             return acts * relu_mask
 
+    def reconstruct(self, X: Tensor) -> Tensor:
+        activations = self.predict_step(X)
+        with torch.no_grad():
+            return activations @ self.m.W_dec + self.m.b_dec
+
     def update_threshold(self, topk_acts: Tensor):
         learning_rate = self.cfg.get("top_k_threshold_lr", 0.01)
         positive_mask = topk_acts > 0

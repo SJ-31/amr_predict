@@ -26,7 +26,7 @@ def default_log(rule_name):
     return f"{LOGDIR}/interpret-{rule_name}.log"
 
 
-OUTDIRS = {"sae": f"{OUT}/{DATE}/sae", "datasets": f"{OUT}/{DATE}"}
+OUTDIRS = {"sae": f"{OUT}/{DATE}/sae", "datasets": f"{OUT}/{DATE}/datasets"}
 DEVICE = config.get("device", "cuda")
 
 dpath = Path(f"{REMOTE}/{IN_DATE}/datasets")
@@ -44,7 +44,6 @@ LEVELS = [
     if config["train_sae"][s]["run"]
 ]
 
-
 MODELS = {}  # Mapping of model file name to the dataset containing the sample metadata
 RECONSTRUCTIONS = {"path": Path(OUTDIRS["datasets"]) / "reconstructed", "list": []}
 ACTIVATIONS = {"path": Path(OUTDIRS["datasets"]) / "sae_activations", "list": []}
@@ -52,13 +51,16 @@ ACTIVATIONS = {"path": Path(OUTDIRS["datasets"]) / "sae_activations", "list": []
 
 def add_sae_saved(level, path):
     if level != "genome-level":
-        RECONSTRUCTIONS["list"].append(RECONSTRUCTIONS["path"] / f"{level}_{path.stem}")
-        ACTIVATIONS["list"].append(ACTIVATIONS["path"] / f"{level}_{path.stem}")
+        RECONSTRUCTIONS["list"].append(
+            RECONSTRUCTIONS["path"] / f"recon_{level}_{path.stem}"
+        )
+        ACTIVATIONS["list"].append(ACTIVATIONS["path"] / f"sae-act_{level}_{path.stem}")
     else:
-        RECONSTRUCTIONS["list"].append(RECONSTRUCTIONS["path"] / path.stem)
-        ACTIVATIONS["list"].append(ACTIVATIONS["path"] / path.stem)
+        RECONSTRUCTIONS["list"].append(RECONSTRUCTIONS["path"] / f"recon_{path.stem}")
+        ACTIVATIONS["list"].append(ACTIVATIONS["path"] / f"sae-act_{path.stem}")
 
 
+# For each dataset, train SAE at different embedding levels
 for group, paths in DATASETS.items():
     for path in paths:
         if group == "pooled" and "genome-level" in LEVELS:
@@ -106,6 +108,7 @@ for i, (mname, dset_path) in enumerate(MODELS.items()):
             pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
         resources:
             **GPU20,
+            # **GPU40,
         log:
             default_log(f"train_sae_{model}"),
         output:
@@ -114,26 +117,43 @@ for i, (mname, dset_path) in enumerate(MODELS.items()):
             "scripts/interpret.py"
 
 
+rule save_activations:
     input:
-        **DATASETS,
-    output:
-        models=rules.all.input.models,
-        # TODO: maybe add in the metrics as well?
+        rules.all.input.models,
     params:
-        outdir=OUTDIRS["sae"],
         caches=Path(f"{OUT}/{IN_DATE}/datasets/embedded"),
+        outdir=ACTIVATIONS["path"],
+        model_dict=MODELS,
         pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
+    output:
+        *directory(ACTIVATIONS["list"]),
+    resources:
+        **GPU20,
+    script:
+        "scripts/interpret.py"
+
+
+rule reconstruct_datasets:
+    input:
+        rules.all.input.models,
+    params:
+        caches=Path(f"{OUT}/{IN_DATE}/datasets/embedded"),
+        model_dict=MODELS,
+        outdir=RECONSTRUCTIONS["path"],
+        pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
+    output:
+        *directory(RECONSTRUCTIONS["list"]),
     resources:
         **GPU20,
     log:
-        default_log("train_sae"),
+        default_log("reconstruct"),
     script:
         "scripts/interpret.py"
 
 
 rule eval_sae:
     input:
-        rules.train_sae.output.models,
+        rules.save_activations.output,
     output:
         latent_summary_data=f"{OUTDIRS['sae']}/latent_summary.csv",
         concept_scoring_data=f"{OUTDIRS['sae']}/concept_scoring.csv",
@@ -141,10 +161,11 @@ rule eval_sae:
         activation_plots=sae_plotting_paths("activation_plots", True),
         umaps=sae_plotting_paths("latent_umap", True),
     params:
-        caches=f"{OUT}/{IN_DATE}/datasets/embedded",
+        caches=Path(f"{OUT}/{IN_DATE}/datasets/embedded"),
         model_dict=MODELS,
         outdir=OUTDIRS["sae"],
-        pooled=f"{OUT}/{IN_DATE}/datasets/pooled",
+        pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
+        seqs=Path(f"{OUT}/{IN_DATE}/datasets/processed_sequences"),
     log:
         default_log("eval_sae"),
     script:
