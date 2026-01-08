@@ -116,7 +116,9 @@ def join_within(
     unwanted = set(initial_join) | {start_col, stop_col}
     wanted_cols = ["index"] + [c for c in right.columns if c not in unwanted]
     left = left.with_row_index()
-    grouped = left.join(right, on=initial_join, how="left").group_by(initial_join)
+    grouped = left.join(
+        right, on=initial_join, how="left", maintain_order="left"
+    ).group_by(initial_join)
     for _, g in grouped:
         # Accept where a sequence in `left` falls completely into a sequence on `right`
         # and vice versa

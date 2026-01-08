@@ -268,6 +268,7 @@ def get_seq_metadata():
 
 def make_text_datasets():
     embedding_method: EMBEDDING_METHODS = CONFIG["embedding"]
+    max_length = 1000
     if embedding_method == "seqLens":
         max_length = 512
     elif embedding_method == "Evo2":
@@ -291,6 +292,8 @@ def make_text_datasets():
                     }
                 )
             elif method == "feature_presence":
+                feature_cols = []
+                anno = None
                 if (source := kws.pop("source", "bakta")) == "bakta":
                     anno = Path(CONFIG["seq_metadata"]["bakta"])
                     feature_cols = ["Gene", "Product"]
@@ -309,7 +312,7 @@ def make_text_datasets():
             sem = SeqEmbedder(method=method, **kws)
             dataset = sem(None)
             dataset.save_to_disk(dataset_path=savepath)
-            logger.success(f"Finished proceessing with {method}")
+            logger.success(f"Finished proccessing with {method}")
         else:
             if (remap_file := CONFIG.get("fasta_remap")) and Path(remap_file).exists():
                 id_remap = dict(read_tabular(remap_file).iter_rows())
