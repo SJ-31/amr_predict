@@ -10,7 +10,7 @@ import polars as pl
 import torch
 import torch.utils.data as td
 from amr_predict.profiling import memray_from_smk
-from amr_predict.utils import EmbeddingCache, load_as, read_tabular, translate_df
+from amr_predict.utils import EmbeddingCache, load_as, read_tabular
 from datasets import Dataset
 from loguru import logger
 from scipy import stats
@@ -24,6 +24,7 @@ from amr_predict.preprocessing import EMBEDDING_METHODS, SeqDataset, SeqEmbedder
 CONFIG: dict = smk.config
 RCONFIG: dict = smk.config.get(smk.rule)
 EMBEDDING: EMBEDDING_METHODS = CONFIG["embedding"]
+TEXT_KEY = "sequence_aa" if EMBEDDING == "esm" else "sequence"
 
 logger.enable("amr_predict")
 logger.add(sink=smk.log["log"])
@@ -33,13 +34,7 @@ logger.add(sink=smk.log["log"])
 
 
 def get_seq_level(text_dset_path, cache) -> td.Dataset:
-    df = load_as(text_dset_path, "polars", ["sample", "sequence"])
-    if EMBEDDING == "esm":
-        df = (
-            translate_df(df, "sequence", "sequence_aa", "random")
-            .drop("sequence")
-            .rename({"sequence_aa": "sequence"})
-        )
+    df = load_as(text_dset_path, "polars", ["sample", TEXT_KEY])
     dset: td.Dataset = cache.to_dataset(df=df, key_col="sequence", new_col="embedding")
     return dset
 
@@ -360,7 +355,7 @@ def make_embedded_datasets():
                     # highly memory-intensive, so don't use it
                     with_tokens=CONFIG["save_tokens"],
                     token_prop=CONFIG["token_prop"],
-                    text_key="sequence",
+                    text_key="sequence",  # ESM will add 'sequence_aa'
                     **kws,
                 ),
             )

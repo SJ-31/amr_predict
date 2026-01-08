@@ -26,9 +26,7 @@ def default_log(rule_name):
     return f"{LOGDIR}/interpret-{rule_name}.log"
 
 
-OUTDIRS = {
-    "sae": f"{OUT}/{DATE}/sae",
-}
+OUTDIRS = {"sae": f"{OUT}/{DATE}/sae", "datasets": f"{OUT}/{DATE}"}
 DEVICE = config.get("device", "cuda")
 
 dpath = Path(f"{REMOTE}/{IN_DATE}/datasets")
@@ -46,15 +44,32 @@ LEVELS = [
     if config["train_sae"][s]["run"]
 ]
 
+
 MODELS = {}  # Mapping of model file name to the dataset containing the sample metadata
+RECONSTRUCTIONS = {"path": Path(OUTDIRS["datasets"]) / "reconstructed", "list": []}
+ACTIVATIONS = {"path": Path(OUTDIRS["datasets"]) / "sae_activations", "list": []}
+
+
+def add_sae_saved(level, path):
+    if level != "genome-level":
+        RECONSTRUCTIONS["list"].append(RECONSTRUCTIONS["path"] / f"{level}_{path.stem}")
+        ACTIVATIONS["list"].append(ACTIVATIONS["path"] / f"{level}_{path.stem}")
+    else:
+        RECONSTRUCTIONS["list"].append(RECONSTRUCTIONS["path"] / path.stem)
+        ACTIVATIONS["list"].append(ACTIVATIONS["path"] / path.stem)
+
+
 for group, paths in DATASETS.items():
     for path in paths:
         if group == "pooled" and "genome-level" in LEVELS:
             MODELS[f"genome-level_{path.stem}.pth"] = path
+            add_sae_saved("genome-level", path)
         if group == "text" and "token-level" in LEVELS:
             MODELS[f"token-level_{path.stem}.pth"] = path
+            add_sae_saved("token-level", path)
         if group == "text" and "sequence-level" in LEVELS:
             MODELS[f"sequence-level_{path.stem}.pth"] = path
+            add_sae_saved("sequence-level", path)
 
 
 def sae_plotting_paths(intermediate, as_dir):
@@ -70,10 +85,35 @@ def sae_plotting_paths(intermediate, as_dir):
 
 rule all:
     input:
+        reconstructions=RECONSTRUCTIONS["list"],
+        activations=ACTIVATIONS["list"],
         models=expand("{o}/models/{m}", o=OUTDIRS["sae"], m=MODELS.keys()),
 
 
-rule train_sae:
+for i, (mname, dset_path) in enumerate(MODELS.items()):
+    level = mname.split("_")[0]
+    model = mname.removesuffix(".pth")
+
+    rule:
+        name:
+            f"train_sae-{model}"
+        input:
+            dset_path,
+        params:
+            level=level,
+            outdir=Path(OUTDIRS["sae"]),
+            caches=Path(f"{OUT}/{IN_DATE}/datasets/embedded"),
+            pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
+        resources:
+            **GPU20,
+        log:
+            default_log(f"train_sae_{model}"),
+        output:
+            f"{OUTDIRS['sae']}/models/{mname}",
+        script:
+            "scripts/interpret.py"
+
+
     input:
         **DATASETS,
     output:

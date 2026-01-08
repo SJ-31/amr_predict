@@ -7,9 +7,7 @@ from typing import Literal, TypeAlias, get_args
 import lightning as L
 import plotnine as gg
 import polars as pl
-import polars.selectors as cs
 import torch
-import umap
 from amr_predict.evaluation import EvalSAE
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
@@ -20,10 +18,9 @@ from amr_predict.utils import (
     load_as,
     with_metadata,
 )
-from datasets import Dataset, DatasetDict
+from datasets import Dataset
 from lightning.pytorch.loggers import WandbLogger
 from loguru import logger
-from sklearn.model_selection import train_test_split
 from torch import Tensor
 from torch.utils.data import DataLoader
 
@@ -34,16 +31,29 @@ except ImportError:
 
 
 logger.enable("amr_predict")
-logger.add(smk.log[0])
+if len(smk.log) == 1:
+    logger.add(smk.log[0])
 
-RCONFIG = smk.config[smk.rule]
+if smk.rule.startswith("train_sae"):
+    RCONFIG = smk.config["train_sae"]
+else:
+    RCONFIG = smk.config.get(smk.rule)
+
 RNG: int = smk.config["rng"]
 EMBEDDING = smk.config["embedding"]
 X_KEY = smk.config["pool_embeddings"]["key"]
 TEST = smk.config["test"]
 SEED = smk.config["rng"]
-OUTDIR = smk.params["outdir"]
-EMBEDDING_LEVEL: TypeAlias = Literal["genome-level", "sequence-level", "token-level"]
+OUTDIR = smk.params.get("outdir")
+EMBEDDING_LEVEL: TypeAlias = Literal["sequence-level", "token-level", "genome-level"]
+TEXT_KEY = "sequence_aa" if EMBEDDING == "esm" else "sequence"
+
+
+def get_level_name(path: Path) -> tuple[EMBEDDING_LEVEL, str]:
+    for level in get_args(EMBEDDING_LEVEL):
+        if path.stem.startswith(level):
+            return level, path.stem.removeprefix(f"{level}_")
+    return "genome-level", path.stem
 
 
 def get_dataset(
@@ -113,106 +123,99 @@ def train_routine(
 
     model: L.LightningModule = get_model_with_defaults(train_dset=train)
     trainer.fit(model, train_dataloaders=train)
-    save_path = outdir / "models" / model_name
-    torch.save(model.state_dict(), save_path)
+    torch.save(model.state_dict(), smk.output[0])
 
 
-def get_model_with_defaults(train_dset):
-    model_name: str = RCONFIG["model"]
-    defaults = get_default_cfg()
-    if smk.config["test"]:
-        defaults["device"] = "cpu"
-    defaults.update(smk.config["models"][model_name]["kws"] or {})
-    if train_dset is not None:
-        defaults["act_size"] = next(iter(train_dset))[X_KEY].shape[1]
-        defaults["dict_size"] = defaults["act_size"] * RCONFIG["expansion_factor"]
-    cfg = ModuleConfig(**defaults)
-    if model_name == "BatchTopK":
-        model = BatchTopK(cfg, x_key=X_KEY)
-    return model
+# def train_sae():
+#     valid_combs = (
+#         ("pooled", "genome-level"),
+#         ("text", "sequence-level"),
+#         ("text", "token-level"),
+#     )
+#     # Input are either pooled or text datasets
+#     for level in get_args(EMBEDDING_LEVEL):
+#         allow_run = RCONFIG[level]["run"]
+#         logger.debug(f"{group} {level} {allow_run} {(group, level) not in valid_combs}")
+
+#         if (not allow_run) or ((group, level) not in valid_combs):
+#             continue
+#         for path in paths:
+#             keys: pl.Dataframe = load_as(path, "polars").select(cols)
+#             logger.debug(f"Passed {level} {group} {path} {keys.shape}")
+#             # Takes processed datasets as input
+#             train_routine(
+#                 Path(path), level, keys, Path(OUTDIR), dset_name=Path(path).stem
+#             )
 
 
-# * Rules
+def reconstruct_datasets():
+    save_from_sae(True)
 
 
-def train_sae():
-    wanted_cols = ("sample",)
-    valid_combs = (
-        ("pooled", "genome-level"),
-        ("text", "sequence-level"),
-        ("text", "token-level"),
-    )
-    for group, paths in smk.input.items():  # Input are either pooled or text datasets
-        for level in get_args(EMBEDDING_LEVEL):
-            allow_run = RCONFIG[level]["run"]
-            logger.debug(
-                f"{group} {level} {allow_run} {(group, level) not in valid_combs}"
-            )
-
-            if (not allow_run) or ((group, level) not in valid_combs):
-                continue
-            cols = wanted_cols + ("sequence",) if group != "pooled" else wanted_cols
-            for path in paths:
-                keys: pl.Dataframe = load_as(path, "polars").select(cols)
-                logger.debug(f"Passed {level} {group} {path} {keys.shape}")
-                # Takes processed datasets as input
-                train_routine(
-                    Path(path), level, keys, Path(OUTDIR), dset_name=Path(path).stem
-                )
+def save_activations():
+    save_from_sae(False)
 
 
 def eval_sae():
     latent_summary = {"type": [], "dataset": [], "count": [], "activation_source": []}
     concept_scoring = []
-    for dict_path in smk.input:
+    # TODO: refactor this to use the saved activations
+    for acts_path in smk.input:
         level: EMBEDDING_LEVEL
-        level, dset_name = Path(dict_path).stem.split("_", 1)
-        model: L.LightningModule = get_model_with_defaults()
-        model.load_state_dict(dict_path)
-        dataset: Dataset = get_dataset(
-            dset_name, model_name=Path(dict_path).name, level=level, key_df=None
-        )
-        meta: pl.DataFrame
-        meta_cols = ["sample"]
-        meta_cols = ("sample",) if level == "genome-level" else ("sample", "sequence")
-        dataset, meta = with_metadata(dataset, smk.config, meta_cols, align=True)
+        level, dset_name = get_level_name(acts_path)
+
         concepts: Sequence = RCONFIG["concept_cols"][level]
+        meta_cols = ("sample", "ast")
+        if level == "sequence-level":
+            meta_cols = meta_cols + ("sequence",)
 
         # Retrieves the full dataset
         for group, from_sae in zip(("sae", "model_raw"), (True, False)):
-            acts: Tensor = (
-                model.predict_step(dataset[X_KEY][:]) if from_sae else dataset[X_KEY][:]
-            )
-            latent_cats: dict = categorize_latents(acts)
+            meta: pl.DataFrame
+            if group == "sae":
+                dataset: Dataset = load_as(acts_path)
+            else:
+                dataset = load_as(smk.params["seqs"] / dset_name)
+            dataset, meta = with_metadata(dataset, smk.config, meta_cols, align=True)
+            SE: EvalSAE = EvalSAE(dataset[X_KEY][:])
+            latent_cats: dict = SE.categorize_latents()
             for ltype in ["dead", "dense", "sparse"]:
                 latent_summary["type"].append(ltype)
                 latent_summary["count"].append(len(latent_cats[ltype]))
                 latent_summary["dataset"].append(dset_name)
                 latent_summary["activation_source"].append(group)
 
-            # TODO: consider some preprocessing on concept cols to collapse them into a single
-            # label column. Otherwise, gonna have to look at overlapping label columns that
-            # you need to reconcile...
+            # NOTE: some preprocessing on concept cols to collapse them into a single
+            # label column. would be ideal, but not possible because it would just create
+            # so many specific cases. Or is this a good thing?
             topk_plot = RCONFIG["activation_density_topk"]
+            SE.umap(False, **RCONFIG["umap"])
+            latent_clusters: pl.DataFrame = SE.cluster_latents(False)
             for concept in concepts:
                 best_latents: pl.DataFrame = (
-                    score_latents(acts, labels=meta[concept])
+                    SE.score_latents(labels=meta[concept])
                     .sort("max_activation_prop", descending=True)
                     .with_columns(
                         pl.lit(concept).alias("concept"),
-                        pl.lit(dataset).alias("dataset"),
+                        pl.lit(dset_name).alias("dataset"),
                         pl.lit(group).alias("activation_source"),
                     )
+                    .join(latent_clusters, on="latent_idx")
                 )
                 concept_scoring.append(best_latents)
                 for idx in best_latents["latent_idx"][:topk_plot]:
-                    plots: dict = plot_activation_density(acts, idx, meta, [concept])
+                    plots: dict = SE.plot_activation_density(idx, meta, [concept])
                     for k, v in plots.items():
                         v: gg.ggplot
                         savepath = (
-                            f"{OUTDIR}/activation_plots/{dataset}/{k}_{group}.png"
+                            f"{OUTDIR}/activation_plots/{dset_name}/{k}_{group}.png"
                         )
                         v.save(savepath)
+                u_savepath = f"{OUTDIR}/latent_umap/{dset_name}/{concept}.png"
+                SE.plot_umap(labels=meta[concept]).figure.savefig(u_savepath)
+    # TODO: should look into using a concept to guide clustering
+    # TODO: add a routine here that checks whether a latent does multiple concepts,
+    # can do this after aggregating them all, grouping by idx, dataset etc.
 
     summary_df = pl.DataFrame(latent_summary)
     summary_plot = (
