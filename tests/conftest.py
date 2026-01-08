@@ -23,6 +23,14 @@ def env():
 
 
 @pytest.fixture
+def keys(env):
+    return (
+        env["pool_embeddings"]["key"],
+        env["pool_embeddings"]["sample_key"],
+    )
+
+
+@pytest.fixture
 def rng(env):
     return np.random.default_rng(env["rng"])
 

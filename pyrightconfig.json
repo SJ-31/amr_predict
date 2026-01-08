@@ -6,7 +6,6 @@
     "reportPrivateUsage": false,
     "reportOptionalMemberAccess": false,
     "reportAssignmentType": false,
-    "reportUnusedCallResult": false,
     "reportCallIssue": false,
     "reportIncompleteStub": false,
     "reportConstantRedefinition": false,
@@ -20,8 +19,6 @@
     "reportMissingParameterType": false,
     "reportMissingTypeStubs": false,
     "reportUntypedFunctionDecorator": false,
-    "reportUnboundVariable": false,
-    "reportUnnecessaryIsInstance": false,
     "extraPaths": [
         "/home/shannc/Bio_SDD/miniforge3/envs/amr_predict/lib/python3.12/site-packages",
         "src"

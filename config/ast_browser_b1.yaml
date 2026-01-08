@@ -1,4 +1,4 @@
-# [2025-12-29 Mon] Currently set up for batch 1
+# [2025-12-29 Mon] Currently set up for batch 1. Run for the other four batches when it's done (or make configs for them)
 pool_embeddings:
   methods:
     - method: mean

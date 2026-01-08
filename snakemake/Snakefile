@@ -41,7 +41,12 @@ if TEST:
         "partition": "gpu",
         "mem": "10G",
     }
-    GPU40 = {}
+    GPU40 = {
+        "mem": "15G",
+        "qos": "gpu40gh",
+        "gres": "gpu:7g.40gb:1",
+        "partition": "gpu",
+    }
     BIG_MEM = {}
 else:
     GPU20 = {
