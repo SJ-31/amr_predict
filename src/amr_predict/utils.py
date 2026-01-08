@@ -1161,25 +1161,32 @@ def with_metadata(
     dset: DSET_TYPES,
     cfg: dict,
     sample_col: str = "sample",
-    meta_options: tuple[str, ...] = ("ast", "sample"),
+    meta_options: tuple[str, ...] = ("ast", "sample", "sequence"),
     align: bool = False,
+    dset_name: str | None = None,
 ) -> DSET_TYPES | tuple[DSET_TYPES, pl.DataFrame]:
     if isinstance(dset, ad.AnnData):
         merging: pl.DataFrame = pl.from_pandas(dset.obs)
     elif isinstance(dset, pl.DataFrame):
         merging = dset
     else:
-        merging = pl.DataFrame({sample_col: dset[sample_col][:]})
+        to_df = {sample_col: dset[sample_col][:]}
+        if "sequence" in meta_options:
+            to_df["uid"] = dset["uid"][:]
+        merging = pl.DataFrame(to_df)
     for m in meta_options:
-        if m == "sequence":
-            # WARNING: this will be a huge many-to-many join, don't use it
+        if m == "sequence" and not dset_name:
+            raise ValueError(
+                "dataset name must be provided if requesting sequence metadata"
+            )
+        elif m == "sequence":
             df = dset
             key = "tests" if cfg["tests"] else "root"
-            path = f"{cfg["out"][key]}/{cfg['in_date']}/seq_metadata.csv"
-            df = pl.read_csv(path).with_columns(
+            path = f"{cfg["out"][key]}/{cfg['in_date']}/processed_sequences/{dset_name}"
+            df = load_as(path, "polars").with_columns(
                 pl.any_horizontal(cs.contains("gene").is_not_null()).alias("in_gene")
             )
-            key_col = "sample"
+            key_col = "uid"
         elif m in {"ast", "sample"}:
             df = read_tabular(cfg[f"{m}_metadata"]["file"]).with_columns(
                 pl.any_horizontal(cs.ends_with("_class") == "resistant").alias(

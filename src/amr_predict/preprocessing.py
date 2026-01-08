@@ -49,7 +49,7 @@ class SeqEmbedder:
         self,
         method: EMBEDDING_METHODS = "seqLens",
         workdir: Path | None = None,
-        with_tokens: bool = True,
+        with_tokens: bool = False,
         save_interval: int = 10,
         only_cache: bool = True,
         token_prop: float | None = None,
