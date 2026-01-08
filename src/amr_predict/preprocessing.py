@@ -6,7 +6,6 @@ import math
 import os
 import uuid
 from collections.abc import Sequence
-from math import ceil
 from pathlib import Path
 from subprocess import run
 from tempfile import TemporaryDirectory
@@ -717,6 +716,7 @@ class SeqPreprocessor:
 
     def _sample_dict(self, sample, record: DNA, **kwargs) -> dict:
         """Boilerplate to create sequence entry for generator"""
+        required = {"start", "stop", "seqindex"}
         val = {
             "sample": sample,
             "seqid": record.metadata["id"],
@@ -724,6 +724,11 @@ class SeqPreprocessor:
             "description": record.metadata["description"],
         }
         val.update(kwargs)
+        if (required & val.keys()) != required:
+            raise ValueError(
+                f"The following keys must be passed in _sample_dict: {required}"
+            )
+        val["uid"] = f"{sample}_{val['seqid']}:{val['start']}-{val['stop']}"
         return val
 
     def _process_record(
@@ -835,7 +840,10 @@ class SeqPreprocessor:
         return record[start_idx:stop_idx], (start_idx, stop_idx)
 
     def gen(self):
-        """Return generator object, for use with Datasets.from_generator"""
+        """Return generator object, for use with Datasets.from_generator
+        Every dict produced by the generator has at least the following keys:
+        [sample, seqid, sequence, description, seqindex]
+        """
         for fasta in self.fastas:
             id = fasta.stem
             if (self.id_remap is not None) and ((id := self.id_remap.get(id)) is None):
