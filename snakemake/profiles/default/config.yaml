@@ -1,7 +1,7 @@
 cores: 1
+jobs: 10
+executor: slurm
 default-resources:
-  executor: slurm
-  jobs: 10
   mem: 30G
   qos: cpu24h
 rerun-triggers: mtime

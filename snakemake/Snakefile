@@ -21,6 +21,9 @@ if "--profile" in sys.argv:
 if (Path(PROFILE).exists() and Path(PROFILE).stem == "test") or PROFILE == "test":
     TEST = config["test"] = True
     print("INFO: Inferring test run from profile name...")
+if TEST:
+    print("INFO: test run")
+
 
 RAW = config["data"]["raw"]
 PROCESSED = config["data"]["processed"] if not TEST else config["out"]["tests"]
@@ -38,14 +41,14 @@ if TEST:
     GPU20 = {
         "qos": "gpu20gh",
         "gres": "gpu:3g.20gb:1",
-        "partition": "gpu",
+        "slurm_partition": "gpu",
         "mem": "10G",
     }
     GPU40 = {
         "mem": "15G",
         "qos": "gpu40gh",
         "gres": "gpu:7g.40gb:1",
-        "partition": "gpu",
+        "slurm_partition": "gpu",
     }
     BIG_MEM = {}
 else:
@@ -53,12 +56,12 @@ else:
         "mem": "30G",
         "qos": "gpu20gh",
         "gres": "gpu:3g.20gb:1",
-        "partition": "gpu",
+        "slurm_partition": "gpu",
     }
     BIG_MEM = {"mem": "70G"}
     GPU40 = {
         "mem": "64G",
         "qos": "gpu40gh",
         "gres": "gpu:7g.40gb:1",
-        "partition": "gpu",
+        "slurm_partition": "gpu",
     }
