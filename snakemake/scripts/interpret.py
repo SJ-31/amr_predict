@@ -206,10 +206,11 @@ def eval_sae():
     latent_summary = {"type": [], "dataset": [], "count": [], "activation_source": []}
     concept_scoring = []
     # TODO: refactor this to use the saved activations
-    for acts_path in smk.input:
+    for acts_path in (Path(ap) for ap in smk.input):
         level: EMBEDDING_LEVEL
         level, dset_name = get_level_name(acts_path)
 
+        logger.debug(f"dataset name: {dset_name}")
         concepts: Sequence = RCONFIG["concept_cols"][level]
         meta_cols = ("sample", "ast")
         if level == "sequence-level":
@@ -231,35 +232,53 @@ def eval_sae():
                 latent_summary["dataset"].append(dset_name)
                 latent_summary["activation_source"].append(group)
 
+            umap_outdir = Path(f"{OUTDIR}/latent_umap/{dset_name}")
+            umap_outdir.mkdir(exist_ok=True)
+            act_outdir = Path(f"{OUTDIR}/activation_plots/{dset_name}")
+            act_outdir.mkdir(exist_ok=True)
             # NOTE: some preprocessing on concept cols to collapse them into a single
             # label column. would be ideal, but not possible because it would just create
             # so many specific cases. Or is this a good thing?
             topk_plot = RCONFIG["activation_density_topk"]
-            SE.drop_latents(drop_dead=True, include_samples=True, inplace=True)
+            SE.drop_latents(drop_dead=True, inplace=True)
             SE.umap(False, **RCONFIG["umap"])
+            logger.debug(f"shape of latent df {SE.acts.shape}")
             latent_clusters: pl.DataFrame = SE.cluster_latents(False)
             for concept in concepts:
                 best_latents: pl.DataFrame = (
                     SE.score_latents(labels=meta[concept])
-                    .sort("max_activation_prop", descending=True)
                     .with_columns(
                         pl.lit(concept).alias("concept"),
                         pl.lit(dset_name).alias("dataset"),
                         pl.lit(group).alias("activation_source"),
                     )
                     .join(latent_clusters, on="latent_idx")
+                    .join(  # Align for UMAP plot
+                        pl.DataFrame({"latent_idx": SE.acts.columns}),
+                        on="latent_idx",
+                        how="right",
+                        maintain_order="right",
+                    )
                 )
                 concept_scoring.append(best_latents)
-                for idx in best_latents["latent_idx"][:topk_plot]:
+                for idx in best_latents.sort("max_activation_prop", descending=True)[
+                    "latent_idx"
+                ][:topk_plot]:
                     plots: dict = SE.plot_activation_density(idx, meta, [concept])
                     for k, v in plots.items():
-                        v: gg.ggplot
-                        savepath = (
-                            f"{OUTDIR}/activation_plots/{dset_name}/{k}_{group}.png"
-                        )
-                        v.save(savepath)
-                u_savepath = f"{OUTDIR}/latent_umap/{dset_name}/{concept}.png"
-                SE.plot_umap(labels=meta[concept]).figure.savefig(u_savepath)
+                        try:
+                            v: gg.ggplot
+                            v.save(act_outdir / f"{level}_{k}_{group}.png")
+                        except Exception as e:
+                            logger.warning(f"""
+                            Failed to produce plot for combination of {k} {group}
+                            Exception: {e}
+                            """)
+                labels = best_latents["label_max"]
+                logger.debug(f"label shape: {len(meta[concept])}")
+                SE.plot_umap(labels=labels).figure.savefig(
+                    umap_outdir / f"{level}_{concept}.png"
+                )
     # TODO: should look into using a concept to guide clustering
     # TODO: add a routine here that checks whether a latent does multiple concepts,
     # can do this after aggregating them all, grouping by idx, dataset etc.
