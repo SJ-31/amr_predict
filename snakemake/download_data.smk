@@ -77,3 +77,12 @@ rule get_biosample_mapping:
 #     output:
 #         scc,
 #     run:
+#         import os
+#         from subprocess import run
+#         df = pd.read_csv(input[0], sep="\t")
+#         tracker = {"Run": [], "BioSample": [], "Success": []}
+#         for bsample, run in zip(df["BioSample"], df["Run"]):
+#             cur = Path(f"{fastq_outdir}/{bsample}")
+#             if not cur.exists():
+#                 run(f"prefetch {run} -O {cur}", shell=True)
+#                 run(f"fasterq ./{run}", shell=True)
