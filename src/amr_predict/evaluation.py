@@ -313,17 +313,21 @@ class EvalSAE:
         self.acts = dropped
 
     def categorize_latents(
-        self, dense_threshold: float = 1 / 10, save: bool = False
+        self,
+        dense_threshold: float = 1 / 10,
+        save: bool = False,
+        active_threshold: float = 0.0,
     ) -> dict[str, list | pl.Series]:
         """Helper function to flag dead and dense latents by their activation values"""
         result = {}
         frac_active = ((self.acts > 0).sum() / self.acts.height).unpivot(
             variable_name="latent_idx", value_name="frac_active"
         )
-        result["dead"] = frac_active.filter(pl.col("frac_active") == 0)
+        result["dead"] = frac_active.filter(pl.col("frac_active") <= active_threshold)
         result["dense"] = frac_active.filter(pl.col("frac_active") > dense_threshold)
         rest = frac_active.filter(
-            (pl.col("frac_active") > 0) & (pl.col("frac_active") <= dense_threshold)
+            (pl.col("frac_active") > active_threshold)
+            & (pl.col("frac_active") <= dense_threshold)
         )
         result["sparse"] = rest
         result["sparse_df"] = self.acts.select(rest["latent_idx"].to_list())
