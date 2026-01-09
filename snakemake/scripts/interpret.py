@@ -141,7 +141,7 @@ def train_sae():
     level: EMBEDDING_LEVEL = smk.params["level"]
     path: Path = Path(smk.input[0])
     wanted_cols = ("sample",)
-    cols = wanted_cols + ("sequence",) if level != "genome-level" else wanted_cols
+    cols = wanted_cols + (TEXT_KEY,) if level != "genome-level" else wanted_cols
     key_df = load_as(path, "polars").select(cols)
     run_params: dict = RCONFIG[level]
     # Don't use all samples for SAE training
@@ -179,7 +179,8 @@ def train_sae():
     train_kws = RCONFIG["trainer"]
     train_kws.update(run_params.get("trainer", {}) or {})
     run_name = f"train_sae:{level}_{dset_name}{"-test" if TEST else ""}"
-    train_kws["logger"] = WandbLogger(run_name, project="amr_predict")
+    if smk.config["log_wandb"]:
+        train_kws["logger"] = WandbLogger(run_name, project="amr_predict")
     trainer = L.Trainer(**train_kws)
     train = DataLoader(dset, **load_kws)
 
