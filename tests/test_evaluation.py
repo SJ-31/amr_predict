@@ -3,11 +3,13 @@
 import copy
 from pathlib import Path
 
+import lightning as L
 import numpy as np
 import pytest
 import torch
 from amr_predict.evaluation import EvalSAE, Evaluator, make_control_task, max_by_label
-from amr_predict.models import Baseline
+from amr_predict.metrics import multitask_all_cls
+from amr_predict.models import MLP, Baseline
 from amr_predict.utils import (
     ModuleConfig,
     Preprocessor,
@@ -20,6 +22,7 @@ from amr_predict.utils import (
 from datasets import Dataset
 from loguru import logger
 from pyhere import here
+from torch.utils.data import DataLoader
 from xgboost import XGBClassifier, XGBRegressor
 
 REMOTE = here("data", "remote")
@@ -72,6 +75,44 @@ def test_add_ctrl(toy_dset, env):
         dset, target_task="amr_class", control_col="species", add=True, added_name="foo"
     )
     assert list(dset["foo"][:]) != old_target
+
+
+def test_mlp_cls():
+    dset = load_as(
+        here("results", "tests", "esm_test", "datasets", "pooled", "orf_only-esm-mean")
+    ).with_format("torch")
+    task_names = ["amikacin_class", "gentamicin_class"]
+    for t in task_names:
+        dset = dset.add_column(
+            t, np.random.choice(["R", "I", "S"], dset.shape[0], replace=True)
+        )
+    in_features, n_classes = data_spec(dset, y=task_names, x_key="x")
+    mconf = ModuleConfig(
+        task_type="classification",
+        n_tasks=len(task_names),
+        task_names=task_names,
+        n_classes=n_classes,
+        record_metrics=True,
+    )
+    dset, _ = encode_strs(dset, task_names)
+    dset = dset.select_columns(["x"] + task_names)
+    model = MLP(
+        in_features=in_features, cfg=mconf, num_layers=2, x_key="x", hidden_dim=50
+    )
+    trainer = L.Trainer(max_epochs=20)
+    loader = DataLoader(dset, batch_size=5)
+
+    # Simple test of overfitting to train
+    trainer.fit(model, train_dataloaders=loader)
+    y_pred = model.predict_proba(dset)
+    y_true = dset.to_polars().select(task_names).to_torch()
+    metrics = multitask_all_cls(
+        y_pred,
+        y_true,
+        n_classes=model.cfg.n_classes,
+        task_names=task_names,
+    )
+    print(metrics)
 
 
 @pytest.mark.skip(reason="passed")
