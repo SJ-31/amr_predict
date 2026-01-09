@@ -102,9 +102,10 @@ class SeqPooler:
                 how="left",
                 maintain_order="left",
             )
+        if self.embedding_key in obs.columns:
+            obs = obs.drop(self.embedding_key)
         obs = (
-            obs.drop(self.embedding_key)
-            .pipe(self._add_encoded)
+            obs.pipe(self._add_encoded)
             .group_by("encoded")
             .agg(pl.col(self.obs_keep + [self.sample_key]).first())
             .sort("encoded", descending=False)
@@ -166,8 +167,11 @@ class StaticPooler(SeqPooler):
         )
         self.method: STATIC_POOLING_METHODS = method
 
-    def __call__(self, dataset: Dataset | Path | str) -> Dataset:
-        d: Dataset = load_as(dataset) if not isinstance(dataset, Dataset) else dataset
+    def __call__(self, dataset: LinkedDataset | Dataset | Path | str) -> Dataset:
+        if isinstance(dataset, Path) or isinstance(dataset, str):
+            d = load_as(dataset)
+        else:
+            d: LinkedDataset | Dataset = dataset
         if self.whitelist_col is not None and self.feature_whitelist:
             d = self.apply_whitelist(d)
         self.encoder.fit(d[self.sample_key][:])

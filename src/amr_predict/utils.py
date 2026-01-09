@@ -985,21 +985,31 @@ class LinkedDataset(td.Dataset):
             text_key=self.text_key,
         )
 
-    def select_columns(self, columns: Sequence) -> LinkedDataset:
+    def _modify_columns(self, columns: Sequence, keep: bool) -> LinkedDataset:
         if isinstance(columns, str):
             columns = [columns]
         elif not isinstance(columns, list):
             columns = list(columns)
-        if self.text_key not in columns:
+        if keep and self.text_key not in columns:
             columns.append(self.text_key)
         columns = [c for c in columns if c != self.x_key]
-        return LinkedDataset(
-            meta=self.meta.select(columns),
-            cache=self.cache,
-            x_key=self.x_key,
-            text_key=self.text_key,
-            token_level=self.token_level,
-        )
+        kws = {
+            "cache": self.cache,
+            "x_key": self.x_key,
+            "text_key": self.text_key,
+            "token_level": self.token_level,
+        }
+        if keep:
+            kws["meta"] = self.meta.select(columns)
+        else:
+            kws["meta"] = self.meta.drop(columns)
+        return LinkedDataset(**kws)
+
+    def select_columns(self, columns: Sequence) -> LinkedDataset:
+        return self._modify_columns(columns, True)
+
+    def remove_columns(self, columns: Sequence) -> LinkedDataset:
+        return self._modify_columns(columns, False)
 
     def filter(self, fn: Callable) -> LinkedDataset:
         return LinkedDataset(
