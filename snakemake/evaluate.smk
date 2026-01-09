@@ -11,10 +11,10 @@ IN = Path(f"{REMOTE}/{IN_DATE}/datasets")
 OUTDIRS = {
     "cv": f"{OUT}/{DATE}/evaluation/cv",
     "holdout": f"{OUT}/{DATE}/evaluation/holdout",
-    "cv_ctrl": f"{OUT}/{DATE}/evaluation/cv_control",
+    "cv_ctrl": f"{OUT}/{DATE}/evaluation/cv_ctrl",
 }
 DEVICE = config.get("device", "cuda")
-DATASETS = list(IN / "pooled").iterdir()
+DATASETS = list((IN / "pooled").iterdir())
 for sae_data in ("reconstructed", "sae_activations"):
     sd_path = IN / sae_data
     if sd_path.exists():
@@ -26,7 +26,7 @@ def default_log(rule_name):
 
 
 if TEST:
-    DEVICE = "cpu"
+    # DEVICE = "cpu"
     config["tasks"]["regression"] = ["AMK", "GEN"]
     # config["tasks"]["classification"] = ["IPM_class", "GEN_class"]
     config["cross_validate"]["k_fold"]["n_splits"] = 2
@@ -59,28 +59,16 @@ all_results = expand(
     t=["regression", "classification"],
 )
 
-cv_results = list(filter(lambda x: x.startswith(OUTDIRS["cv"]), all_results))
-cv_ctrl_results = list(filter(lambda x: x.startswith(OUTDIRS["cv_ctrl"]), all_results))
-holdout_results = list(filter(lambda x: x.startswith(OUTDIRS["holdout"]), all_results))
+RESULTS = {}
+for k, v in OUTDIRS.items():
+    RESULTS[k] = {}
+    for task in ("regression", "classification"):
+        RESULTS[k][f"{k}_{task[0]}"] = list(
+            filter(
+                lambda x: x.startswith(v) and x.endswith(f"_{task}.csv"), all_results
+            )
+        )
 
-RESULTS = {
-    "cv": {
-        "cv_r": list(filter(lambda x: x.endswith("_regression.csv"), cv_results)),
-        "cv_c": list(filter(lambda x: x.endswith("_classification.csv"), cv_results)),
-    },
-    "cv_ctrl": {
-        "cv_r": list(filter(lambda x: x.endswith("_regression.csv"), cv_results)),
-        "cv_c": list(filter(lambda x: x.endswith("_classification.csv"), cv_results)),
-    },
-    "holdout": {
-        "holdout_r": list(
-            filter(lambda x: x.endswith("_regression.csv"), holdout_results)
-        ),
-        "holdout_c": list(
-            filter(lambda x: x.endswith("_classification.csv"), holdout_results)
-        ),
-    },
-}
 
 if TEST:
     del RESULTS["cv"]["cv_c"]
