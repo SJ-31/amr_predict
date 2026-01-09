@@ -43,6 +43,7 @@ RNG: int = smk.config["rng"]
 GEN: Generator = np.random.default_rng(seed=RNG)
 EMBEDDING = smk.config["embedding"]
 X_KEY = smk.config["pool_embeddings"]["key"]
+TEXT_KEY = "sequence_aa" if EMBEDDING == "esm" else "sequence"
 
 logger.enable("amr_predict")
 logger.add(smk.log[0])
@@ -466,7 +467,7 @@ def _compare(is_embeddings: bool = True):
         if is_embeddings:
             cache_path = smk.params["caches"] / f"{dir.stem}_{EMBEDDING}_cache"
             cache: EmbeddingCache = EmbeddingCache(cache_path)
-            dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), "sequence")
+            dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), TEXT_KEY)
             adata = ad.AnnData(X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas())
         else:
             adata = load_as(dir, "adata", x_key=X_KEY)

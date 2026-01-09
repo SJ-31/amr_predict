@@ -35,7 +35,7 @@ logger.add(sink=smk.log["log"])
 
 def get_seq_level(text_dset_path, cache) -> td.Dataset:
     df = load_as(text_dset_path, "polars", ["sample", TEXT_KEY])
-    dset: td.Dataset = cache.to_dataset(df=df, key_col="sequence", new_col="embedding")
+    dset: td.Dataset = cache.to_dataset(df=df, key_col=TEXT_KEY, new_col="embedding")
     return dset
 
 
