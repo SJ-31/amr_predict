@@ -80,14 +80,23 @@ def sae_plotting_paths(intermediate, as_dir):
     return ex
 
 
+SAE_EVALS = {
+    "latent_summary_data": f"{OUTDIRS['sae']}/latent_summary.csv",
+    "concept_scoring_data": f"{OUTDIRS['sae']}/concept_scoring.csv",
+    "latent_summary_plot": f"{OUTDIRS['sae']}/latent_summary.png",
+}
+
 # * Rules
 
 
 rule all:
     input:
+        **SAE_EVALS,
         reconstructions=RECONSTRUCTIONS["list"],
         activations=ACTIVATIONS["list"],
         models=expand("{o}/models/{m}", o=OUTDIRS["sae"], m=MODELS.keys()),
+        activation_plots=sae_plotting_paths("activation_plots", False),
+        umaps=sae_plotting_paths("latent_umap", False),
 
 
 for i, (mname, dset_path) in enumerate(MODELS.items()):
@@ -155,9 +164,7 @@ rule eval_sae:
     input:
         rules.save_activations.output,
     output:
-        latent_summary_data=f"{OUTDIRS['sae']}/latent_summary.csv",
-        concept_scoring_data=f"{OUTDIRS['sae']}/concept_scoring.csv",
-        latent_summary_plot=f"{OUTDIRS['sae']}/latent_summary.png",
+        **SAE_EVALS,
         activation_plots=sae_plotting_paths("activation_plots", True),
         umaps=sae_plotting_paths("latent_umap", True),
     params:

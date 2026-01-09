@@ -27,8 +27,8 @@ def default_log(rule_name):
 
 if TEST:
     # DEVICE = "cpu"
-    config["tasks"]["regression"] = ["AMK", "GEN"]
-    # config["tasks"]["classification"] = ["IPM_class", "GEN_class"]
+    config["tasks"]["regression"] = ["amikacin", "gentamicin"]
+    config["tasks"]["classification"] = ["amikacin_class", "gentamicin_class"]
     config["cross_validate"]["k_fold"]["n_splits"] = 2
     config["cross_validate"]["models"] = ["baseline", "mlp"]
     config["dataloader"]["batch_size"] = 20
