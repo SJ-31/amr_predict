@@ -17,7 +17,6 @@ if TEST:
     config["train_sae"]["genome-level"]["n"] = 9
     config["train_sae"]["expansion_factor"] = 3
     config["train_sae"]["trainer"]["max_epochs"] = 3
-    config["embedding"] = "seqLens"
     config["train_sae"]["dataloader"]["batch_size"] = 3
 
 

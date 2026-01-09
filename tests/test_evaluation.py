@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from amr_predict.evaluation import Evaluator, make_control_task, max_by_label
+from amr_predict.evaluation import EvalSAE, Evaluator, make_control_task, max_by_label
 from amr_predict.models import Baseline
 from amr_predict.utils import (
     ModuleConfig,
@@ -116,6 +116,24 @@ def test_max_by_lab():
         ans
         == torch.tensor([[0.9, 0.8], [0.9, 0.3], [0.9, 0.7], [0.3, 0.8], [0.3, 0.9]])
     ).all()
+
+
+def test_score_latents():
+    acts = torch.tensor(
+        [
+            [0.1, 0.9, 0.2, 0.3, 0.1],
+            [0.2, 0.3, 0.9, 0.0, 0.3],
+            [0.9, 0.2, 0.3, 0.1, 0.1],
+            [0.2, 0.1, 0.3, 0.8, 0.2],
+            [0.8, 0.2, 0.1, 0.2, 0.9],
+            [0.3, 0.3, 0.7, 0.1, 0.3],
+        ]
+    )
+    labels = ["A", "A", "A", "B", "B", "B"]
+    eval = EvalSAE(acts)
+    scores = eval.score_latents(labels, active_threshold=0.2)
+    assert scores["label_max"].to_list() == ["B", "A", "A", "B", "B"]
+    assert scores["sensitivity"].to_list() == [2 / 3, 2 / 3, 2 / 3, 1 / 3, 2 / 3]
 
 
 def test_pp(tmp_path):
