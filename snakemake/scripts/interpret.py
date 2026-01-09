@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal, TypeAlias, get_args
+from typing import Any, Literal, TypeAlias, get_args
 
 import lightning as L
 import plotnine as gg
@@ -68,7 +68,9 @@ def get_dataset(
     if key_df is None:
         key_df = load_as(smk.params["model_dict"][model_name], "polars")
     if level == "genome-level":
-        dset: Dataset = load_as(smk.params["pooled"].joinpath(name))
+        dset: Dataset = load_as(smk.params["pooled"].joinpath(name)).with_format(
+            "torch"
+        )
         dset = dset.filter(lambda x: x["sample"] in key_df["sample"])
         return dset
     cache_path = smk.params["caches"].joinpath(f"{name}_{EMBEDDING}_cache")
@@ -82,15 +84,19 @@ def get_dataset(
     return dset
 
 
-def get_model_with_defaults(train_dset):
+def get_model_with_defaults(train_dset: Dataset | Any):
     config = smk.config["train_sae"]
     model_name: str = config["model"]
     defaults = get_default_cfg()
-    # if smk.config["test"]:
-    #     defaults["device"] = "cpu"
+    if not torch.cuda.is_available():
+        logger.warning("CUDA not available, falling back to cpu")
+        defaults["device"] = "cpu"
     defaults.update(smk.config["models"][model_name]["kws"] or {})
     if train_dset is not None:
-        defaults["act_size"] = next(iter(train_dset))[X_KEY].shape[1]
+        if isinstance(train_dset, Dataset):
+            defaults["act_size"] = len(next(iter(train_dset))[X_KEY])
+        else:
+            defaults["act_size"] = next(iter(train_dset))[X_KEY].shape[1]
         defaults["dict_size"] = defaults["act_size"] * config["expansion_factor"]
     cfg = ModuleConfig(**defaults)
     if model_name == "BatchTopK":
@@ -206,7 +212,7 @@ def eval_sae():
             meta_cols = meta_cols + ("sequence",)
 
         # Retrieves the full dataset
-        for group, from_sae in zip(("sae", "model_raw"), (True, False)):
+        for group in ("sae", "model_raw"):
             meta: pl.DataFrame
             if group == "sae":
                 dataset: Dataset = load_as(acts_path)

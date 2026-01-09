@@ -125,6 +125,8 @@ rule save_activations:
         pooled=Path(f"{dpath}/pooled"),
     output:
         *directory(ACTIVATIONS["list"]),
+    log:
+        default_log("save_activations"),
     resources:
         **GPU20,
     script:
