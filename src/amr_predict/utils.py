@@ -476,6 +476,15 @@ class ModuleConfig:
             return self[key]
         return default
 
+    def __repr__(self) -> str:
+        tmp = {}
+        attrs = [k for k in dir(self) if not k.startswith("__")]
+        for key in attrs:
+            if key not in {"kws", "get"} and key != "_init_device":
+                tmp[key] = getattr(self, key)
+        tmp.update(self.kws)
+        return repr(tmp)
+
     def __contains__(self, key):
         return key in dir(self) or key in self.kws
 
