@@ -46,7 +46,7 @@ if TEST:
     }
     GPU40 = {
         "mem": "15G",
-        "qos": "gpu40gh",
+        "qos": "gpu40g",
         "gres": "gpu:7g.40gb:1",
         "slurm_partition": "gpu",
     }
@@ -61,7 +61,7 @@ else:
     BIG_MEM = {"mem": "70G"}
     GPU40 = {
         "mem": "64G",
-        "qos": "gpu40gh",
+        "qos": "gpu40g",
         "gres": "gpu:7g.40gb:1",
         "slurm_partition": "gpu",
     }

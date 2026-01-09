@@ -6,13 +6,19 @@ configfile: "models.yaml"
 
 from pathlib import Path
 
+IN = Path(f"{REMOTE}/{IN_DATE}/datasets")
+
 OUTDIRS = {
     "cv": f"{OUT}/{DATE}/evaluation/cv",
     "holdout": f"{OUT}/{DATE}/evaluation/holdout",
     "cv_ctrl": f"{OUT}/{DATE}/evaluation/cv_control",
 }
 DEVICE = config.get("device", "cuda")
-DATASETS = list(Path(f"{REMOTE}/{IN_DATE}/datasets/pooled").iterdir())
+DATASETS = list(IN / "pooled").iterdir()
+for sae_data in ("reconstructed", "sae_activations"):
+    sd_path = IN / sae_data
+    if sd_path.exists():
+        DATASETS.extend(list(sae_recon.iterdir()))
 
 
 def default_log(rule_name):

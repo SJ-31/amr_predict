@@ -4,6 +4,7 @@ import itertools
 include: "Snakefile"
 
 
+# Passed test [2026-01-07 Wed]
 if TEST:
     config["compare_embeddings"]["cluster_on"] = ["sample", "hamr_gene_symbol"]
     config["compare_pooled"]["cluster_on"] = ["amikacin_class", "genus"]

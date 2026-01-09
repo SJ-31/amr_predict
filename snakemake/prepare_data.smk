@@ -24,10 +24,6 @@ if TEST:
         "file"
     ] = f"{config["data"]["meta"]}/combined_sample_meta.tsv"
     config["sample_metadata"]["id_col"] = "sample"
-    to_keep = [[a, f"{a}_class"] for a in ["imipenem", "amikacin", "gentamicin"]]
-    config["pool_embeddings"].update(
-        {"obs_keep": [el for sublist in to_keep for el in sublist]}
-    )
     del config["preprocessing"]["feature_presence_bakta"]
 
 PREPROCESSING = config["preprocessing"]
@@ -47,7 +43,7 @@ DATA_OUTS = {
 pooling_methods = [
     d.get("name", d["method"]) for d in config["pool_embeddings"]["methods"]
 ]
-EMBEDDING_RES = GPU40.copy()
+EMBEDDING_RES = GPU40.copy() if not TEST else GPU20.copy()
 if config["embedding"] == "esm":
     tmp = {}
     # Only use esm for pure ORFs

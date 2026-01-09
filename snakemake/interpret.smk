@@ -11,7 +11,6 @@ from typing import get_args
 from pathlib import Path
 
 if TEST:
-    IN_DATE = "for_interpret"
     config["train_sae"]["token-level"]["run"] = False
     config["train_sae"]["sequence-level"]["n"] = 9
     config["train_sae"]["sequence-level"]["n_sequence"] = 3
@@ -26,7 +25,7 @@ def default_log(rule_name):
     return f"{LOGDIR}/interpret-{rule_name}.log"
 
 
-OUTDIRS = {"sae": f"{OUT}/{DATE}/sae", "datasets": f"{OUT}/{DATE}/datasets"}
+OUTDIRS = {"sae": f"{REMOTE}/{DATE}/sae", "datasets": f"{REMOTE}/{DATE}/datasets"}
 DEVICE = config.get("device", "cuda")
 
 dpath = Path(f"{REMOTE}/{IN_DATE}/datasets")
@@ -104,8 +103,8 @@ for i, (mname, dset_path) in enumerate(MODELS.items()):
         params:
             level=level,
             outdir=Path(OUTDIRS["sae"]),
-            caches=Path(f"{OUT}/{IN_DATE}/datasets/embedded"),
-            pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
+            caches=Path(f"{dpath}/embedded"),
+            pooled=Path(f"{dpath}/pooled"),
         resources:
             **GPU20,
             # **GPU40,
@@ -121,10 +120,10 @@ rule save_activations:
     input:
         rules.all.input.models,
     params:
-        caches=Path(f"{OUT}/{IN_DATE}/datasets/embedded"),
+        caches=Path(f"{dpath}/embedded"),
         outdir=ACTIVATIONS["path"],
         model_dict=MODELS,
-        pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
+        pooled=Path(f"{dpath}/pooled"),
     output:
         *directory(ACTIVATIONS["list"]),
     resources:
@@ -137,10 +136,10 @@ rule reconstruct_datasets:
     input:
         rules.all.input.models,
     params:
-        caches=Path(f"{OUT}/{IN_DATE}/datasets/embedded"),
+        caches=Path(f"{dpath}/embedded"),
         model_dict=MODELS,
         outdir=RECONSTRUCTIONS["path"],
-        pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
+        pooled=Path(f"{dpath}/pooled"),
     output:
         *directory(RECONSTRUCTIONS["list"]),
     resources:
@@ -161,11 +160,11 @@ rule eval_sae:
         activation_plots=sae_plotting_paths("activation_plots", True),
         umaps=sae_plotting_paths("latent_umap", True),
     params:
-        caches=Path(f"{OUT}/{IN_DATE}/datasets/embedded"),
+        caches=Path(f"{dpath}/embedded"),
         model_dict=MODELS,
         outdir=OUTDIRS["sae"],
-        pooled=Path(f"{OUT}/{IN_DATE}/datasets/pooled"),
-        seqs=Path(f"{OUT}/{IN_DATE}/datasets/processed_sequences"),
+        pooled=Path(f"{dpath}/pooled"),
+        seqs=Path(f"{dpath}/processed_sequences"),
     log:
         default_log("eval_sae"),
     script:
