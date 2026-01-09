@@ -416,18 +416,19 @@ class EvalSAE:
         labels: Sequence | None = None,
         agg: Literal["mean", "max", "sum"] = "mean",
     ) -> None:
-        encoder = LabelBinarizer()
-        labels = labels or self.labels
+        labels = self.labels if labels is None else labels
         if agg == "max":
-            self.acts_grouped = max_by_label(self.acts, labels)
+            self.acts_grouped = max_by_label(self.acts, labels).with_columns(
+                pl.Series(self.acts.columns).alias("latent_idx")
+            )
             return
-        ones: np.ndarray = encoder.fit_transform(labels)
+        ones, _, unique_labels = encode_labels(labels)
         grouped = np.matmul(self.acts.transpose(), ones)
         if agg == "mean":
-            grouped = self.acts_grouped / ones.sum(axis=0)
+            grouped = grouped / ones.sum(axis=0)
         self.acts_grouped = pl.DataFrame(
-            grouped, schema=[str(i) for i in range(grouped.shape[1])]
-        )
+            grouped, schema=list(unique_labels)
+        ).with_columns(pl.Series(self.acts.columns).alias("latent_idx"))
 
     def score_latents(
         self, labels: Sequence, active_threshold: float = 0.0
@@ -473,16 +474,13 @@ class EvalSAE:
         lidx = self.acts.columns
         tmp: dict = {"latent_idx": lidx}
         ones: np.ndarray
-        ones, encoder = encode_labels(labels)
+        ones, _, unique_labels = encode_labels(labels)
         avg_acts: np.ndarray = np.matmul(self.acts.transpose(), ones) / ones.sum(axis=0)
         maxes = avg_acts.max(axis=1)
         idx = avg_acts.argmax(axis=1)
         tmp["max_activation_avg"] = maxes
         tmp["max_activation_prop"] = maxes / avg_acts.sum(axis=1)
-        if isinstance(encoder, LabelBinarizer):
-            tmp["label_max"] = encoder.classes_[idx]
-        else:
-            tmp["label_max"] = encoder.categories_[0][idx]
+        tmp["label_max"] = unique_labels[idx]
 
         # t(activations) has shape d_sae x n
         # ones  has shape n x k
@@ -513,21 +511,28 @@ class EvalSAE:
         return pl.DataFrame(tmp, schema=schema)
 
 
-def encode_labels(labels) -> tuple[np.ndarray, LabelBinarizer | OneHotEncoder]:
+def encode_labels(labels) -> tuple[np.ndarray, LabelBinarizer | OneHotEncoder, list]:
     """Encode labels to to produce a matrix, even for binary labels"""
     if len(set(labels)) > 2:
         encoder = LabelBinarizer()
         label_mat = encoder.fit_transform(labels)
+        labs = encoder.classes_
     else:
         encoder = OneHotEncoder(sparse_output=False)
         label_mat = encoder.fit_transform(np.array(labels).reshape(-1, 1))
-    return label_mat, encoder
+        labs = encoder.categories_[0]
+    return label_mat, encoder, labs
 
 
 def max_by_label(
     activations: Tensor | pl.DataFrame, labels: Sequence
 ) -> Tensor | pl.DataFrame:
-    label_mat, _ = encode_labels(labels)
+    """Return a matrix of (activations.shape[1], n_labels)
+    where each entry is the maximum value of `activations` within labels
+    """
+    if activations.shape[0] != len(labels):
+        raise ValueError("The number of activations and labels must match")
+    label_mat, _, unique_labels = encode_labels(labels)
     if isinstance(activations, Tensor):
         dtype = torch.get_default_dtype()
         ones: Tensor = torch.tensor(label_mat).to(dtype)
@@ -541,6 +546,6 @@ def max_by_label(
             .agg(pl.all().max())
             .sort("label")
             .drop("label")
-            .transpose()
+            .transpose(column_names=unique_labels)
             .rename(lambda x: x.removeprefix("column_"))
         )
