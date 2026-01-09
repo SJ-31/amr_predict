@@ -120,18 +120,21 @@ def save_from_sae(reconstruct: bool = False):
             dset_name, model_name=Path(dict_path).name, level=level, key_df=None
         )
         model: L.LightningModule = get_model_with_defaults(dataset)
-        model.load_state_dict(dict_path)
+        model.load_state_dict(torch.load(dict_path, weights_only=True))
+        model.to(model.device)
+        x = dataset[X_KEY][:].to(model.device)
         if reconstruct:
-            vals: Tensor = model.reconstruct(dataset[X_KEY][:])
+            vals: Tensor = model.reconstruct(x)
             logger.success("Reconstruction complete")
         else:
-            vals = model.predict_step(dataset[X_KEY][:])
+            vals = model.predict_step(x)
             logger.success("Generating activations complete")
-        if isinstance(dataset, LinkedDataset):
-            rec = Dataset.from_polars(dataset.meta)
-        else:
-            rec = dataset.remove_columns(X_KEY)
-        rec.add_column(X_KEY, vals.tolist()).with_format("torch").save_to_disk(save_to)
+        into_dset = {X_KEY: vals, "sample": dataset["sample"][:]}
+        if level == "sequence-level":
+            into_dset["uid"] = dataset["uid"][:]
+        # TODO: should probably add a condition for token-level, but you probably
+        # won't be using it
+        Dataset.from_dict(into_dset).save_to_disk(save_to)
 
 
 # * Rules
@@ -221,7 +224,7 @@ def eval_sae():
                 dataset = load_as(smk.params["seqs"] / dset_name)
             dataset, meta = with_metadata(dataset, smk.config, meta_cols, align=True)
             SE: EvalSAE = EvalSAE(dataset[X_KEY][:])
-            latent_cats: dict = SE.categorize_latents()
+            latent_cats: dict = SE.categorize_latents(dense_threshold=1 / 10, save=True)
             for ltype in ["dead", "dense", "sparse"]:
                 latent_summary["type"].append(ltype)
                 latent_summary["count"].append(len(latent_cats[ltype]))
@@ -232,6 +235,7 @@ def eval_sae():
             # label column. would be ideal, but not possible because it would just create
             # so many specific cases. Or is this a good thing?
             topk_plot = RCONFIG["activation_density_topk"]
+            SE.drop_latents(drop_dead=True, include_samples=True, inplace=True)
             SE.umap(False, **RCONFIG["umap"])
             latent_clusters: pl.DataFrame = SE.cluster_latents(False)
             for concept in concepts:
