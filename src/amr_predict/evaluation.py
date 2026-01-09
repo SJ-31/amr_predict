@@ -287,14 +287,30 @@ class EvalSAE:
         self.U: umap.UMAP | None = None
         self.categories: dict = {}
 
-    def drop_dead(self, include_samples: bool = True) -> pl.DataFrame:
-        """Drop dead latents from the activation matrix
-        Optionally, drop samples as well i.e. zero rows
+    def drop_latents(
+        self,
+        drop_dead: bool = True,
+        drop_dense: bool = False,
+        include_samples: bool = True,
+        inplace: bool = False,
+        **kws,
+    ) -> pl.DataFrame | None:
+        """Drop dead and/or dense latents from the activation matrix
+        Optionally, drop dead samples as well i.e. zero rows
         """
-        cats: dict = self.categories or self.categorize_latents()
-        dead_mask = pl.Series(range(self.acts.shape[1])).is_in(cats["dead"])
-        self.acts = self.acts[:, dead_mask]
-        # self.acts.
+        cats: dict = self.categories or self.categorize_latents(**kws)
+        dropped = self.acts
+        if drop_dead:
+            dropped = dropped.drop(cats["dead"]["latent_idx"].to_list())
+        if drop_dense:
+            dropped = dropped.drop(cats["dense"]["latent_idx"].to_list())
+        if include_samples:
+            dropped = dropped.filter(
+                ~pl.all_horizontal(pl.all() <= kws.get("active_threshold", 0))
+            )
+        if not inplace:
+            return dropped
+        self.acts = dropped
 
     def categorize_latents(
         self, dense_threshold: float = 1 / 10, save: bool = False
