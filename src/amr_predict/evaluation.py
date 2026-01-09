@@ -408,18 +408,20 @@ class EvalSAE:
         A DataFrame describing latent cluster assignments and possibly clustering metrics
         """
         if from_grouped and self.acts_grouped is not None:
-            acts: np.ndarray = self.acts_grouped.to_numpy()
+            acts: np.ndarray = self.acts_grouped.drop("latent_idx").to_numpy()
+            lnames = self.acts_grouped["latent_idx"]
         elif from_grouped:
             raise ValueError("Must call `group_by_labels` first to use `from_grouped`")
         else:
             acts = self.acts.to_numpy().transpose()
+            lnames = self.acts.columns
         # `acts` has shape feature_size x n_samples
         if label_n_clusters and self.labels is not None:
             kws["n_clusters"] = len(set(self.labels))
         clst = cluster_obj(**kws)
         assignments = clst.fit_predict(acts)
         n_samples = acts.shape[0]
-        tmp = {"latent_idx": range(n_samples), "cluster": assignments}
+        tmp = {"latent_idx": lnames, "cluster": assignments}
         if silhouette:
             tmp["silhouette_samples"] = silhouette_samples(acts, assignments)
             tmp["silhouette_score"] = [silhouette_score(acts, assignments)] * n_samples
