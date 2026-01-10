@@ -50,7 +50,7 @@ class Evaluator:
         self.model: MODEL_CLASSES = model
         self.pp: Preprocessor | None = preprocessor
         self.x_key: str = self.model.x_key
-        self.task_type: TASK_TYPES = self.model.conf.task_type
+        self.task_type: TASK_TYPES = self.model.cfg.task_type
         self.trainer: L.Trainer | None = trainer
         self.how: str = how
         self.kws: dict = kws
@@ -195,7 +195,7 @@ class Evaluator:
                 metrics = multitask_all_cls(
                     y_pred,
                     y_true,
-                    n_classes=self.model.conf.n_classes,
+                    n_classes=self.model.cfg.n_classes,
                     task_names=tasks,
                 )
             df = multitask_metrics2df(metrics)
@@ -308,6 +308,7 @@ class EvalSAE:
             dropped = dropped.filter(
                 ~pl.all_horizontal(pl.all() <= kws.get("active_threshold", 0))
             )
+        dropped = dropped.select(dropped.columns)
         if not inplace:
             return dropped
         self.acts = dropped
@@ -371,7 +372,7 @@ class EvalSAE:
 
     def umap(self, from_grouped: bool, **kws) -> None:
         if from_grouped:
-            arr = self.acts_grouped.to_numpy().transpose()
+            arr = self.acts_grouped.drop("latent_idx").to_numpy()
         else:
             arr = self.acts.to_numpy().transpose()
         self.U = umap.UMAP(**kws)
