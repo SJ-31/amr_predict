@@ -3,7 +3,7 @@
 import os
 import re
 from pathlib import Path
-from typing import get_args
+from typing import Callable, get_args
 
 import amr_predict.evaluation as ae
 import lightning as L
@@ -34,8 +34,15 @@ except ImportError:
 logger.enable("amr_predict")
 logger.add(smk.log[0])
 
-RCONFIG = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
+if smk.rule.startswith("cv"):
+    RCONFIG = smk.config["cross_validate"]
+    RCONFIG["k_fold"]["random_state"] = RNG
+elif smk.rule.startswith("holdout-"):
+    RCONFIG = smk.config["holdout"]
+else:
+    raise ValueError("rule matching failed")
+
 MODEL_ENV: dict = smk.config["models"]
 os.environ["HF_HOME"] = smk.config["huggingface"]
 torch.set_default_dtype(torch.float32)
@@ -48,9 +55,6 @@ X_KEY, SAMPLE_KEY = (
 RCONFIG["validation_kws"]["seed"] = RNG
 DEFAULT_TRAIN = smk.config.get("trainer", {})
 DEFAULT_LOADER = smk.config.get("dataloader", {})
-
-if smk.rule == "cross_validate":
-    RCONFIG["k_fold"]["random_state"] = RNG
 
 
 def randomize_dset(dset: Dataset, x_key: str) -> Dataset:
@@ -78,10 +82,14 @@ def modify_for_test(dataset, x_key) -> Dataset:
 
 
 def make_eval_kws(
-    model_name, bmodel, module_cfg, preprocessor, in_features
+    model_name, bmodel, module_cfg, preprocessor, in_features, dataset_name
 ) -> tuple[dict, dict]:
     model_kws = (MODEL_ENV[model_name] or {}).get("kws", {})
     trainer_kws = (MODEL_ENV[model_name] or {}).get("trainer", DEFAULT_TRAIN)
+    if smk.config["log_wandb"]:
+        trainer_kws["logger"] = WandbLogger(
+            f"{model_name}-{dataset_name}", project="amr_predict"
+        )
     loader_kws = (MODEL_ENV[model_name] or {}).get("dataloader", DEFAULT_LOADER)
     val_kws = RCONFIG.get("validation_kws", {})
     if model_name == "baseline":
