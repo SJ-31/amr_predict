@@ -152,17 +152,26 @@ class SeqEmbedder:
         metadata: Path | None = None,
         k: int = 5,
         key: str = "x",
+        max_kmer_count: int = 255,
+        save_stats: Path | None = None,
         **kws,
     ) -> Dataset:
         """Process sample-level fasta files so that each sample is represented
         by a feature vector of kmer counts
         """
+        tmp_stats = defaultdict(list)
 
         def count_kmers(fasta: Path) -> pl.DataFrame:
             # Count kmers quickly with kmc
             with TemporaryDirectory() as dir:
-                out = Path(dir).joinpath("result.tsv")
-                run(f"kmc -fm -k{k} {fasta} tmp .", shell=True)
+                out = Path(dir) / "result.tsv"
+                stat_file = Path(dir) / "stats.json"
+                kmc_proc = run(
+                    f"kmc -fm -k{k} -j{stat_file} -cs{max_kmer_count} {fasta} tmp .",
+                    shell=True,
+                    capture_output=True,
+                )
+                kmc_proc.check_returncode()
                 run(f"kmc_dump tmp {out}", shell=True)
                 counts = (
                     pl.read_csv(
@@ -174,17 +183,45 @@ class SeqEmbedder:
                     .with_columns(pl.lit(fasta.stem).alias(id_col))
                     .pivot("kmer", values="count")
                 )
+                with open(stat_file, "r") as st:
+                    stats = json.load(st)
+                for key, v in stats.items():
+                    if key == "Stats":
+                        for skey, val in stats[key].items():
+                            tmp_stats[skey].append(val)
+                    else:
+                        tmp_stats[key].append(v)
+                tmp_stats["file"].append(fasta.name)
             return counts
 
-        return self._embed_from_files(
-            id_col=id_col,
-            path=fastas,
-            metadata=metadata,
-            accepted_suffixes=(".fasta", ".fna", ".fa"),
-            key=key,
-            embed_fn=count_kmers,
-            **kws,
-        )
+        try:
+            embedded = self._embed_from_files(
+                id_col=id_col,
+                path=fastas,
+                metadata=metadata,
+                accepted_suffixes=(".fasta", ".fna", ".fa"),
+                key=key,
+                embed_fn=count_kmers,
+                **kws,
+            )
+        except ValueError as e:
+            kmer_stats = pl.DataFrame(tmp_stats)
+            logger.debug("stats {}", kmer_stats)
+            if (
+                e.args == "No features remaining after variance filtering"
+                and len(kmer_stats["#Total no. of k-mers"].unique()) > 1
+            ):
+                raise ValueError(
+                    """
+                    No features remaining after variance filtering, but the k-mer counts are unique.
+                    Try increasing k or the maximum k-mer count
+                    """
+                )
+            raise e
+        kmer_stats = pl.DataFrame(tmp_stats)
+        if save_stats is not None:
+            kmer_stats.write_csv(save_stats)
+        return embedded
 
     def _feature_presence_embed(
         self,
