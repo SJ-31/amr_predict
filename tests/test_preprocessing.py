@@ -7,7 +7,7 @@ import polars as pl
 import pytest
 import tomllib
 from amr_predict.preprocessing import SeqDataset, SeqEmbedder, SeqPreprocessor
-from amr_predict.utils import split_features
+from amr_predict.utils import load_as, split_features
 from Bio import SeqIO
 from datasets import Dataset, disable_caching, load_from_disk
 from loguru import logger
@@ -96,7 +96,7 @@ def test_split_features():
     assert all((split["chunk_Stop"] - split["chunk_Start"]) <= 120)
 
 
-@pytest.mark.parametrize("k,fail", [(3, True), (8, False)])
+@pytest.mark.parametrize("k,fail", [(3, True), (6, False)])
 def test_kmer_embed(tmp_path, k, fail):
     feature_file: Path = tmp_path / "features.txt"
     emb = SeqEmbedder(
@@ -122,7 +122,14 @@ def test_kmer_embed(tmp_path, k, fail):
         key="x",
         features=features,
     )
+    save_path = tmp_path / "kmer_dset"
     e2 = emb2(None)
+    e2.save_to_disk(save_path)
+    e2_loaded = load_as(save_path).with_format("torch")
+    x = e2_loaded["x"][:]
+    logger.info("x {}", x)
+    assert x.shape[1] == 40
+    logger.info("loaded {}", e2_loaded)
 
 
 def test_embed_hamr(tmp_path):

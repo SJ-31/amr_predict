@@ -118,7 +118,8 @@ class SeqEmbedder:
             df: pl.DataFrame = pl.concat(dfs, how="diagonal_relaxed").fill_null(0)
         else:
             df = embed_fn(path).fill_null(0)
-        feature_cols = features or df.drop(id_col).columns
+        to_drop = df.drop(id_col).columns
+        feature_cols = features or to_drop
         logger.info(f"{len(feature_cols)} features")
         if metadata is not None:
             meta = read_tabular(metadata)
@@ -126,22 +127,33 @@ class SeqEmbedder:
         if id_rename is not None:
             df = df.rename({id_col: id_rename})
         arr = np.array(df.select(feature_cols))
+        # Drop all features from the dataset, leaving them only as columns in the sample
+        # array
         if not features:
             variance: np.ndarray = arr.var(axis=0)
             feature_mask = variance != 0
             n_removed = (~feature_mask).sum()
             total = len(feature_mask)
+            n_left = total - n_removed
             logger.info(
-                f"Removing {n_removed} features with 0 variance. \n{(total-n_removed)} remaining."
+                f"Removing {n_removed} features with 0 variance. \n{n_left} remaining."
             )
+            kept_indices = np.where(feature_mask)[0]
+            logger.info("kept {}", kept_indices)
+            kept = np.array(feature_cols)[feature_mask].tolist()
+            assert len(kept) == n_left
             arr = arr[:, feature_mask]
             if arr.shape[1] == 0:
                 raise ValueError("No features remaining after variance filtering")
             if save_features_to is not None:
-                save_features_to.write_text(
-                    "\n".join(np.array(feature_cols)[feature_mask])
-                )
-        dct = df.drop(feature_cols).to_dict()
+                save_features_to.write_text("\n".join(kept))
+        else:
+            kept = [o for o in to_drop if o in features]
+            logger.info(
+                "Dropping {} features not found in passed `feature` parameter",
+                len(to_drop) - len(kept),
+            )
+        dct = df.drop(to_drop).to_dict()
         dct[key] = arr
         return Dataset.from_dict(dct).with_format("torch")
 
