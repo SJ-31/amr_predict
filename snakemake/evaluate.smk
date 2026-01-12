@@ -11,7 +11,7 @@ IN = Path(f"{REMOTE}/{IN_DATE}/datasets")
 OUTDIRS = {
     "cv": f"{OUT}/{DATE}/evaluation/cv",
     "holdout": f"{OUT}/{DATE}/evaluation/holdout",
-    "cv_ctrl": f"{OUT}/{DATE}/evaluation/cv_ctrl",
+    "ctrl_cv": f"{OUT}/{DATE}/evaluation/ctrl_cv",
 }
 DEVICE = config.get("device", "cuda")
 DATASETS = list((IN / "pooled").iterdir())
@@ -53,7 +53,7 @@ if TEST:
 
 all_results = expand(
     "{o}/{m}/{d}_{t}.csv",
-    o=[OUTDIRS["cv"], OUTDIRS["holdout"], OUTDIRS["cv_ctrl"]],
+    o=[OUTDIRS["cv"], OUTDIRS["holdout"], OUTDIRS["ctrl_cv"]],
     m=config["cross_validate"]["models"],
     d=[d.stem for d in DATASETS],
     t=["regression", "classification"],
@@ -68,6 +68,7 @@ for k, v in OUTDIRS.items():
                 lambda x: x.startswith(v) and x.endswith(f"_{task}.csv"), all_results
             )
         )
+del RESULTS["ctrl_cv"]["ctrl_cv_r"]
 
 
 if TEST:
@@ -80,51 +81,84 @@ if not config["holdout"]["splits"]:
     rule all:
         input:
             **RESULTS["cv"],
-            **RESULTS["cv_ctrl"],
+            **RESULTS["ctrl_cv"],
 
 else:
 
     rule all:
         input:
             **RESULTS["cv"],
-            **RESULTS["cv_ctrl"],
+            **RESULTS["ctrl_cv"],
             **RESULTS["holdout"],
 
 
-rule cross_validate:
-    params:
-        datasets=DATASETS,
-        device=DEVICE,
-        outdir=OUTDIRS["cv"],
-    log:
-        default_log("cross_validate"),
-    output:
-        **RESULTS["cv"],
-    script:
-        "scripts/evaluate.py"
+for model in config["cross_validate"]["models"]:
+    for dataset in DATASETS:
+        name = dataset.stem
+        default_params = {"model": model}
+        if model == "baseline":
+            res = BIG_MEM
+            default_params["device"] = "cpu"
+        else:
+            res = GPU20
+            default_params["device"] = DEVICE
+
+        def get_output(task):
+            return {
+                "regression": f"{OUTDIRS[task]}/{model}/{name}_regression.csv",
+                "classification": f"{OUTDIRS[task]}/{model}/{name}_classification.csv",
+            }
+
+        rule:
+            name:
+                f"cv-{model}_{name}"
+            params:
+                **default_params,
+            log:
+                default_log(f"cv-{model}_{name}"),
+            input:
+                dataset,
+            resources:
+                **res,
+            output:
+                **get_output("cv"),
+            script:
+                "scripts/evaluate.py"
+
+        rule:
+            name:
+                f"cv_control_task-{model}_{name}"
+            params:
+                **default_params,
+            input:
+                dataset,
+            resources:
+                **res,
+            output:
+                classification=get_output("ctrl_cv")["classification"],
+            log:
+                default_log(f"ctrl_cv-{model}_{name}"),
+            script:
+                "scripts/evaluate.py"
+
+        if config["holdout"]["splits"]:
+
+            rule:
+                name:
+                    f"holdout-{model}_{name}"
+                params:
+                    **default_params,
+                input:
+                    dataset,
+                resources:
+                    **res,
+                log:
+                    default_log(f"holdout-{model}_{name}"),
+                output:
+                    **get_output("ctrl_cv"),
+                script:
+                    "scripts/evaluate.py"
 
 
-rule cv_control_tasks:
-    params:
-        datasets=DATASETS,
-        device=DEVICE,
-        outdir=OUTDIRS["cv_ctrl"],
-    log:
-        default_log("cross_validate_control"),
-    output:
-        **RESULTS["cv_ctrl"],
-    script:
-        "scripts/evaluate.py"
-
-
-rule holdout:
-    params:
-        datasets=DATASETS,
-        device=DEVICE,
-        outdir=OUTDIRS["holdout"],
-    log:
-        default_log("holdout"),
-    output:
-        **RESULTS["holdout"],
-    script:
-        "scripts/evaluate.py"
+# TODO: [2026-01-08 Thu] need to test that this works
+# TODO: would like a rule that aggregates all the results across everything
