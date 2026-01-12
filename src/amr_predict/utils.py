@@ -37,7 +37,7 @@ TASK_TYPES: TypeAlias = Literal["classification", "regression", "reconstruction"
 
 
 def encode_strs(
-    data: Dataset | ad.AnnData, task_names: tuple
+    data: Dataset | LinkedDataset | ad.AnnData, task_names: tuple
 ) -> tuple[Dataset | ad.AnnData, dict[str, LabelEncoder]]:
     encoders = {}
     for task in task_names:
@@ -46,6 +46,10 @@ def encode_strs(
             task_vec = data[task][:]
             data = data.remove_columns(task).add_column(
                 task, encoder.fit_transform(task_vec)
+            )
+        elif isinstance(data, LinkedDataset):
+            data.meta = data.meta.with_columns(
+                pl.Series(encoder.fit_transform(task_vec)).alias(task)
             )
         else:
             task_vec = data.obs[task]
