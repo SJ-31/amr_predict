@@ -573,6 +573,10 @@ class Preprocessor:
     def _variance_filter(self, x, quantile_threshold: float = 0.30) -> None:
         x = np.array(x)
         variance: np.ndarray = x.var(axis=0)
+        if len(variance) == 0:
+            logger.debug(variance)
+            logger.debug(x)
+            raise ValueError("variance is 0")
         thresh = np.quantile(variance, quantile_threshold)
         logger.info(f"threshold value: {thresh}")
         mask = variance >= thresh
@@ -1184,7 +1188,7 @@ def with_metadata(
     dset: DSET_TYPES,
     cfg: dict,
     sample_col: str = "sample",
-    meta_options: tuple[str, ...] = ("ast", "sample", "sequence"),
+    meta_options: str | tuple[str, ...] = ("ast", "sample", "sequence"),
     align: bool = False,
     dset_name: str | None = None,
 ) -> DSET_TYPES | tuple[DSET_TYPES, pl.DataFrame]:
@@ -1197,15 +1201,16 @@ def with_metadata(
         if "sequence" in meta_options:
             to_df["uid"] = dset["uid"][:]
         merging = pl.DataFrame(to_df)
+    if isinstance(meta_options, str):
+        meta_options = [meta_options]
     for m in meta_options:
         if m == "sequence" and not dset_name:
             raise ValueError(
                 "dataset name must be provided if requesting sequence metadata"
             )
         elif m == "sequence":
-            df = dset
-            key = "tests" if cfg["tests"] else "root"
-            path = f"{cfg["out"][key]}/{cfg['in_date']}/processed_sequences/{dset_name}"
+            key = "tests" if cfg["test"] else "root"
+            path = f"{cfg["out"][key]}/{cfg['in_date']}/datasets/processed_sequences/{dset_name}"
             df = load_as(path, "polars").with_columns(
                 pl.any_horizontal(cs.contains("gene").is_not_null()).alias("in_gene")
             )
@@ -1226,6 +1231,12 @@ def with_metadata(
             )
         merging = merging.join(
             df, left_on=sample_col, right_on=key_col, how="left", maintain_order="left"
+        )
+        tmp = (merging.null_count() / merging.height).unpivot()
+        null_dict = dict(zip(tmp["variable"], tmp["value"]))
+        logger.info(
+            "Percentage of nulls in merged metadata\n{}",
+            null_dict,
         )
     if not align and isinstance(dset, ad.AnnData):
         new = dset.copy()
