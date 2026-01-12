@@ -5,6 +5,7 @@ import json
 import math
 import os
 import uuid
+from collections import defaultdict
 from collections.abc import Sequence
 from pathlib import Path
 from subprocess import run
@@ -134,6 +135,8 @@ class SeqEmbedder:
                 f"Removing {n_removed} features with 0 variance. \n{(total-n_removed)} remaining."
             )
             arr = arr[:, feature_mask]
+            if arr.shape[1] == 0:
+                raise ValueError("No features remaining after variance filtering")
             if save_features_to is not None:
                 save_features_to.write_text(
                     "\n".join(np.array(feature_cols)[feature_mask])
