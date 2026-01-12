@@ -203,54 +203,79 @@ def cv_control_tasks(model_name, **kws) -> pl.DataFrame | None:
 # * Entry
 
 
-if smk.rule in {"cross_validate", "holdout"}:
-    for dpath in smk.params["datasets"]:
-        dname = Path(dpath).stem
-        dataset: Dataset = load_as(dpath)
-        dataset = with_metadata(dataset, smk.config, meta_options=("ast", "sample"))
-        if smk.config.get("test"):
-            dataset = modify_for_test(dataset, X_KEY)
-        baseline_re = "|".join(map(lambda x: x + ".*", get_args(EMBEDDING_METHODS)))
-        # The above re is fine because FM embeddings are named after pooling methods
-        if re.match(baseline_re, dname):
-            pp: Preprocessor | None = Preprocessor(
-                x_key=X_KEY, **smk.config.get("baseline_filtering", {})
-            )
+@logger.catch
+def main():
+    dpath = smk.input[0]
+    mname = smk.params["model"]
+
+    dataset: Dataset = load_as(dpath, "huggingface")
+    dname = Path(dpath).stem
+    dataset = with_metadata(
+        dataset, smk.config, "sample", meta_options=("ast", "sample")
+    ).with_format("torch")
+    if smk.config.get("test"):
+        dataset = modify_for_test(dataset, X_KEY)
+    baseline_re = "|".join(map(lambda x: x + ".*", get_args(EMBEDDING_METHODS)))
+    # The above re is fine because FM embeddings are named after pooling methods
+    if (
+        re.match(baseline_re, dname)
+        or dname.startswith("sae-act_")
+        or dname.startswith("recon_")
+    ):  # Baselines and SAE activations can be very high-dimensional, so filter out possibly
+        # uninformative features
+        pp: Preprocessor | None = Preprocessor(
+            x_key=X_KEY, **smk.config.get("baseline_filtering", {})
+        )
+    else:
+        pp = None
+
+    ttype: TASK_TYPES
+
+    fn: Callable | None = None
+    for prefix, sym in zip(
+        ("cv-", "cv_control_task-", "holdout-"),
+        (cross_validate, cv_control_tasks, holdout),
+    ):
+        if smk.rule.startswith(prefix):
+            fn = sym
+    if fn is None:
+        raise ValueError("prefix and function not defined")
+
+    for ttype, task_names in smk.config["tasks"].items():
+        if not task_names or (
+            ttype == "regression" and smk.rule.startswith("cv_control_task-")
+        ):
+            continue
+        if ttype == "classification":
+            dataset, _ = encode_strs(dataset, task_names)
+            in_features, n_classes = data_spec(dataset, y=task_names, x_key=X_KEY)
+            bmodel = RandomForestClassifier
         else:
-            pp = None
-        ttype: TASK_TYPES
-        for ttype, task_names in smk.config["tasks"].items():
-            if not task_names:
-                continue
-            if ttype == "classification":
-                dataset, _ = encode_strs(dataset, task_names)
-                in_features, n_classes = data_spec(dataset, y=task_names, x_key=X_KEY)
-                bmodel = XGBClassifier
-            else:
-                in_features, n_classes = dataset[X_KEY][:].shape[1], None
-                bmodel = XGBRegressor
-            mconf = ModuleConfig(
-                task_type=ttype,
-                n_classes=n_classes,
-                n_tasks=len(task_names),
-                task_names=task_names,
-            )
-            for mname in RCONFIG["models"]:
-                outfile = f"{smk.params["outdir"]}/{mname}/{dname}_{ttype}.csv"
-                if Path(outfile).exists():
-                    continue
-                eva_kws, validation_kws = make_eval_kws(
-                    mname,
-                    bmodel=bmodel,
-                    module_cfg=mconf,
-                    preprocessor=pp,
-                    in_features=in_features,
-                )
-                fn = globals()[smk.rule]
-                result = fn(
-                    evaluator_kws=eva_kws,
-                    model_name=mname,
-                    dataset=dataset,
-                    validation_kws=validation_kws,
-                )
-                result.write_csv(outfile)
+            in_features, n_classes = dataset[X_KEY][:].shape[1], None
+            bmodel = XGBRegressor
+        mconf = ModuleConfig(
+            task_type=ttype,
+            n_classes=n_classes,
+            n_tasks=len(task_names),
+            task_names=task_names,
+        )
+        outfile = smk.output[ttype]
+        eva_kws, validation_kws = make_eval_kws(
+            mname,
+            bmodel=bmodel,
+            module_cfg=mconf,
+            preprocessor=pp,
+            in_features=in_features,
+            dataset_name=dname,
+        )
+        result = fn(
+            evaluator_kws=eva_kws,
+            model_name=mname,
+            dataset=dataset,
+            validation_kws=validation_kws,
+        )
+        if result is not None:
+            result.write_csv(outfile)
+
+
+main()
