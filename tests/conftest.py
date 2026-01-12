@@ -1,7 +1,9 @@
 #!/usr/bin/env ipython
 
 from collections.abc import Sequence
+from pathlib import Path
 from string import ascii_uppercase
+from typing import Literal, TypeAlias, get_args
 
 import numpy as np
 import pytest
@@ -23,11 +25,32 @@ def env():
 
 
 @pytest.fixture
+def remote():
+    return here("data", "remote")
+
+
+@pytest.fixture
 def keys(env):
     return (
         env["pool_embeddings"]["key"],
         env["pool_embeddings"]["sample_key"],
     )
+
+
+@pytest.fixture
+def rdset(remote):
+    SET_NAMES: TypeAlias = Literal["mora", "jia", "b1"]
+
+    def f(set_name: SET_NAMES = "mora") -> Path:
+        if set_name == "jia":
+            return here(remote, "2025-10-22_jia_seqlens", "datasets")
+        elif set_name == "mora":
+            return here(remote, "2025-11-21_mora_seqlens", "datasets")
+        elif set_name == "b1":
+            return here(remote, "2025-12-29_ast_b1", "datasets")
+        raise ValueError(f"Set name must be one of {get_args(SET_NAMES)}")
+
+    return f
 
 
 @pytest.fixture
@@ -39,7 +62,7 @@ def rng(env):
 def toy_dset(rng):
     def f(
         column_spec: dict = {},
-        samples: Sequence | None = None,
+        samples: Sequence | None | int = None,
         seq_level=False,
         x_size: int = 500,
         x_key: str = "x",

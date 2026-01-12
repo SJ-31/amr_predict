@@ -19,7 +19,7 @@ from amr_predict.utils import (
     read_tabular,
     with_metadata,
 )
-from datasets import Dataset
+from datasets import Dataset, concatenate_datasets
 from loguru import logger
 from pyhere import here
 from torch.utils.data import DataLoader

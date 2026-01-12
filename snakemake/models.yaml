@@ -9,6 +9,7 @@ models:
       num_layers: 2
     dataloader:
       batch_size: 5
+      drop_last: True # Can help avoid BatchNorm issue if last batch only has one sample
     # trainer: # TODO: specify model-specific trainer
   BatchTopK:
     kws:
