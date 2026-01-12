@@ -2,7 +2,9 @@
 
 import os
 import re
+from functools import partial
 from pathlib import Path
+from string import ascii_lowercase
 from typing import Callable, get_args
 
 import amr_predict.evaluation as ae
@@ -22,8 +24,10 @@ from amr_predict.utils import (
     train_test_from_dict,
     with_metadata,
 )
-from datasets import Dataset, DatasetDict
+from datasets import Dataset, DatasetDict, concatenate_datasets
+from lightning.pytorch.loggers import WandbLogger
 from loguru import logger
+from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier, XGBRegressor
 
 try:
@@ -75,9 +79,22 @@ def randomize_dset(dset: Dataset, x_key: str) -> Dataset:
     return dset
 
 
-def modify_for_test(dataset, x_key) -> Dataset:
-    # dataset = concatenate_datasets([dataset, dataset, dataset])
+def modify_for_test(dataset: Dataset, x_key) -> Dataset:
+    dataset = concatenate_datasets([dataset, dataset, dataset, dataset, dataset])
     dataset = dataset.map(lambda x: {x_key: x[x_key][:1000]})
+    n = dataset.shape[0]
+    for cls in smk.config["tasks"]["classification"]:
+        dataset = dataset.remove_columns(cls).add_column(
+            cls, np.random.choice(["R", "S", "I"], n, replace=True)
+        )
+    for cls in smk.config["tasks"]["regression"]:
+        dataset = dataset.remove_columns(cls).add_column(
+            cls, np.random.uniform(0.01, 1024.0, n)
+        )
+    for v in smk.config["cross_validate"]["control_tasks"].values():
+        dataset = dataset.remove_columns(v).add_column(
+            v, np.random.choice(list(ascii_lowercase), n, replace=True)
+        )
     return dataset
 
 
@@ -92,6 +109,7 @@ def make_eval_kws(
         )
     loader_kws = (MODEL_ENV[model_name] or {}).get("dataloader", DEFAULT_LOADER)
     val_kws = RCONFIG.get("validation_kws", {})
+    model_fn = None
     if model_name == "baseline":
         model = Baseline(
             x_key=X_KEY,
@@ -105,12 +123,15 @@ def make_eval_kws(
     elif model_name == "mlp":
         model = MLP(in_features=in_features, x_key=X_KEY, cfg=module_cfg, **model_kws)
         trainer = L.Trainer(**trainer_kws)
+        if preprocessor is not None:
+            model_fn = partial(MLP, x_key=X_KEY, cfg=module_cfg, **model_kws)
     else:
         raise ValueError(f"model name {model_name} not recognized")
     return dict(
         model=model,
         trainer=trainer,
         preprocessor=preprocessor,
+        model_fn=model_fn,
         **loader_kws,
     ), val_kws
 
@@ -122,7 +143,7 @@ def holdout(
     logger.info(f"Running holdout with {model_name}")
     holdout_splits = {}
     split_methods = {}
-    eva = ae.Evaluator(how="holdout", **evaluator_kws)
+    eva = ae.Evaluator(**evaluator_kws)
     obs: pl.DataFrame | None = dataset.remove_columns(X_KEY).to_polars()
     for split_name, spec in RCONFIG["splits"].items():
         train_mask, test_mask = train_test_from_dict(df=obs, spec=spec)
@@ -142,8 +163,11 @@ def cv_wrapper(
     dataset: Dataset,
     validation_kws,
     add_control_tasks: bool = False,
-) -> pl.DataFrame:
-    if add_control_tasks and (ctask_spec := RCONFIG["control_tasks"]):
+) -> pl.DataFrame | None:
+    if evaluator_kws["model"].cfg.task_type == "regression" and add_control_tasks:
+        return None
+    elif add_control_tasks and (ctask_spec := RCONFIG["control_tasks"]):
+        # Control tasks are only valid for classification
         for target, control in ctask_spec.items():
             dataset = ae.make_control_task(
                 dataset,
@@ -153,7 +177,7 @@ def cv_wrapper(
                 add=True,
                 added_name=target,  # Replace the target column with the randomized control
             )
-    eva = ae.Evaluator(how="cv", **evaluator_kws)
+    eva = ae.Evaluator(**evaluator_kws)
     result: pl.DataFrame = eva.cv(
         dataset,
         validation_kws=validation_kws,  # No need when using baseline
@@ -162,14 +186,14 @@ def cv_wrapper(
     return result
 
 
-def cross_validate(model_name, **kws) -> pl.DataFrame:
+def cross_validate(model_name, **kws) -> pl.DataFrame | None:
     logger.info(f"Running cross validation with {model_name}")
     result = cv_wrapper(**kws, add_control_tasks=False)
     logger.success("Cross validation complete")
     return result
 
 
-def cv_control_tasks(model_name, **kws) -> pl.DataFrame:
+def cv_control_tasks(model_name, **kws) -> pl.DataFrame | None:
     logger.info(f"Running cv control tasks with {model_name}")
     result = cv_wrapper(**kws, add_control_tasks=True)
     logger.success("Cross validation with control tasks complete")
