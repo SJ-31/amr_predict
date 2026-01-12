@@ -96,28 +96,31 @@ def test_split_features():
     assert all((split["chunk_Stop"] - split["chunk_Start"]) <= 120)
 
 
-def test_kmer_embed(tmp_path):
+@pytest.mark.parametrize("k,fail", [(3, True), (8, False)])
+def test_kmer_embed(tmp_path, k, fail):
     feature_file: Path = tmp_path / "features.txt"
     emb = SeqEmbedder(
         method="kmer",
         fastas=Path(ENV["fastas"]),
         id_col="sample",
-        k=3,
+        k=k,
         key="x",
         save_features_to=feature_file,
-        var_quantile_threshold=0.5,
     )
-    embedded = emb(None)
+    if fail:
+        with pytest.raises(ValueError):
+            embedded = emb(None)
+        return
+    else:
+        embedded = emb(None)
     features = feature_file.read_text().splitlines()
-    assert len(features) == 32 and "AAA" in features
     emb2 = SeqEmbedder(
         method="kmer",
         fastas=Path(ENV["fastas"]),
         id_col="sample",
-        k=3,
+        k=k,
         key="x",
         features=features,
-        var_quantile_threshold=0.5,
     )
     e2 = emb2(None)
 

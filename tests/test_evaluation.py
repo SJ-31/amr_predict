@@ -25,14 +25,11 @@ from pyhere import here
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier, XGBRegressor
 
-REMOTE = here("data", "remote")
-JIA = here(REMOTE, "2025-10-22_jia_seqlens", "datasets")
-
-
 DIRS: dict = {
     "evo2": here("results", "tests", "with_evo2"),
     "seqlens": here("results", "tests", "no_date"),
 }
+
 
 logger.enable("amr_predict")
 
@@ -52,9 +49,9 @@ def dset() -> Dataset:
 def test_add_ctrl(toy_dset, env):
     obs = read_tabular(env["sample_metadata"]["file"])
     dset = toy_dset(
-        obs["BioSample"][:500],
-        500,
         {"amr_class": ["resistant", "susceptible", "intermediate"]},
+        obs["BioSample"][:500],
+        n=500,
     )
     assert dset.shape[0] == 500
     dset = with_metadata(
@@ -63,6 +60,7 @@ def test_add_ctrl(toy_dset, env):
         sample_col="sample",
         meta_options=("sample",),
     )
+    dset, _ = encode_strs(dset, ("amr_class",))
     assert dset.shape[0] == 500
     assert None not in dset["amr_class"][:]
     mapping: dict = make_control_task(
@@ -177,8 +175,26 @@ def test_score_latents():
     assert scores["sensitivity"].to_list() == [2 / 3, 2 / 3, 2 / 3, 1 / 3, 2 / 3]
 
 
-def test_pp(tmp_path):
-    dataset = load_as(here(JIA, "pooled", "bin-mean"), "huggingface")
+def test_mlp_pp(tmp_path, keys, rdset, env):
+    x_key, sample_key = keys
+    dataset = load_as(rdset("b1") / "pooled" / "kmer10", "huggingface")
+    dataset = with_metadata(dataset, env, "sample", ("ast",)).with_format("torch")
+    dataset["x"][:].dtype
+    feature_file: Path = tmp_path / "features.txt"
+    pp = Preprocessor(
+        method="variance", x_key="x", feature_file=feature_file, quantile_threshold=0.5
+    )
+    # print(dataset)
+    # in_features, n_classes = data_spec(dataset, x_key=x_key)
+    cfg = ModuleConfig(task_type="regression")
+    model = Baseline(x_key=x_key, device="cpu", model=XGBRegressor, cfg=cfg)
+    eva = Evaluator(model=model, how="holdout", preprocessor=pp, trainer=None)
+    eva.cv(dataset)
+
+
+def test_pp(tmp_path, rdset):
+    torch.set_default_dtype(torch.float64)
+    dataset = load_as(here(rdset("mora"), "pooled", "bin-mean"), "huggingface")
     ddict = dataset.train_test_split()
     feature_file: Path = tmp_path / "features.txt"
     pp = Preprocessor(
