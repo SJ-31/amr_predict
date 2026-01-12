@@ -39,8 +39,8 @@ class Baseline:
         self.x_key = x_key
         self.task_names: Sequence | str = cfg.task_names
         self.models: list = [model(**kws) for _ in range(cfg.n_tasks)]
-        self.conf: ModuleConfig = ModuleConfig() if cfg is None else cfg
-        self.task_type: TASK_TYPES = self.conf.task_type
+        self.cfg: ModuleConfig = ModuleConfig() if cfg is None else cfg
+        self.task_type: TASK_TYPES = self.cfg.task_type
         self.device: torch.device = (
             device if isinstance(device, torch.device) else torch.device(device)
         )
@@ -260,11 +260,13 @@ class BaseNN(L.LightningModule):
             self._try_cache_to(f"{prefix}_acc", acc)
 
     def predict_step(self, X):
+        self.eval()
         if isinstance(X, Dataset):
             X = X[self.x_key][:]
         return self(X)
 
     def predict_proba(self, X) -> Tensor | tuple:
+        self.eval()
         X = X[self.x_key][:]
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
         proba = self._to_proba(self(X))
@@ -285,6 +287,8 @@ class BaseNN(L.LightningModule):
             y = None
         elif isinstance(self.task_names, str):
             y = batch[self.task_names]
+        else:
+            raise ValueError("no way to get y")
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, batch=batch, context="train")
         self.log("train_loss", loss)
@@ -368,6 +372,7 @@ class MLP(BaseNN):
         num_layers: int = 2,
         activation: Callable = nn.ReLU,
         x_key: str = "x",
+        batch_norm: bool = True,
         cfg: ModuleConfig | None = None,
     ):
         super().__init__(in_features=in_features, x_key=x_key, cfg=cfg)
@@ -378,17 +383,17 @@ class MLP(BaseNN):
         for _ in range(num_layers):
             layers.append(nn.Linear(in_features=in_features, out_features=hidden_dim))
             layers.append(activation())
-            layers.append(nn.BatchNorm1d(num_features=hidden_dim))
+            if batch_norm:
+                layers.append(nn.BatchNorm1d(num_features=hidden_dim))
             in_features = hidden_dim
         if self.task_type == "classification":
             self.outlayer: nn.ModuleList | None = nn.ModuleList(
-                [nn.Linear(hidden_dim, n) for n in self.conf.n_classes]
+                [nn.Linear(hidden_dim, n) for n in self.cfg.n_classes]
             )
         else:
             self.outlayer = None
             layers.append(nn.Linear(hidden_dim, self.n_tasks))
         self.nn = nn.Sequential(*layers)
-        self.conf: ModuleConfig = cfg or ModuleConfig()
 
     def criterion(
         self,
@@ -398,20 +403,20 @@ class MLP(BaseNN):
         batch: dict | None = None,
         **kws,
     ):
-        if self.conf.task_type == "regression":
+        if self.cfg.task_type == "regression":
             multitask_all_reg(y_pred, y_true)
             loss_dict: dict = multitask_all_reg(
                 y_pred, y_true, task_names=self.task_names, metrics=("mse",)
             )
             losses = torch.hstack([v["mse"] for _, v in loss_dict.items()])
-            if self.conf.task_weights:
-                losses = losses * self.conf.task_weights
+            if self.cfg.task_weights:
+                losses = losses * self.cfg.task_weights
             return losses.sum()
         return multitask_cross_entropy_loss(
             y_pred=y_pred,
             y_true=y_true,
-            model=self if self.conf.record else None,
-            weights=self.conf.task_weights,
+            model=self if self.cfg.record else None,
+            weights=self.cfg.task_weights,
         )
 
     def forward(self, X):
