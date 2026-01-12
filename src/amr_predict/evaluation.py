@@ -243,11 +243,22 @@ def make_control_task(
     added_name: str | None = None,
 ) -> dict | pl.DataFrame | Dataset:
     rng = np.random.default_rng(seed)
-    targets = list(set(data[target_task][:]))
-    control_labels = list(set(data[control_col][:]))
+    was_torch: bool = False
+    if isinstance(tt := data[target_task][:], Tensor):
+        targets = list(set(tt.tolist()))
+        was_torch = True
+    else:
+        targets = list(set(tt))
+    if isinstance(ct := data[control_col][:], Tensor):
+        control_labels = list(set(ct.tolist()))
+        was_torch = True
+    else:
+        control_labels = list(set(ct))
     rng.shuffle(targets)
     rng.shuffle(control_labels)
     if len(control_labels) < len(targets):
+        logger.debug("targets: {}", targets)
+        logger.debug("control labels: {}", control_labels)
         raise ValueError(
             "The number of unique control labels needs to be at least equal to the number of target labels"
         )
@@ -272,7 +283,10 @@ def make_control_task(
         batch[new_col] = [mapping[ctrl] for ctrl in batch[control_col]]
         return batch
 
-    return data.map(replace, batched=True, batch_size=data.shape[0])
+    mapped = data.map(replace, batched=True, batch_size=data.shape[0])
+    if was_torch:
+        return mapped.with_format("torch")
+    return mapped
 
 
 # * SAE metrics
