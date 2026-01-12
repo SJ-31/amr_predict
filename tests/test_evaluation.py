@@ -175,21 +175,49 @@ def test_score_latents():
     assert scores["sensitivity"].to_list() == [2 / 3, 2 / 3, 2 / 3, 1 / 3, 2 / 3]
 
 
-def test_mlp_pp(tmp_path, keys, rdset, env):
+@pytest.mark.parametrize(
+    "fail,with_model_fn",
+    [
+        (True, False),
+        (False, True),
+    ],
+)
+def test_mlp_pp(keys, env, with_model_fn, fail):
     x_key, sample_key = keys
-    dataset = load_as(rdset("b1") / "pooled" / "kmer10", "huggingface")
-    dataset = with_metadata(dataset, env, "sample", ("ast",)).with_format("torch")
-    dataset["x"][:].dtype
-    feature_file: Path = tmp_path / "features.txt"
-    pp = Preprocessor(
-        method="variance", x_key="x", feature_file=feature_file, quantile_threshold=0.5
+    dataset = load_as(
+        here("results", "tests", "esm_test", "datasets", "pooled", "kmer10")
     )
+    dataset = with_metadata(dataset, env, "sample", ("ast",)).with_format("torch")
+    dataset = concatenate_datasets([dataset, dataset, dataset])
+    pp = Preprocessor(method="variance", x_key="x", quantile_threshold=0.5)
     # print(dataset)
-    # in_features, n_classes = data_spec(dataset, x_key=x_key)
-    cfg = ModuleConfig(task_type="regression")
-    model = Baseline(x_key=x_key, device="cpu", model=XGBRegressor, cfg=cfg)
-    eva = Evaluator(model=model, how="holdout", preprocessor=pp, trainer=None)
-    eva.cv(dataset)
+    in_features, n_classes = dataset["x"][:].shape[1], None
+    cfg = ModuleConfig(
+        task_type="regression",
+        task_names=("amikacin", "gentamicin"),
+    )
+    model = MLP(in_features=in_features, x_key=x_key, cfg=cfg)
+    model_fn = None
+    if with_model_fn:
+        model = MLP(in_features=in_features, x_key=x_key, cfg=cfg, batch_norm=True)
+        model_fn = lambda x: MLP(
+            in_features=x, x_key=x_key, cfg=cfg, num_layers=2, batch_norm=True
+        )
+    eva = Evaluator(
+        model=model,
+        preprocessor=pp,
+        trainer=L.Trainer(max_epochs=5),
+        model_fn=model_fn,
+        batch_size=5,
+        drop_last=True,
+    )
+    if fail:
+        with pytest.raises(
+            RuntimeError, match="mat1 and mat2 shapes cannot be multiplied"
+        ):
+            eva.cv(dataset)
+    else:
+        eva.cv(dataset)
 
 
 def test_pp(tmp_path, rdset):

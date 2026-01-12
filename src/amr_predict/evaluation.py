@@ -42,17 +42,25 @@ class Evaluator:
     def __init__(
         self,
         model: MODEL_CLASSES,
-        how: Literal["cv", "holdout"] = "cv",
         preprocessor: Preprocessor | None = None,
         trainer: L.Trainer | None = None,
+        model_fn: Callable[[Any], MODEL_CLASSES] | None = None,
         **kws,
     ) -> None:
+        """
+        Parameters
+        ----------
+        model_fn : Callable
+            Function that takes a single argument: the number of input features (as integer) and
+            returns a trainable model. Required if the preprocessor is expected to change
+            the number of features and `model` needs to be re-instantiated to handle the change
+        """
         self.model: MODEL_CLASSES = model
         self.pp: Preprocessor | None = preprocessor
+        self.model_fn: Callable[[Any], MODEL_CLASSES] | None = model_fn
         self.x_key: str = self.model.x_key
         self.task_type: TASK_TYPES = self.model.cfg.task_type
         self.trainer: L.Trainer | None = trainer
-        self.how: str = how
         self.kws: dict = kws
 
     def _fit(self, train: Dataset, val: Dataset | None = None) -> None:
@@ -180,10 +188,27 @@ class Evaluator:
                 logger.info(f"Validation set shape: {val_dset.shape}")
 
             if self.pp is not None:
+                old_in_features: int = train_dset[self.x_key][:].shape[1]
                 train_dset = self.pp.fit_transform(train_dset)
                 test_dset = self.pp.transform(test_dset)
+                new_in_features: int = train_dset[self.x_key][:].shape[1]
+                if new_in_features != test_dset[self.x_key][:].shape[1]:
+                    raise ValueError(
+                        "Number of features in train and test datasets must be identical after preprocessing"
+                    )
                 if val_dset is not None:
                     val_dset = self.pp.transform(val_dset)
+                    if new_in_features != val_dset[self.x_key][:].shape[1]:
+                        raise ValueError(
+                            "Number of features in train and validation datasets must be identical after preprocessing"
+                        )
+                if new_in_features != old_in_features:
+                    logger.warning("""
+                    Number of features changed during preprocessing.
+                    Ensure the model can handle this if no `model_fn` was passed
+                    """)
+                if self.model_fn is not None:
+                    self.model = self.model_fn(new_in_features)
 
             self._fit(train=train_dset, val=val_dset)
             y_true: Tensor = test_dset.to_polars().select(tasks).to_torch()
