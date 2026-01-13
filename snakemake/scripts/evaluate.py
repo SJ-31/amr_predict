@@ -206,9 +206,10 @@ def cv_control_tasks(model_name, **kws) -> pl.DataFrame | None:
 def summarize_results():
     groups, ttypes = ("cv", "holdout", "ctrl_cv"), ("regression", "classification")
     for group in groups:
+        outdir = smk.params["outdir"] / f".{group}"
+        outdir.mkdir(exist_ok=True)
         for task in ttypes:
             key = f"{group}_{task[0]}"
-            logger.info(key)
             if key not in smk.input.keys():
                 continue
             combined: pl.DataFrame = pl.concat(
@@ -221,15 +222,13 @@ def summarize_results():
                 ]
             )
             metrics = combined["metric"].unique()
-            outdir = smk.params["outdir"] / f".{group}_{task}"
-            outdir.mkdir(exist_ok=True)
             for metric in metrics:
-                metric_outfile = outdir / f"{metric}.png"
+                metric_outfile = outdir / f"{metric}_{task}.png"
                 filtered = combined.filter(pl.col("metric") == metric)
                 bplots = (
-                    gg.ggplot(filtered, gg.aes(x="task", y="value", fill="model"))
+                    gg.ggplot(filtered, gg.aes(x="task", y="value", fill="dataset"))
                     + gg.geom_boxplot()
-                    + gg.facet_wrap("dataset")
+                    + gg.facet_wrap("model")
                 )
                 bplots.save(metric_outfile, **CONFIG["plotnine"]["small"])
             # agg = combined.group_by(["dataset", "model", "task", "metric"]).agg(

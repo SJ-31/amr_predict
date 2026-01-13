@@ -40,22 +40,18 @@ def report_figures(outdir):
     for group in ("cv", "ctrl_cv", "holdout"):
         if group == "holdout" and not config["holdout"]["splits"]:
             continue
-        for task in ("regression", "classification"):
-            if not config["tasks"][task] or task == "regression" and group == "ctrl_cv":
-                continue
-            key = f"{group}_{task}"
-            result[key] = report(
-                directory(f"{outdir}/.{group}_{task}"),
-                patterns=["*.png"],
-                category=GROUP_MAPPING.get(group, group),
-                subcategory=task,
-            )
+        key = f"{group}_{task}"
+        result[key] = report(
+            directory(f"{outdir}/.{group}"),
+            patterns=["{metric}_{task}.png"],
+            category=GROUP_MAPPING.get(group, group),
+            labels={"Metric": "{metric}", "Type": "{task}"},
+        )
 
     return result
 
 
 if TEST:
-    # DEVICE = "cpu"
     config["tasks"]["regression"] = ["amikacin", "gentamicin"]
     config["tasks"]["classification"] = ["amikacin_class", "gentamicin_class"]
     config["cross_validate"]["k_fold"]["n_splits"] = 2
