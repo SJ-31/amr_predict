@@ -20,9 +20,38 @@ for sae_data in ("reconstructed", "sae_activations"):
     if sd_path.exists():
         DATASETS.extend(list(sae_recon.iterdir()))
 
+GROUP_MAPPING = {
+    "ctrl_cv": "Cross-validation (control tasks)",
+    "cv": "Cross-validation",
+}
+METRICS = {
+    "classification": ("kappa", "acc", "mcc", "auroc", "aupr"),
+    "regression": ("mse", "spearman", "pearson", "nrmse"),
+}
+
 
 def default_log(rule_name):
     return f"{LOGDIR}/evaluate-{rule_name}.log"
+
+
+def report_figures(outdir):
+    result = {}
+    file_mapping = {}
+    for group in ("cv", "ctrl_cv", "holdout"):
+        if group == "holdout" and not config["holdout"]["splits"]:
+            continue
+        for task in ("regression", "classification"):
+            if not config["tasks"][task] or task == "regression" and group == "ctrl_cv":
+                continue
+            key = f"{group}_{task}"
+            result[key] = report(
+                directory(f"{outdir}/.{group}_{task}"),
+                patterns=["*.png"],
+                category=GROUP_MAPPING.get(group, group),
+                subcategory=task,
+            )
+
+    return result
 
 
 if TEST:
@@ -61,35 +90,28 @@ all_results = expand(
 
 RESULTS = {}
 for k, v in OUTDIRS.items():
-    RESULTS[k] = {}
     for task in ("regression", "classification"):
-        RESULTS[k][f"{k}_{task[0]}"] = list(
+        RESULTS[f"{k}_{task[0]}"] = list(
             filter(
                 lambda x: x.startswith(v) and x.endswith(f"_{task}.csv"), all_results
             )
         )
-del RESULTS["ctrl_cv"]["ctrl_cv_r"]
-
-
-if TEST:
-    del RESULTS["cv"]["cv_c"]
-    del RESULTS["holdout"]["holdout_c"]
-
-
+del RESULTS["ctrl_cv_r"]
 if not config["holdout"]["splits"]:
+    RESULTS = {k: v for k, v in RESULTS.items() if not k.startswith("holdout")}
 
-    rule all:
-        input:
-            **RESULTS["cv"],
-            **RESULTS["ctrl_cv"],
 
-else:
-
-    rule all:
-        input:
-            **RESULTS["cv"],
-            **RESULTS["ctrl_cv"],
-            **RESULTS["holdout"],
+rule summarize_results:
+    input:
+        **RESULTS,
+    log:
+        default_log("report"),
+    params:
+        outdir=Path(f"{OUT}/{DATE}/evaluation"),
+    output:
+        **report_figures(f"{OUT}/{DATE}/evaluation"),
+    script:
+        "scripts/evaluate.py"
 
 
 for model in config["cross_validate"]["models"]:

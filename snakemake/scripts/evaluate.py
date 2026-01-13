@@ -10,6 +10,7 @@ from typing import Callable, get_args
 import amr_predict.evaluation as ae
 import lightning as L
 import numpy as np
+import plotnine as gg
 import polars as pl
 import torch
 from amr_predict.models import MLP, Baseline
@@ -45,8 +46,9 @@ if smk.rule.startswith("cv"):
 elif smk.rule.startswith("holdout-"):
     RCONFIG = smk.config["holdout"]
 else:
-    raise ValueError("rule matching failed")
+    RCONFIG = {}
 
+CONFIG = smk.config
 MODEL_ENV: dict = smk.config["models"]
 os.environ["HF_HOME"] = smk.config["huggingface"]
 torch.set_default_dtype(torch.float32)
@@ -56,7 +58,8 @@ X_KEY, SAMPLE_KEY = (
     smk.config["pool_embeddings"]["sample_key"],
 )
 
-RCONFIG["validation_kws"]["seed"] = RNG
+if "validation_kws" in RCONFIG:
+    RCONFIG["validation_kws"]["seed"] = RNG
 DEFAULT_TRAIN = smk.config.get("trainer", {})
 DEFAULT_LOADER = smk.config.get("dataloader", {})
 
@@ -200,6 +203,42 @@ def cv_control_tasks(model_name, **kws) -> pl.DataFrame | None:
     return result
 
 
+def summarize_results():
+    groups, ttypes = ("cv", "holdout", "ctrl_cv"), ("regression", "classification")
+    for group in groups:
+        for task in ttypes:
+            key = f"{group}_{task[0]}"
+            logger.info(key)
+            if key not in smk.input.keys():
+                continue
+            combined: pl.DataFrame = pl.concat(
+                [
+                    pl.read_csv(csv).with_columns(
+                        pl.lit(csv.stem.removesuffix(f"_{task}")).alias("dataset"),
+                        pl.lit(csv.parent.stem).alias("model"),
+                    )
+                    for csv in (Path(f) for f in smk.input[key])
+                ]
+            )
+            metrics = combined["metric"].unique()
+            outdir = smk.params["outdir"] / f".{group}_{task}"
+            outdir.mkdir(exist_ok=True)
+            for metric in metrics:
+                metric_outfile = outdir / f"{metric}.png"
+                filtered = combined.filter(pl.col("metric") == metric)
+                bplots = (
+                    gg.ggplot(filtered, gg.aes(x="task", y="value", fill="model"))
+                    + gg.geom_boxplot()
+                    + gg.facet_wrap("dataset")
+                )
+                bplots.save(metric_outfile, **CONFIG["plotnine"]["small"])
+            # agg = combined.group_by(["dataset", "model", "task", "metric"]).agg(
+            #     pl.col("value").mean().alias("mean"),
+            #     pl.col("value").median().alias("median"),
+            #     pl.col("value").std().alias("std"),
+            # )
+
+
 # * Entry
 
 
@@ -278,4 +317,7 @@ def main():
             result.write_csv(outfile)
 
 
-main()
+if smk.rule in globals():
+    globals()[smk.rule]()
+else:
+    main()
