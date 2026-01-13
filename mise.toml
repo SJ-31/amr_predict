@@ -1,0 +1,63 @@
+[vars]
+smk_test_args = "test=True log_wandb=False"
+
+[env]
+SMK_EXECUTOR = "slurm"
+SMK_PROFILE = "profiles/test"
+
+[tasks.smk_test]
+dir = "./snakemake"
+usage = '''
+arg "<file>" default="evaluate.smk" help="snakefile to run"
+flag "-l --local" help="Run locally" default=#false
+'''
+# TODO: want to be able to choose the filename dynamically
+run = '''
+echo "Testing snakefile"
+report=../docs/reports/evaluate_report.zip
+if [[ "${usage_local?}" == "true" ]]; then
+   export SMK_EXECUTOR=local
+   export SMK_PROFILE=profiles/local
+fi
+snakemake -s evaluate.smk --config {{vars.smk_test_args}} \
+          in_date=esm_test embedding=esm \
+          --profile "${SMK_PROFILE}" \
+          --executor "${SMK_EXECUTOR}" \
+          --report-after-run \
+          --report "${report}" 
+unzip "${report}"
+'''
+
+# * Nextflow runs
+[tasks.bacass]
+# TODO: [2026-01-13 Tue] Not yet completed
+dir = "/data/project/stemcell/shannc/repos/amr_predict/pipelines"
+run = '''
+nextflow run -r master nf-core/bacass \
+    -resume \
+    --input ~/amr_predict/config/nf_runs/ast_browser_samplesheet_2025-12-05.csv \
+    --kraken2db "/data/project/stemcell/shannc/repos/amr_predict/cache/k2_standard_16_GB_20250714.tar.gz" \
+    --kmerfinderdb "/data/project/stemcell/shannc/repos/amr_predict/cache/20190108_kmerfinder_stable_dirs.tar.gz" \
+    --outdir "${remote}/output/ast_browser/bacass_2025-12-05" \
+    -profile singularity \
+    --skip_annotation \
+    --skip_kmerfinder \
+    --assembly_type "short" \
+    -c "./nf_config_fix.config"
+'''
+
+[tasks.funcscan]
+dir = ""
+run = '''
+remote=".."
+nextflow run nf-core/funcscan \
+    --input ~/amr_predict/config/nf_runs/funcscan/ast_browser_d-4_2025-12-04.csv \
+    --outdir "${remote}/output/ast_browser/funcscan/batch4" \
+    -profile singularity \
+    --run_arg_screening \
+    --run_amp_screening \
+    --run_bgc_screening \
+    --annotation_tool bakta \
+    --annotation_bakta_db "${remote}/datasets/bakta_db_v5.1_full" \
+    --save_annotations true
+'''
