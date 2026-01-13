@@ -472,7 +472,6 @@ def _compare(is_embeddings: bool = True):
         else:
             adata = load_as(dir, "adata", x_key=X_KEY)
         if adata.X.shape[1] <= 0:
-            logger.debug(adata.X.shape)
             raise ValueError(f"embeddings for {d} have size 0")
         adata = with_metadata(adata, smk.config, "sample", ("sample",))
         adata.obs = adata.obs.replace(

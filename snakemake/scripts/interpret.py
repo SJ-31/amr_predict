@@ -39,7 +39,6 @@ if smk.rule.startswith("train_sae"):
 else:
     RCONFIG = smk.config.get(smk.rule)
 
-RNG: int = smk.config["rng"]
 EMBEDDING = smk.config["embedding"]
 X_KEY = smk.config["pool_embeddings"]["key"]
 TEST = smk.config["test"]
@@ -53,24 +52,59 @@ logger.info(f"cuda available: {torch.cuda.is_available()} (rule {smk.rule})")
 
 
 def get_level_name(path: Path) -> tuple[EMBEDDING_LEVEL, str]:
+    cleaned = path.stem.removeprefix("sae-act_").removeprefix("recon_")
     for level in get_args(EMBEDDING_LEVEL):
-        if path.stem.startswith(level):
-            return level, path.stem.removeprefix(f"{level}_")
-    return "genome-level", path.stem
+        if cleaned.startswith(f"{level}_"):
+            return level, cleaned.removeprefix(f"{level}_")
+    return "genome-level", cleaned
+
+
+def maybe_subsample(
+    data: Dataset | LinkedDataset, level: EMBEDDING_LEVEL
+) -> LinkedDataset | Dataset:
+    is_linked = isinstance(data, LinkedDataset)
+    cols = ["sample"]
+    if level == "sequence-level":
+        cols.append(TEXT_KEY)
+    tmp = data.select_columns(cols)
+    df: pl.DataFrame = tmp.meta if is_linked else tmp.to_polars()
+    if (n := RCONFIG[level].get("n")) and level == "genome-level":
+        chosen = df.with_row_index().sample(
+            n, seed=SEED, with_replacement=False, shuffle=True
+        )["index"]
+        return data.select(chosen.to_list())
+    elif n and level == "sequence-level":
+        chosen_samples = df.unique("sample").sample(
+            n, seed=SEED, with_replacement=False, shuffle=True
+        )["sample"]
+        if is_linked:
+            data = data.filter(lambda x: x["sample"].is_in(chosen_samples))
+        else:
+            data = data.filter(lambda x: x["sample"] in chosen_samples)
+        df = df.filter(pl.col("sample").is_in(chosen_samples))
+    if n_s := RCONFIG[level].get("n_sequence"):
+        idx = []
+        df = df.with_row_index()
+        for _, gdf in df.group_by("sample"):
+            if gdf.height > n_s:
+                gdf = gdf.sample(n_s, seed=SEED, shuffle=True, with_replacement=False)
+            idx.extend(gdf["index"].to_list())
+        data = data.select(idx)
+    return data
 
 
 def get_dataset(
     name: str,
     level: EMBEDDING_LEVEL,
-    model_name: str,
+    model_name: str | None = None,
     key_df: pl.DataFrame | None = None,
 ) -> Dataset | pl.DataFrame:
     if key_df is None:
         key_df = load_as(smk.params["model_dict"][model_name], "polars")
     if level == "genome-level":
-        dset: Dataset = load_as(smk.params["pooled"].joinpath(name)).with_format(
-            "torch"
-        )
+        dset: Dataset = load_as(
+            smk.params["pooled"].joinpath(name), "huggingface"
+        ).with_format("torch")
         dset = dset.filter(lambda x: x["sample"] in key_df["sample"])
         return dset
     cache_path = smk.params["caches"].joinpath(f"{name}_{EMBEDDING}_cache")
@@ -118,6 +152,13 @@ def save_from_sae(reconstruct: bool = False):
             continue
         dataset: Dataset | LinkedDataset = get_dataset(
             dset_name, model_name=Path(dict_path).name, level=level, key_df=None
+        )
+        logger.info(
+            "{} {}, n before subsampling: {}", level, dset_name, dataset.shape[0]
+        )
+        dataset = maybe_subsample(dataset, level)
+        logger.info(
+            "{} {}, n after subsampling: {}", level, dset_name, dataset.shape[0]
         )
         model: L.LightningModule = get_model_with_defaults(dataset)
         model.load_state_dict(torch.load(dict_path, weights_only=True))
@@ -210,7 +251,6 @@ def eval_sae():
         level: EMBEDDING_LEVEL
         level, dset_name = get_level_name(acts_path)
 
-        logger.debug(f"dataset name: {dset_name}")
         concepts: Sequence = RCONFIG["concept_cols"][level]
         meta_cols = ("sample", "ast")
         if level == "sequence-level":
@@ -221,9 +261,25 @@ def eval_sae():
             meta: pl.DataFrame
             if group == "sae":
                 dataset: Dataset = load_as(acts_path)
+            elif group == "model_raw" and level != "genome-level":
+                dataset = get_dataset(
+                    dset_name,
+                    level=level,
+                    key_df=load_as(smk.params["seqs"] / dset_name, "polars"),
+                )
+            elif group == "model_raw":
+                dataset = load_as(smk.params["pooled"] / dset_name)
             else:
-                dataset = load_as(smk.params["seqs"] / dset_name)
-            dataset, meta = with_metadata(dataset, smk.config, meta_cols, align=True)
+                raise ValueError("loading for tokens not implemented yet")
+            dataset, meta = with_metadata(
+                dataset,
+                smk.config,
+                "sample",
+                meta_cols,
+                align=True,
+                dset_name=dset_name,
+            )
+            meta = meta.with_columns(pl.col(concepts).fill_null("unknown"))
             SE: EvalSAE = EvalSAE(dataset[X_KEY][:])
             latent_cats: dict = SE.categorize_latents(dense_threshold=1 / 10, save=True)
             for ltype in ["dead", "dense", "sparse"]:
@@ -242,7 +298,7 @@ def eval_sae():
             topk_plot = RCONFIG["activation_density_topk"]
             SE.drop_latents(drop_dead=True, inplace=True)
             SE.umap(False, **RCONFIG["umap"])
-            logger.debug(f"shape of latent df {SE.acts.shape}")
+            logger.info(f"shape of latent df {SE.acts.shape}")
             latent_clusters: pl.DataFrame = SE.cluster_latents(False)
             for concept in concepts:
                 best_latents: pl.DataFrame = (
@@ -275,7 +331,7 @@ def eval_sae():
                             Exception: {e}
                             """)
                 labels = best_latents["label_max"]
-                logger.debug(f"label shape: {len(meta[concept])}")
+                logger.info(f"Number of labels: {len(meta[concept])}")
                 SE.plot_umap(labels=labels).figure.savefig(
                     umap_outdir / f"{level}_{concept}.png"
                 )
