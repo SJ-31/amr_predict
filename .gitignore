@@ -27,3 +27,6 @@ snakemake/lightning_logs
 /snakemake/tmp.kmc_suf
 /data/meta/who_aware.tsv
 /snakemake/wandb/
+/snakemake/amr_predict/
+/tests/lightning_logs/
+/snakemake/slurm_logs/

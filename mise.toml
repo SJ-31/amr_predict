@@ -25,7 +25,7 @@ snakemake -s evaluate.smk --config {{vars.smk_test_args}} \
           --executor "${SMK_EXECUTOR}" \
           --report-after-run \
           --report "${report}" 
-unzip "${report}"
+unzip "${report}" -d ../docs/reports
 '''
 
 # * Nextflow runs
