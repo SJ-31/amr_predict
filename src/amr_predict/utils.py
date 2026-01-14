@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import reduce
 from pathlib import Path
+from string import ascii_uppercase
 from typing import Any, Literal, TypeAlias, override
 
 import anndata as ad
@@ -1184,6 +1185,26 @@ def translate_df(
 DSET_TYPES: TypeAlias = Dataset | LinkedDataset | ad.AnnData | pl.DataFrame
 
 
+def add_random_cols(
+    df: pl.DataFrame,
+    cols: Sequence | None = None,
+    choices: Sequence | None = None,
+    low=None,
+    high=None,
+) -> pl.DataFrame:
+    cols = cols or df.columns
+    exprs = []
+    for col in cols:
+        if choices is None:
+            ser = pl.Series(np.random.uniform(low, high, df.height)).alias(col)
+        else:
+            ser = pl.Series(np.random.choice(choices, df.height, replace=True)).alias(
+                col
+            )
+        exprs.append(ser)
+    return df.with_columns(*ser)
+
+
 def with_metadata(
     dset: DSET_TYPES,
     cfg: dict,
@@ -1192,6 +1213,7 @@ def with_metadata(
     align: bool = False,
     dset_name: str | None = None,
 ) -> DSET_TYPES | tuple[DSET_TYPES, pl.DataFrame]:
+    for_test: bool = cfg["test"]
     if isinstance(dset, ad.AnnData):
         merging: pl.DataFrame = pl.from_pandas(dset.obs)
     elif isinstance(dset, pl.DataFrame):
@@ -1209,14 +1231,36 @@ def with_metadata(
                 "dataset name must be provided if requesting sequence metadata"
             )
         elif m == "sequence":
-            key = "tests" if cfg["test"] else "root"
+            key = "tests" if for_test else "root"
             path = f"{cfg["out"][key]}/{cfg['in_date']}/datasets/processed_sequences/{dset_name}"
             df = load_as(path, "polars").with_columns(
                 pl.any_horizontal(cs.contains("gene").is_not_null()).alias("in_gene")
             )
+            df = add_random_cols(
+                df,
+                cols=filter(lambda x: "gene" in x, df.columns),
+                choices=list(ascii_uppercase)[:10],
+            )
             key_col = "uid"
         elif m in {"ast", "sample"}:
-            df = read_tabular(cfg[f"{m}_metadata"]["file"]).with_columns(
+            key_col = cfg[f"{m}_metadata"]["id_col"]
+            df = read_tabular(cfg[f"{m}_metadata"]["file"])
+            if for_test and m == "ast":
+                class_cols = filter(lambda x: x.endswith("_class"), df.columns)
+                other_cols = filter(
+                    lambda x: x != key_col and not x.endswith("_class"), df.columns
+                )
+                df = add_random_cols(
+                    df, class_cols, ["resistant", "susceptible", "intermediate"]
+                )
+                df = add_random_cols(df, other_cols, low=0.01, high=1024)
+            elif for_test:
+                df = add_random_cols(
+                    df,
+                    filter(lambda x: x != key_col, df.columns),
+                    choices=list(ascii_uppercase)[:15],
+                )
+            df = df.with_columns(
                 pl.any_horizontal(cs.ends_with("_class") == "resistant").alias(
                     "any_resistant"
                 ),
@@ -1224,7 +1268,6 @@ def with_metadata(
                     "any_susceptible"
                 ),
             )
-            key_col = cfg[f"{m}_metadata"]["id_col"]
         else:
             raise ValueError(
                 f"metadata type `{m}` must be one of 'ast', 'sequence', 'sample'"
