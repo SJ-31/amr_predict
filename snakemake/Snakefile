@@ -58,7 +58,7 @@ else:
         "gres": "gpu:3g.20gb:1",
         "slurm_partition": "gpu",
     }
-    BIG_MEM = {"mem": "70G"}
+    BIG_MEM = {"mem": "100G"}
     GPU40 = {
         "mem": "64G",
         "qos": "gpu40g",

@@ -76,7 +76,7 @@ rule compare_embeddings:
     log:
         default_log("main"),
     script:
-        "scripts/reporting.py"
+        "scripts/compare_embeddings.py"
 
 
 rule compare_pooled:
@@ -89,4 +89,4 @@ rule compare_pooled:
     log:
         default_log("pooled"),
     script:
-        "scripts/reporting.py"
+        "scripts/compare_embeddings.py"

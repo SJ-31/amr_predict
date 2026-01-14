@@ -231,6 +231,8 @@ def summarize_results():
                     + gg.facet_wrap("model")
                 )
                 bplots.save(metric_outfile, **CONFIG["plotnine"]["small"])
+            # TODO: generate aggregated files for datavzrd
+            # TODO:
             # agg = combined.group_by(["dataset", "model", "task", "metric"]).agg(
             #     pl.col("value").mean().alias("mean"),
             #     pl.col("value").median().alias("median"),

@@ -246,7 +246,6 @@ def save_activations():
 def eval_sae():
     latent_summary = {"type": [], "dataset": [], "count": [], "activation_source": []}
     concept_scoring = []
-    # TODO: refactor this to use the saved activations
     for acts_path in (Path(ap) for ap in smk.input):
         level: EMBEDDING_LEVEL
         level, dset_name = get_level_name(acts_path)
@@ -297,9 +296,13 @@ def eval_sae():
             # so many specific cases. Or is this a good thing?
             topk_plot = RCONFIG["activation_density_topk"]
             SE.drop_latents(drop_dead=True, inplace=True)
-            SE.umap(False, **RCONFIG["umap"])
             logger.info(f"shape of latent df {SE.acts.shape}")
+            logger.info("Starting umap")
+            SE.umap(False, **RCONFIG["umap"])
+            logger.success("umap complete")
+            logger.info("Starting latent clustering")
             latent_clusters: pl.DataFrame = SE.cluster_latents(False)
+            logger.success("Clustering complete")
             for concept in concepts:
                 best_latents: pl.DataFrame = (
                     SE.score_latents(labels=meta[concept])
