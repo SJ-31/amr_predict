@@ -1202,7 +1202,7 @@ def add_random_cols(
                 col
             )
         exprs.append(ser)
-    return df.with_columns(*ser)
+    return df.with_columns(*exprs)
 
 
 def with_metadata(
@@ -1245,21 +1245,6 @@ def with_metadata(
         elif m in {"ast", "sample"}:
             key_col = cfg[f"{m}_metadata"]["id_col"]
             df = read_tabular(cfg[f"{m}_metadata"]["file"])
-            if for_test and m == "ast":
-                class_cols = filter(lambda x: x.endswith("_class"), df.columns)
-                other_cols = filter(
-                    lambda x: x != key_col and not x.endswith("_class"), df.columns
-                )
-                df = add_random_cols(
-                    df, class_cols, ["resistant", "susceptible", "intermediate"]
-                )
-                df = add_random_cols(df, other_cols, low=0.01, high=1024)
-            elif for_test:
-                df = add_random_cols(
-                    df,
-                    filter(lambda x: x != key_col, df.columns),
-                    choices=list(ascii_uppercase)[:15],
-                )
             df = df.with_columns(
                 pl.any_horizontal(cs.ends_with("_class") == "resistant").alias(
                     "any_resistant"
@@ -1272,15 +1257,32 @@ def with_metadata(
             raise ValueError(
                 f"metadata type `{m}` must be one of 'ast', 'sequence', 'sample'"
             )
+
         merging = merging.join(
             df, left_on=sample_col, right_on=key_col, how="left", maintain_order="left"
         )
+        if for_test and m == "ast":
+            class_cols = list(filter(lambda x: x.endswith("_class"), df.columns))
+            other_cols = list(
+                filter(lambda x: x != key_col and not x.endswith("_class"), df.columns)
+            )
+            merging = add_random_cols(
+                merging, class_cols, ["resistant", "susceptible", "intermediate"]
+            )
+            merging = add_random_cols(merging, other_cols, low=0.01, high=1024)
+        elif for_test:
+            merging = add_random_cols(
+                merging,
+                filter(lambda x: x != key_col, df.columns),
+                choices=list(ascii_uppercase)[:15],
+            )
         tmp = (merging.null_count() / merging.height).unpivot()
         null_dict = dict(zip(tmp["variable"], tmp["value"]))
         logger.info(
             "Percentage of nulls in merged metadata\n{}",
             null_dict,
         )
+    logger.debug("Merging df: {}", merging)
     if not align and isinstance(dset, ad.AnnData):
         new = dset.copy()
         new.obs = merging.to_pandas()
