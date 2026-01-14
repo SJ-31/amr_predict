@@ -249,7 +249,7 @@ def compare_pair_distribution(
             results.from_test(test, metric=metric, method="ks_2samp", name=col)
             raw_dists.append(
                 pl.DataFrame({"unrelated": unrel_dist, "related": rel_dist})
-                .unpivot(variable_name="pair_type", value_name="distance")
+                .unpivot(variable_name="group", value_name="value")
                 .with_columns(pl.lit(col).alias("name"))
             )
 
@@ -293,6 +293,7 @@ def covar_dist(
     """
     gen = np.random.default_rng(rng)
     df = adata.obs
+    raw_vals = []
     if n_bootstrap:
         pair_mat = gen.choice(
             list(range(adata.shape[0])), (n_bootstrap, 2), replace=True
@@ -327,6 +328,11 @@ def covar_dist(
         else:
             covar_dist = np.abs(df[col].iloc[x].values - df[col].iloc[y].values)
         test = spearmanr(edist, covar_dist)
+        raw_vals.append(
+            pl.DataFrame(
+                {"embedding_distance": edist, "covariate_distance": covar_dist}
+            ).with_columns(pl.lit(col).alias("name"))
+        )
         logger.info("Spearman correlation calculated")
         logger.info(test)
         results.from_test(
@@ -336,7 +342,7 @@ def covar_dist(
             name=col,
         )
         logger.success(f"Routine for column {col} complete")
-    return pl.DataFrame(asdict(results))
+    return pl.DataFrame(asdict(results)), pl.concat(raw_vals)
 
 
 def comparison_routine(
@@ -345,7 +351,7 @@ def comparison_routine(
     outdir: Path,
     round: int,
     color_keys: dict,
-    pair_distance_acc: list,
+    raw_acc: dict[str, list],
 ) -> pl.DataFrame:
     sc.pp.pca(adata)
     sc.pp.neighbors(adata)
@@ -403,12 +409,12 @@ def comparison_routine(
                 **cur_config["kws"],
             )
             if raw_dist.height > 0:
-                pair_distance_acc.append(raw_dist)
+                raw_acc[metric_group].append(raw_dist)
         elif metric_group == "neighbor_preserving_score":
             raise NotImplementedError()
 
         elif metric_group == "covariate_distance_correlation":
-            cur_df = covar_dist(
+            cur_df, raw_dist = covar_dist(
                 adata,
                 columns=cols,
                 distance_metric=cur_config["distance_metric"],
@@ -417,6 +423,8 @@ def comparison_routine(
                 seq_start_col=cur_config.get("seq_start_col"),
                 seq_end_col=cur_config.get("seq_end_col"),
             )
+            if raw_dist.height > 0:
+                raw_acc[metric_group].append(raw_dist)
         result_dfs.append(cur_df)
     return pl.concat(result_dfs, how="diagonal_relaxed")
 
@@ -425,8 +433,24 @@ def comparison_routine(
 
 
 def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
+    """
+    Helper function for running comparison routine with bootstrap samples
+
+    Parameters
+    ----------
+    df_acc :
+
+    Notes
+    -----
+    The dictionary `raw_acc` accumulates raw values from
+    metric computations below for plotting purposes
+    `covar_dist`: collects the sampled paired values of embeddings
+    and covariates
+    `compare_pair_distribution`: collects the sampled distances between unrelated and
+        related pairs of samples
+    """
     dfs = []
-    pair_distance_dfs = []
+    raw_acc = defaultdict(list)
     outdir = Path(smk.params["outdir"])
     for i in range(RCONFIG["bootstrap_rounds"]):
         logger.info(f"Start of bootstrap round {i}")
@@ -449,7 +473,7 @@ def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
                 color_keys=color_keys,
                 outdir=outdir,
                 round=i,
-                pair_distance_acc=pair_distance_dfs,
+                raw_acc=raw_acc,
             )
             dfs.append(cur.with_columns(dataset=pl.lit(dset_name)))
         logger.success(f"Bootstrap round {i} complete")
@@ -468,10 +492,11 @@ def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
         df_acc.append(aggregated)
     else:
         df_acc.extend(dfs)
-    if len(pair_distance_dfs) > 1:
-        pl.concat(pair_distance_dfs).write_csv(
-            outdir.joinpath(f".{smk.rule}_{dset_name}_pair_distances.csv")
-        )
+    for k, df_list in raw_acc.items():
+        if len(df_list) > 1:
+            pl.concat(df_list).write_csv(
+                outdir.joinpath(f".{smk.rule}-{k}_raw-{dset_name}.csv")
+            )
 
 
 # ** Embedding comparison
