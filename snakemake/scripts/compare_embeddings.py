@@ -215,7 +215,7 @@ def compare_pair_distribution(
     columns: Sequence,
     distance_metric: str = "cosine",
     **kws,
-) -> pl.DataFrame:
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
     Compare the distribution of distances between related and unrelated sample pairs,
         randomly drawn from `adata`
@@ -229,6 +229,7 @@ def compare_pair_distribution(
     results: LongResults = LongResults()
     kws = kws or {}
     metric = "pair_distribution"
+    raw_dists = []
     for col in columns:
         related, unrelated = sample_pairs(adata.obs, col, **kws)
         logger.info(f"Comparing pair distribution for column {col}")
@@ -246,6 +247,11 @@ def compare_pair_distribution(
             test = ks_2samp(rel_dist, unrel_dist, alternative="greater")  # Alternative
             # is defined in terms of CDFs
             results.from_test(test, metric=metric, method="ks_2samp", name=col)
+            raw_dists.append(
+                pl.DataFrame({"unrelated": unrel_dist, "related": rel_dist})
+                .unpivot(variable_name="pair_type", value_name="distance")
+                .with_columns(pl.lit(col).alias("name"))
+            )
 
             results.add(
                 metric,
@@ -259,6 +265,7 @@ def compare_pair_distribution(
             results.add(metric, "kl_div", np.nan, col, np.nan)
 
         logger.success(f"Pair distribution of {col} complete")
+    raw_df = pl.concat(raw_dists) if raw_dists else pl.DataFrame()
     return pl.DataFrame(
         asdict(results),
         schema={
@@ -268,7 +275,7 @@ def compare_pair_distribution(
             "p_value": pl.Float64,
             "name": pl.String,
         },
-    )
+    ), raw_df
 
 
 def covar_dist(
@@ -338,6 +345,7 @@ def comparison_routine(
     outdir: Path,
     round: int,
     color_keys: dict,
+    pair_distance_acc: list,
 ) -> pl.DataFrame:
     sc.pp.pca(adata)
     sc.pp.neighbors(adata)
@@ -388,12 +396,14 @@ def comparison_routine(
             cur_df = pl.concat(to_concat, how="diagonal_relaxed")
         elif metric_group == "pair_distance_distribution":
             cur_config["kws"]["rng"] = RNG
-            cur_df = compare_pair_distribution(
+            cur_df, raw_dist = compare_pair_distribution(
                 adata,
                 columns=cols,
                 distance_metric=cur_config["distance_metric"],
                 **cur_config["kws"],
             )
+            if raw_dist.height > 0:
+                pair_distance_acc.append(raw_dist)
         elif metric_group == "neighbor_preserving_score":
             raise NotImplementedError()
 
@@ -416,6 +426,8 @@ def comparison_routine(
 
 def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
     dfs = []
+    pair_distance_dfs = []
+    outdir = Path(smk.params["outdir"])
     for i in range(RCONFIG["bootstrap_rounds"]):
         logger.info(f"Start of bootstrap round {i}")
         logger.info(f"Running with n = {adata.shape[0]} samples")
@@ -435,8 +447,9 @@ def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
                 adata=subsampled,
                 dataset_name=dset_name,
                 color_keys=color_keys,
-                outdir=Path(smk.params["outdir"]),
+                outdir=outdir,
                 round=i,
+                pair_distance_acc=pair_distance_dfs,
             )
             dfs.append(cur.with_columns(dataset=pl.lit(dset_name)))
         logger.success(f"Bootstrap round {i} complete")
@@ -455,6 +468,10 @@ def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
         df_acc.append(aggregated)
     else:
         df_acc.extend(dfs)
+    if len(pair_distance_dfs) > 1:
+        pl.concat(pair_distance_dfs).write_csv(
+            outdir.joinpath(f".{smk.rule}_{dset_name}_pair_distances.csv")
+        )
 
 
 # ** Embedding comparison
