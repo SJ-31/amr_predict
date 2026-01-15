@@ -7,6 +7,7 @@ import matplotlib
 import plotnine as gg
 import polars as pl
 from loguru import logger
+from plotnine.helpers import get_aesthetic_limits
 
 matplotlib.use("QtAgg")
 # BUG: [2026-01-14 Wed] due to issues with Tkinter backend on local
@@ -37,7 +38,7 @@ def nn_plot(
     metrics: pl.DataFrame,
     batch_value: Literal["mean", "median"] = "mean",
     composition_size: tuple[int, int] = (20, 10),
-):
+) -> dict:
     df = metrics.filter(pl.col("method").str.starts_with("nn_")).with_columns(
         pl.col("p_value")
         .cast(pl.String)
@@ -108,7 +109,9 @@ def nn_plot(
     return result
 
 
-def covar_dist_plot(metrics: pl.DataFrame, raw: pl.DataFrame) -> gg.ggplot:
+def covar_dist_plot(
+    metrics: pl.DataFrame, raw: pl.DataFrame, log_x: bool = True
+) -> gg.ggplot:
     df = raw.join(
         metrics.filter(pl.col("metric") == "covariate_distance_correlation"),
         on=("name", "dataset"),
@@ -132,12 +135,68 @@ def covar_dist_plot(metrics: pl.DataFrame, raw: pl.DataFrame) -> gg.ggplot:
         + gg.xlab("Embedding distance")
         + gg.ylab("Covariate distance")
         + gg.geom_text(
-            gg.aes(x=0, y=0, label="annotation"), stat="unique", ha="left", alpha=0.7
+            gg.aes(x=0, y=0, label="annotation"),
+            stat="unique",
+            ha="left",
+            alpha=0.7,
         )
     )
+    if log_x:
+        corr_plot = (
+            corr_plot
+            + gg.scale_x_log10()
+            + gg.theme(panel_grid_minor_x=gg.element_blank())
+        )
     return corr_plot
 
-    df = metrics.filter(pl.col("metric") == "pair_distribution")
+
+def pair_dist_plot(
+    metrics: pl.DataFrame, raw: pl.DataFrame, bins: int = 15, log_x: bool = True
+) -> gg.ggplot:
+    df = raw.join(
+        metrics.filter(
+            (pl.col("metric") == "pair_distribution")
+            & (~pl.col("method").str.ends_with("pairs"))
+        ).pivot(on="method", values=["value", "p_value"]),
+        on=["name", "dataset"],
+        how="left",
+    ).with_columns(
+        pl.struct(["value_kl_div", "p_value_ks_2samp"])
+        .map_elements(
+            lambda x: f"{round(x["value_kl_div"], 3)} (p: {round(x["p_value_ks_2samp"], 3)})",
+            return_dtype=pl.String,
+        )
+        .alias("annotation")
+    )
+    plot = (
+        gg.ggplot(df, gg.aes(x="value", fill="group"))
+        + gg.geom_histogram(bins=bins)
+        + gg.facet_grid("name ~ dataset")
+    )
+    ylim = max([max(lim) for lim in get_aesthetic_limits(plot, "y")])
+    plot = plot + gg.geom_text(
+        gg.aes(label="annotation", y=ylim, x=0),
+        stat="unique",
+        ha="left",
+        va="top",
+        alpha=0.7,
+    )
+    if log_x:
+        plot = (
+            plot + gg.scale_x_log10() + gg.theme(panel_grid_minor_x=gg.element_blank())
+        )
+    return plot
+
+
+def cluster_metric_plot(metrics: pl.DataFrame) -> gg.ggplot:
+    df = metrics.filter(pl.col("method").is_in(("leiden", "hclust")))
+    plot = (
+        gg.ggplot(df, gg.aes(x="method", y="value", fill="dataset"))
+        + gg.geom_col(stat="identity", position="dodge")
+        + gg.facet_grid("metric ~ name")
+    )
+    return plot
+
 
 
 # ** Evaluation
