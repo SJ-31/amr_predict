@@ -19,7 +19,6 @@ try:
 except ImportError:
     smk = type("snakemake", (), {"rule": None, "config": {}, "log": [0]})
 
-RCONFIG = smk.config.get(smk.rule)
 RNG: int = smk.config.get("rng")
 logger.enable("amr_predict")
 
@@ -29,6 +28,14 @@ CONFIG = smk.config
 
 
 # * Plotting functions
+
+
+def plot_params(key: str):
+    top = CONFIG["report_plots"]
+    lookup = top.get(key)
+    if not lookup:
+        return top["default"]
+    return lookup
 
 
 def safe_round(val, to: int = 3):
@@ -44,6 +51,7 @@ def safe_round(val, to: int = 3):
 # "metrics.csv" produced by compare_embeddings
 
 
+# TODO: should break this up, it's too small
 def nn_plot(
     metrics: pl.DataFrame,
     batch_value: Literal["mean", "median"] = "mean",
@@ -261,7 +269,7 @@ def evaluation():
                     + gg.geom_boxplot()
                     + gg.facet_wrap("model")
                 )
-                bplots.save(metric_outfile, **CONFIG["plotnine"]["small"])
+                bplots.save(metric_outfile, **plot_params("evaluation"))
             # TODO: generate aggregated files for datavzrd
             # TODO:
             # agg = combined.group_by(["dataset", "model", "task", "metric"]).agg(
@@ -309,7 +317,7 @@ def embedding_comparison():
                 plot = cluster_metric_plot(all_metrics)
             else:
                 raise ValueError("method not recognized")
-            plot.save(save_file, width=15, height=10)
+            plot.save(save_file, **plot_params("embedding_comparison"))
     except Exception as e:
         shutil.rmtree(outdir)
         raise e
