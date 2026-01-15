@@ -11,6 +11,7 @@ usage = '''
 flag "-e --test" help="Test run" default=#false
 flag "-d --date [date]" help="Date of run" default="no_date"
 flag "-i --in_date [date]" help="Input run date" default="no_date"
+flag "-c --clear" help="Delete all output before running" default=#false
 '''
 run = '''
 report="../docs/reports/${usage_date}.zip"
@@ -18,13 +19,18 @@ conf=""
 if [[ "${usage_test}" == "true" ]]; then
    conf={{vars.smk_test_args}}
 fi
+args="--profile profiles/local --executor local"
+if [[ "${usage_clear}" == "true" ]]; then
+   snakemake -s report.smk --config ${conf} \
+          in_date=${usage_in_date} \
+          date=${usage_date} \
+          --delete-all-output ${args}
+fi
 snakemake -s report.smk --config ${conf} \
           in_date=${usage_in_date} \
           date=${usage_date} \
-          --report-after-run --report ${report} \
-          --profile profiles/local \
-          --executor local
-unzip "${report}" -d ../docs/reports
+          --report-after-run --report ${report} ${args}
+unzip -q -o "${report}" -d ../docs/reports
 '''
 
 [tasks.smk_test]
