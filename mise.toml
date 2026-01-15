@@ -5,6 +5,28 @@ smk_test_args = "test=True log_wandb=False"
 SMK_EXECUTOR = "slurm"
 SMK_PROFILE = "profiles/test"
 
+[tasks.report]
+dir = "./snakemake"
+usage = '''
+flag "-e --test" help="Test run" default=#false
+flag "-d --date [date]" help="Date of run" default="no_date"
+flag "-i --in_date [date]" help="Input run date" default="no_date"
+'''
+run = '''
+report="../docs/reports/${usage_date}.zip"
+conf=""
+if [[ "${usage_test}" == "true" ]]; then
+   conf={{vars.smk_test_args}}
+fi
+snakemake -s report.smk --config ${conf} \
+          in_date=${usage_in_date} \
+          date=${usage_date} \
+          --report-after-run --report ${report} \
+          --profile profiles/local \
+          --executor local
+unzip "${report}" -d ../docs/reports
+'''
+
 [tasks.smk_test]
 dir = "./snakemake"
 # TODO: make note that whatever is in the <> or [] are just to show the help information
@@ -14,33 +36,17 @@ arg "<file>" default="evaluate.smk" help="snakefile to run"
 flag "-l --local" help="Run locally" default=#false
 flag "-d --date [date]" help="Date of run" default="no_date"
 flag "-i --in_date [date]" help="Input run date" default="esm_test"
-flag "-r --report" help="Generate report from run" default=#false
 '''
 run = '''
-report="../docs/reports/${usage_file/.smk/}.zip"
-report_args="--report-after-run --report ${report}"
 if [[ "${usage_local?}" == "true" ]]; then
    export SMK_EXECUTOR=local
    export SMK_PROFILE=profiles/local
-fi
-if [[ "${usage_report}" == "false" ]]; then
-   report_args=""
 fi
 snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
           in_date=${usage_in_date} embedding=esm \
           date=${usage_date} \
           --profile "${SMK_PROFILE}" \
-          ${report_args} \
           --executor "${SMK_EXECUTOR}" 
-if [[ "${usage_report}" == "true" ]]; then
-   unzip "${report}" -d ../docs/reports
-fi
-'''
-
-[tasks.report]
-# TODO: should take "DATE" and generate report from that
-run = '''
-snakemake -s report.smk --config
 '''
 
 
