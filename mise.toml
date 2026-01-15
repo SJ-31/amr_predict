@@ -7,26 +7,42 @@ SMK_PROFILE = "profiles/test"
 
 [tasks.smk_test]
 dir = "./snakemake"
+# TODO: make note that whatever is in the <> or [] are just to show the help information
+# for flags. For args, it is the usage parameter name
 usage = '''
 arg "<file>" default="evaluate.smk" help="snakefile to run"
 flag "-l --local" help="Run locally" default=#false
+flag "-d --date [date]" help="Date of run" default="no_date"
+flag "-i --in_date [date]" help="Input run date" default="esm_test"
+flag "-r --report" help="Generate report from run" default=#false
 '''
-# TODO: want to be able to choose the filename dynamically
 run = '''
-echo "Testing snakefile"
-report=../docs/reports/evaluate_report.zip
+report="../docs/reports/${usage_file/.smk/}.zip"
+report_args="--report-after-run --report ${report}"
 if [[ "${usage_local?}" == "true" ]]; then
    export SMK_EXECUTOR=local
    export SMK_PROFILE=profiles/local
 fi
-snakemake -s evaluate.smk --config {{vars.smk_test_args}} \
-          in_date=esm_test embedding=esm \
+if [[ "${usage_report}" == "true" ]]; then
+   report_args=""
+fi
+snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
+          in_date=${usage_in_date} embedding=esm \
+          date=${usage_date} \
           --profile "${SMK_PROFILE}" \
           --executor "${SMK_EXECUTOR}" \
-          --report-after-run \
-          --report "${report}" 
-unzip "${report}" -d ../docs/reports
+          "${report_args}"
+if [[ "${usage_report}" == "true" ]]; then
+   unzip "${report}" -d ../docs/reports
+fi
 '''
+
+[tasks.report]
+# TODO: should take "DATE" and generate report from that
+run = '''
+snakemake -s report.smk --config
+'''
+
 
 # * Nextflow runs
 [tasks.bacass]
@@ -46,13 +62,20 @@ nextflow run -r master nf-core/bacass \
     -c "./nf_config_fix.config"
 '''
 
-[tasks.funcscan]
-dir = ""
+[tasks.ast_funcscan]
+# NOTE: batch 4 on [2026-01-08 Thu]
+dir = "/data/project/stemcell/shannc/repos/amr_predict/pipelines"
+usage = '''
+arg "[batch]" help="Choice of batch" {
+    choices "1" "2" "3" "4" "5"
+    default "4"
+}
+'''
 run = '''
 remote=".."
 nextflow run nf-core/funcscan \
-    --input ~/amr_predict/config/nf_runs/funcscan/ast_browser_d-4_2025-12-04.csv \
-    --outdir "${remote}/output/ast_browser/funcscan/batch4" \
+    --input ~/amr_predict/config/nf_runs/funcscan/ast_browser_d-${usage_batch}_2025-12-04.csv \
+    --outdir "${remote}/output/ast_browser/funcscan/batch${usage_batch}" \
     -profile singularity \
     --run_arg_screening \
     --run_amp_screening \
