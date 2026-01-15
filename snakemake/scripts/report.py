@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import shutil
 from pathlib import Path
 from typing import Literal
 
@@ -29,6 +30,15 @@ CONFIG = smk.config
 
 # * Plotting functions
 
+
+def safe_round(val, to: int = 3):
+    if isinstance(val, str):
+        val = float(val)
+    if val is not None:
+        return round(val, to)
+    return val
+
+
 # ** Compare embeddings
 # In the functions below, "metrics" is the dataframe obtained by reading
 # "metrics.csv" produced by compare_embeddings
@@ -43,7 +53,9 @@ def nn_plot(
         pl.col("p_value")
         .cast(pl.String)
         .replace("NaN", "")
-        .map_elements(lambda x: f"p: {x}" if x else x, return_dtype=pl.String),
+        .map_elements(
+            lambda x: f"p: {safe_round(x)}" if x else x, return_dtype=pl.String
+        ),
         pl.col("metric").replace_strict(
             {"observed_avg": "Observed", "null_avg": "Null"}
         ),
@@ -62,7 +74,8 @@ def nn_plot(
             gg.ggplot(cur, gg.aes(x="metric", y=y_col, fill="dataset"))
             + gg.geom_col(stat="identity", position="dodge")
             + gg.geom_label(
-                gg.aes(label="p_value"), position=gg.position_dodge(width=0.9)
+                gg.aes(label="p_value"),
+                position=gg.position_dodge(width=0.9),
             )
         )
         if is_bootstrap:
@@ -88,7 +101,7 @@ def nn_plot(
         facet="name",
     )
     imp_plot = plot_helper(
-        df.filter(pl.col("method") == "nn_impurity").with_columns(pl.col("value")),
+        df.filter(pl.col("method") == "nn_impurity").with_columns(pl.col(y_col)),
         "Gini impurity by labels",
         "Impurity",
         facet="name",
@@ -110,16 +123,20 @@ def nn_plot(
 
 
 def covar_dist_plot(
-    metrics: pl.DataFrame, raw: pl.DataFrame, log_x: bool = True
+    metrics: pl.DataFrame,
+    raw: pl.DataFrame,
+    log_x: bool = True,
+    batch_value: Literal["mean", "median"] = "mean",
 ) -> gg.ggplot:
+    y_col = batch_value if "mean" in metrics.columns else "value"
     df = raw.join(
         metrics.filter(pl.col("metric") == "covariate_distance_correlation"),
         on=("name", "dataset"),
         how="left",
     ).with_columns(
-        pl.struct(["p_value", "value"])
+        pl.struct(["p_value", y_col])
         .map_elements(
-            lambda x: f"{round(x["value"], 3)} (p: {round(x['p_value'], 3)})",
+            lambda x: f"{safe_round(x[y_col])} (p: {safe_round(x['p_value'])})",
             return_dtype=pl.String,
         )
         .alias("annotation")
@@ -151,19 +168,24 @@ def covar_dist_plot(
 
 
 def pair_dist_plot(
-    metrics: pl.DataFrame, raw: pl.DataFrame, bins: int = 15, log_x: bool = True
+    metrics: pl.DataFrame,
+    raw: pl.DataFrame,
+    bins: int = 15,
+    log_x: bool = True,
+    batch_value: Literal["mean", "median"] = "mean",
 ) -> gg.ggplot:
+    value = batch_value if "mean" in metrics.columns else "value"
     df = raw.join(
         metrics.filter(
             (pl.col("metric") == "pair_distribution")
             & (~pl.col("method").str.ends_with("pairs"))
-        ).pivot(on="method", values=["value", "p_value"]),
+        ).pivot(on="method", values=[value, "p_value"]),
         on=["name", "dataset"],
         how="left",
     ).with_columns(
-        pl.struct(["value_kl_div", "p_value_ks_2samp"])
+        pl.struct([f"{value}_kl_div", "p_value_ks_2samp"])
         .map_elements(
-            lambda x: f"{round(x["value_kl_div"], 3)} (p: {round(x["p_value_ks_2samp"], 3)})",
+            lambda x: f"{safe_round(x[f"{value}_kl_div"])} (p: {safe_round(x["p_value_ks_2samp"])})",
             return_dtype=pl.String,
         )
         .alias("annotation")
@@ -173,7 +195,12 @@ def pair_dist_plot(
         + gg.geom_histogram(bins=bins)
         + gg.facet_grid("name ~ dataset")
     )
-    ylim = max([max(lim) for lim in get_aesthetic_limits(plot, "y")])
+    ylim = max(
+        [
+            max(lim) if isinstance(lim, tuple) else lim
+            for lim in get_aesthetic_limits(plot, "y")
+        ]
+    )
     plot = plot + gg.geom_text(
         gg.aes(label="annotation", y=ylim, x=0),
         stat="unique",
@@ -188,24 +215,26 @@ def pair_dist_plot(
     return plot
 
 
-def cluster_metric_plot(metrics: pl.DataFrame) -> gg.ggplot:
+def cluster_metric_plot(
+    metrics: pl.DataFrame, batch_value: Literal["mean", "median"] = "mean"
+) -> gg.ggplot:
+    value = batch_value if "mean" in metrics.columns else "value"
     df = metrics.filter(pl.col("method").is_in(("leiden", "hclust")))
     plot = (
-        gg.ggplot(df, gg.aes(x="method", y="value", fill="dataset"))
+        gg.ggplot(df, gg.aes(x="method", y=value, fill="dataset"))
         + gg.geom_col(stat="identity", position="dodge")
         + gg.facet_grid("metric ~ name")
     )
     return plot
 
 
+# * Rule functions
 
-# ** Evaluation
 
-
-def evaluation_plots():
+def evaluation():
     groups, ttypes = ("cv", "holdout", "ctrl_cv"), ("regression", "classification")
     for group in groups:
-        outdir = smk.params["outdir"] / f".{group}"
+        outdir = Path(smk.params["outdir"]) / f".{group}"
         outdir.mkdir(exist_ok=True)
         for task in ttypes:
             key = f"{group}_{task[0]}"
@@ -239,9 +268,53 @@ def evaluation_plots():
             # )
 
 
+# TODO: make the plot parameters configurable
 def embedding_comparison():
-    metrics: pl.DataFrame = pl.read_csv(smk.input)
-    # Will need to make bespoke tables or plots for each metric group
-    # e.g. pair distribution can be barcharts faceted by method (after removing
-    # ks_2samp). name should be x, value y, dataset the fill
-    # for j
+    dir = Path(smk.input[0])
+    outdir = Path(smk.output[0])
+    outdir.mkdir(exist_ok=True)
+    all_metrics: pl.DataFrame = pl.concat(
+        [pl.read_csv(file) for file in dir.glob("*metrics.csv")]
+    )
+    try:
+        for method in smk.config[smk.params["rule"]]["methods"]:
+            save_file = outdir / f"{method}.png"
+            if method == "neighbor_proportion":
+                nn: dict = nn_plot(all_metrics)
+                plot = nn["composed"]
+            elif method == "covariate_distance_correlation":
+                plot = covar_dist_plot(
+                    all_metrics,
+                    pl.concat(
+                        [
+                            pl.read_csv(file)
+                            for file in dir.glob("*covariate_distance*.csv")
+                        ]
+                    ),
+                    log_x=True,
+                )
+            elif method == "pair_distance_distribution":
+                plot = pair_dist_plot(
+                    all_metrics,
+                    pl.concat(
+                        [pl.read_csv(file) for file in dir.glob("*pair_distance*.csv")]
+                    ),
+                    bins=20,
+                    log_x=True,
+                )
+            elif method == "clustering":
+                plot = cluster_metric_plot(all_metrics)
+            else:
+                raise ValueError("method not recognized")
+            plot.save(save_file, width=15, height=10)
+    except Exception as e:
+        shutil.rmtree(outdir)
+        raise e
+
+
+# * Entry point
+
+if smk.rule == "evaluation":
+    evaluation()
+elif smk.rule.startswith("compare_"):
+    embedding_comparison()
