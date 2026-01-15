@@ -19,7 +19,7 @@ def define_eval_out(key, cat):
     edir = INDIR / key
     INPUTS["evaluation"] = {}
     for group in ("cv", "ctrl_cv", "holdout"):
-        if group == "holdout" and not config["holdout"]["splits"]:
+        if not (edir / group).exists():
             continue
         k = f"{key}_{group}"
         RESULTS[k] = report(
@@ -30,9 +30,10 @@ def define_eval_out(key, cat):
             labels={"Metric": "{metric}", "Type": "{task}"},
         )
         for task in ("classification", "regression"):
-            INPUTS["evaluation"][f"{group}_{task[0]}"] = (edir / group).rglob(
-                f"*{task}.csv"
+            INPUTS["evaluation"][f"{group}_{task[0]}"] = list(
+                (edir / group).rglob(f"*{task}.csv")
             )
+    del INPUTS["evaluation"]["ctrl_cv_r"]
 
 
 # ** Embedding comparison
@@ -100,12 +101,11 @@ rule all:
 
 
 rule evaluation:
-    input:
-        INPUTS["evaluation"],
     params:
+        **INPUTS["evaluation"],
         outdir=INDIR / "evaluation",
     output:
-        f"{INDIR}/evaluation/.{{eval_task}}",
+        directory(f"{INDIR}/evaluation/.{{eval_task}}"),
     script:
         "scripts/report.py"
 

@@ -233,12 +233,15 @@ def cluster_metric_plot(
 
 def evaluation():
     groups, ttypes = ("cv", "holdout", "ctrl_cv"), ("regression", "classification")
+    out = Path(smk.params["outdir"])
     for group in groups:
-        outdir = Path(smk.params["outdir"]) / f".{group}"
+        if not (out / group).exists():
+            continue
+        outdir = out / f".{group}"
         outdir.mkdir(exist_ok=True)
         for task in ttypes:
             key = f"{group}_{task[0]}"
-            if key not in smk.input.keys():
+            if key not in smk.params.keys():
                 continue
             combined: pl.DataFrame = pl.concat(
                 [
@@ -246,7 +249,7 @@ def evaluation():
                         pl.lit(csv.stem.removesuffix(f"_{task}")).alias("dataset"),
                         pl.lit(csv.parent.stem).alias("model"),
                     )
-                    for csv in (Path(f) for f in smk.input[key])
+                    for csv in (Path(f) for f in smk.params[key])
                 ]
             )
             metrics = combined["metric"].unique()
