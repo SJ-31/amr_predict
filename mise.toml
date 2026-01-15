@@ -23,15 +23,15 @@ if [[ "${usage_local?}" == "true" ]]; then
    export SMK_EXECUTOR=local
    export SMK_PROFILE=profiles/local
 fi
-if [[ "${usage_report}" == "true" ]]; then
+if [[ "${usage_report}" == "false" ]]; then
    report_args=""
 fi
 snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
           in_date=${usage_in_date} embedding=esm \
           date=${usage_date} \
           --profile "${SMK_PROFILE}" \
-          --executor "${SMK_EXECUTOR}" \
-          "${report_args}"
+          ${report_args} \
+          --executor "${SMK_EXECUTOR}" 
 if [[ "${usage_report}" == "true" ]]; then
    unzip "${report}" -d ../docs/reports
 fi
