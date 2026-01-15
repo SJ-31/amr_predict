@@ -407,13 +407,13 @@ def pool_embeddings():
                 gg.ggplot(comparison, gg.aes(x="d_original", y="d_pooled"))
                 + gg.geom_point()
                 + gg.ggtitle(
-                    title="Spearman correlation between distances of contig embeddings & genome embeddings",
-                    subtitle=f"rho = {round(corr.statistic, 2)}, p-value: {round(corr.pvalue, 2)}",
+                    title="Correlation between sequence & genome embedding distances",
+                    subtitle=f"Spearman rho = {round(corr.statistic, 2)}, p-value: {round(corr.pvalue, 2)}",
                 )
                 + gg.xlab("Contig distance")
                 + gg.ylab("Genome distance")
             )
-            plot.save(filename=figpath, verbose=False)
+            plot.save(filename=figpath, verbose=False, width=15)
 
 
 # * Run
