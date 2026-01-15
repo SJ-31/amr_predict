@@ -9,6 +9,8 @@ import polars as pl
 from loguru import logger
 
 matplotlib.use("QtAgg")
+# BUG: [2026-01-14 Wed] due to issues with Tkinter backend on local
+# Needs PyQt5 installed
 
 try:
     from snakemake.script import snakemake as smk
@@ -106,7 +108,35 @@ def nn_plot(
     return result
 
 
-def pair_dist_plot(metrics: pl.DataFrame):
+def covar_dist_plot(metrics: pl.DataFrame, raw: pl.DataFrame) -> gg.ggplot:
+    df = raw.join(
+        metrics.filter(pl.col("metric") == "covariate_distance_correlation"),
+        on=("name", "dataset"),
+        how="left",
+    ).with_columns(
+        pl.struct(["p_value", "value"])
+        .map_elements(
+            lambda x: f"{round(x["value"], 3)} (p: {round(x['p_value'], 3)})",
+            return_dtype=pl.String,
+        )
+        .alias("annotation")
+    )
+    dm: str = df["method"].first()
+    title = "Relationship between embedding and covariate distance"
+    subtitle = f"Spearman correlation, with {dm} distance"
+    corr_plot = (
+        gg.ggplot(df, gg.aes(x="embedding_distance", y="covariate_distance"))
+        + gg.geom_point()
+        + gg.ggtitle(title, subtitle)
+        + gg.facet_grid("name ~ dataset")
+        + gg.xlab("Embedding distance")
+        + gg.ylab("Covariate distance")
+        + gg.geom_text(
+            gg.aes(x=0, y=0, label="annotation"), stat="unique", ha="left", alpha=0.7
+        )
+    )
+    return corr_plot
+
     df = metrics.filter(pl.col("metric") == "pair_distribution")
 
 
