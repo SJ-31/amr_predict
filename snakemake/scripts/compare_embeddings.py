@@ -22,7 +22,6 @@ from loguru import logger
 from numpy.random import Generator
 from plotnine.ggplot import ggplot
 from scipy.cluster.hierarchy import cut_tree
-from scipy.spatial.distance import squareform
 from scipy.stats import combine_pvalues, entropy, ks_2samp, spearmanr
 from sklearn.metrics import (
     adjusted_rand_score,
@@ -145,25 +144,12 @@ def safe_silhouette_score(**kwargs) -> float:
 def clustering_helper(adata: ad.AnnData, precomputed_dist) -> pl.DataFrame:
     hclust = linkage(precomputed_dist)
     df = adata.obs.copy()
-    precomputed = squareform(precomputed_dist)
     results: LongResults = LongResults()
     scoring_metrics = {
         "adjusted_rand": adjusted_rand_score,
         "homogeneity": homogeneity_score,
         "completeness": completeness_score,
     }
-
-    # Gather clustering metrics
-
-    # results["method"].append("leiden")
-    # results["metric"].append("fowlkes_mallows")
-
-    # results["value"].append(
-    #     safe_silhouette_score(
-    #         X=precomputed, labels=raw_results["leiden"], metric="precomputed"
-    #     )
-    # )
-    # results["name"].append("_")
 
     for y in RCONFIG["cluster_on"]:
         y_true = adata.obs[y]
@@ -193,15 +179,6 @@ def clustering_helper(adata: ad.AnnData, precomputed_dist) -> pl.DataFrame:
             method="hclust",
         )
         logger.success("Hclust metrics complete")
-
-        # results["method"].append("hclust")
-        # results["metric"].append("silhouette")
-        # results["value"].append(
-        #     safe_silhouette_score(
-        #         X=precomputed, labels=hclust_assignment[:, 0], metric="precomputed"
-        #     )
-        # )
-        # results["name"].append(y)
 
     results.p_value = [-1] * len(results.value)
     return pl.DataFrame(asdict(results))
@@ -330,7 +307,10 @@ def covar_dist(
         test = spearmanr(edist, covar_dist)
         raw_vals.append(
             pl.DataFrame(
-                {"embedding_distance": edist, "covariate_distance": covar_dist}
+                {
+                    "embedding_distance": edist.tolist(),
+                    "covariate_distance": covar_dist.tolist(),
+                }
             ).with_columns(pl.lit(col).alias("name"))
         )
         logger.info("Spearman correlation calculated")
@@ -348,7 +328,6 @@ def covar_dist(
 def comparison_routine(
     dataset_name: str,
     adata: ad.AnnData,
-    outdir: Path,
     round: int,
     color_keys: dict,
     raw_acc: dict[str, list],
@@ -358,6 +337,8 @@ def comparison_routine(
     sc.tl.umap(adata)
     sc.tl.leiden(adata)
 
+    plot_dir = Path(smk.output["plots"])
+    plot_dir.mkdir(exist_ok=True)
     for ck_name, ck in color_keys.items():
         for plot_style in ["pca", "umap"]:
             name = f"{dataset_name}_{plot_style}"
@@ -367,7 +348,7 @@ def comparison_routine(
                 plot_mode=plot_style,
             )
             fig = fig + gg.ggtitle(title=dataset_name)
-            fig.save(outdir / f"plots/{round}_{name}{ck_name}.png", width=15, height=10)
+            fig.save(plot_dir / f"{round}_{name}{ck_name}.png", width=15, height=10)
 
     result_dfs = []
     for metric_group in RCONFIG["methods"]:
@@ -432,13 +413,9 @@ def comparison_routine(
 # * Rules
 
 
-def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
+def run_bootstrap(dset_name: str, adata: ad.AnnData) -> pl.DataFrame:
     """
     Helper function for running comparison routine with bootstrap samples
-
-    Parameters
-    ----------
-    df_acc :
 
     Notes
     -----
@@ -471,12 +448,16 @@ def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
                 adata=subsampled,
                 dataset_name=dset_name,
                 color_keys=color_keys,
-                outdir=outdir,
                 round=i,
                 raw_acc=raw_acc,
             )
             dfs.append(cur.with_columns(dataset=pl.lit(dset_name)))
         logger.success(f"Bootstrap round {i} complete")
+    for k, df_list in raw_acc.items():
+        if len(df_list) >= 1:
+            pl.concat(df_list).with_columns(
+                pl.lit(dset_name).alias("dataset")
+            ).write_csv(outdir.joinpath(f".{k}_raw-{dset_name}.csv"))
     if len(dfs) > 1:
         aggregated: pl.DataFrame = pl.concat(dfs)
         aggregated = aggregated.group_by(["metric", "method", "name", "dataset"]).agg(
@@ -489,40 +470,30 @@ def run_bootstrap(dset_name: str, adata: ad.AnnData, df_acc: list):
                 return_dtype=pl.Float64,
             ),
         )
-        df_acc.append(aggregated)
-    else:
-        df_acc.extend(dfs)
-    for k, df_list in raw_acc.items():
-        if len(df_list) > 1:
-            pl.concat(df_list).write_csv(
-                outdir.joinpath(f".{smk.rule}-{k}_raw-{dset_name}.csv")
-            )
+        return aggregated
+    return dfs[0]
 
 
 # ** Embedding comparison
 
 
 def _compare(is_embeddings: bool = True):
-    all_dfs = []
-    for d in smk.params["datasets"]:
-        dir: Path = Path(d)
-        if is_embeddings:
-            cache_path = smk.params["caches"] / f"{dir.stem}_{EMBEDDING}_cache"
-            cache: EmbeddingCache = EmbeddingCache(cache_path)
-            dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), TEXT_KEY)
-            adata = ad.AnnData(X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas())
-        else:
-            adata = load_as(dir, "adata", x_key=X_KEY)
-        if adata.X.shape[1] <= 0:
-            raise ValueError(f"embeddings for {d} have size 0")
-        adata = with_metadata(adata, smk.config, "sample", ("sample",))
-        adata.obs = adata.obs.replace(
-            to_replace={c: np.nan for c in RCONFIG["cluster_on"]}, value="unknown"
-        )
-        run_bootstrap(dset_name=dir.stem, adata=adata, df_acc=all_dfs)
-    pl.concat(all_dfs, how="diagonal_relaxed").write_csv(
-        smk.output["metrics"], null_value="NaN"
+    dir: Path = Path(smk.input[0])
+    if is_embeddings:
+        cache_path = smk.params["caches"] / f"{dir.stem}_{EMBEDDING}_cache"
+        cache: EmbeddingCache = EmbeddingCache(cache_path)
+        dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), TEXT_KEY)
+        adata = ad.AnnData(X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas())
+    else:
+        adata = load_as(dir, "adata", x_key=X_KEY)
+    if adata.X.shape[1] <= 0:
+        raise ValueError(f"embeddings for {dir.stem} have size 0")
+    adata = with_metadata(adata, smk.config, "sample", ("sample", "ast"))
+    adata.obs = adata.obs.replace(
+        to_replace={c: np.nan for c in RCONFIG["cluster_on"]}, value="unknown"
     )
+    metrics = run_bootstrap(dset_name=dir.stem, adata=adata)
+    metrics.write_csv(smk.output["metrics"])
 
 
 def compare_embeddings():

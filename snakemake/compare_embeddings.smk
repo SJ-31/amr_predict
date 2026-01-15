@@ -1,6 +1,3 @@
-import itertools
-
-
 include: "Snakefile"
 
 
@@ -21,72 +18,40 @@ if TEST:
     config["compare_pooled"]["pair_distance_distribution"]["kws"]["replace"] = True
     config["compare_embeddings"]["bootstrap_rounds"] = 2
 
-
-to_compare = ["sequences", "pooled"]
-
-OUTDIRS = {
-    k: f"{OUT}/{DATE}/embedding_comparison/{v}" for k, v in zip(["S", "P"], to_compare)
-}
-
+DIRS2RULE = {"sequences": "compare_embeddings", "pooled": "compare_pooled"}
+OUTDIRS = {k: f"{OUT}/{DATE}/embedding_comparison/{k}" for k in DIRS2RULE.keys()}
 DATASETS = {
-    "S": list(Path(f"{REMOTE}/{IN_DATE}/datasets/processed_sequences").iterdir()),
-    "P": list(Path(f"{REMOTE}/{IN_DATE}/datasets/pooled").iterdir()),
+    "sequences": Path(f"{REMOTE}/{IN_DATE}/datasets/processed_sequences"),
+    "pooled": Path(f"{REMOTE}/{IN_DATE}/datasets/pooled"),
 }
-
-
-def default_log(rule_name):
-    return f"{LOGDIR}/compare_embeddings-{rule_name}.log"
 
 
 RESULTS = {}
-for k, v, r in zip(["S", "P"], to_compare, ["compare_embeddings", "compare_pooled"]):
-    RESULTS[k] = {
-        "plots": expand(
-            "{o}/plots/{i}_{d}_{p}{s}.png",
-            o=OUTDIRS[k],
-            d=[d.stem for d in DATASETS[k]],
-            p=["pca", "umap"],
-            s=["-d", "-c"] if k == "P" else [""],
-            i=range(config[r]["bootstrap_rounds"]),
-        ),
-        "metrics": f"{OUTDIRS[k]}/metrics.csv",
-    }
+for k, r in DIRS2RULE.items():
+    dnames = [d.stem for d in DATASETS[k].iterdir()]
+    RESULTS[f"{k}_plots"] = expand("{o}/{d}_plots", o=OUTDIRS[k], d=dnames)
+    RESULTS[f"{k}_metrics"] = expand(f"{OUTDIRS[k]}/{{d}}_metrics.csv", d=dnames)
 
 
 rule all:
     input:
-        list(
-            itertools.chain.from_iterable(
-                [
-                    list(RESULTS[x]["plots"]) + [RESULTS[x]["metrics"]]
-                    for x in ["S", "P"]
-                ]
-            )
-        ),
+        **RESULTS,
 
 
-rule compare_embeddings:
-    params:
-        datasets=DATASETS["S"],
-        caches=Path(f"{REMOTE}/{IN_DATE}/datasets/embedded"),
-        outdir=OUTDIRS["S"],
-    output:
-        metrics=RESULTS["S"]["metrics"],
-        plots=RESULTS["S"]["plots"],
-    log:
-        default_log("main"),
-    script:
-        "scripts/compare_embeddings.py"
+for key, rname in DIRS2RULE.items():
 
-
-rule compare_pooled:
-    params:
-        datasets=DATASETS["P"],
-        outdir=OUTDIRS["P"],
-    output:
-        metrics=RESULTS["P"]["metrics"],
-        plots=RESULTS["P"]["plots"],
-    log:
-        default_log("pooled"),
-    script:
-        "scripts/compare_embeddings.py"
+    rule:
+        name:
+            rname
+        input:
+            f"{DATASETS[key]}/{{dataset}}",
+        output:
+            metrics=f"{OUTDIRS[key]}/{{dataset}}_metrics.csv",
+            plots=directory(f"{OUTDIRS[key]}/{{dataset}}_plots"),
+        log:
+            f"{LOGDIR}/compare_embeddings/{rname}_{{dataset}}.log",
+        params:
+            caches=Path(f"{REMOTE}/{IN_DATE}/datasets/embedded"),
+            outdir=OUTDIRS[key],
+        script:
+            "scripts/compare_embeddings.py"
