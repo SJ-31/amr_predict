@@ -20,37 +20,12 @@ for sae_data in ("reconstructed", "sae_activations"):
     if sd_path.exists():
         DATASETS.extend(list(sae_recon.iterdir()))
 
-GROUP_MAPPING = {
-    "ctrl_cv": "Cross-validation (control tasks)",
-    "cv": "Cross-validation",
-}
-METRICS = {
-    "classification": ("kappa", "acc", "mcc", "auroc", "aupr"),
-    "regression": ("mse", "spearman", "pearson", "nrmse"),
-}
-
 
 def default_log(rule_name):
     return f"{LOGDIR}/evaluate-{rule_name}.log"
 
 
-def report_figures(outdir):
-    result = {}
-    file_mapping = {}
-    for group in ("cv", "ctrl_cv", "holdout"):
-        if group == "holdout" and not config["holdout"]["splits"]:
-            continue
-        key = f"{group}_{task}"
-        result[key] = report(
-            directory(f"{outdir}/.{group}"),
-            patterns=["{metric}_{task}.png"],
-            category=GROUP_MAPPING.get(group, group),
-            labels={"Metric": "{metric}", "Type": "{task}"},
-        )
-
-    return result
-
-
+# [2026-01-13 Tue] passed
 if TEST:
     config["tasks"]["regression"] = ["amikacin", "gentamicin"]
     config["tasks"]["classification"] = ["amikacin_class", "gentamicin_class"]
@@ -97,17 +72,21 @@ if not config["holdout"]["splits"]:
     RESULTS = {k: v for k, v in RESULTS.items() if not k.startswith("holdout")}
 
 
-rule summarize_results:
+rule all:
     input:
         **RESULTS,
-    log:
-        default_log("report"),
-    params:
-        outdir=Path(f"{OUT}/{DATE}/evaluation"),
-    output:
-        **report_figures(f"{OUT}/{DATE}/evaluation"),
-    script:
-        "scripts/evaluate.py"
+
+
+# TODO: unfinished - could you re-write the below using wildcards?
+# rule cv:
+#     output:
+#         "{outdir}/{model}/{dataset}_{task}.csv",
+#     params:
+#         datasets={d.stem: d for d in DATASETS},
+#         model=lambda wc: wc.get("model"),
+#         device=lambda wc: "cpu" if wc.get("model") == "baseline" else DEVICE,
+#     shell:
+#         "echo {outdir} {model}"
 
 
 for model in config["cross_validate"]["models"]:
