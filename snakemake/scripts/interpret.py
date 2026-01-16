@@ -99,11 +99,11 @@ def maybe_subsample(
 def get_dataset(
     name: str,
     level: EMBEDDING_LEVEL,
-    model_name: str | None = None,
+    weights_name: str | None = None,
     key_df: pl.DataFrame | None = None,
 ) -> Dataset | pl.DataFrame:
     if key_df is None:
-        key_df = load_as(smk.params["model_dict"][model_name], "polars")
+        key_df = load_as(smk.params["weight_dict"][weights_name], "polars")
     if level == "genome-level":
         dset: Dataset = load_as(
             smk.params["pooled"].joinpath(name), "huggingface"
@@ -154,7 +154,7 @@ def save_from_sae(reconstruct: bool = False):
             logger.warning(f"ignoring dataset {save_to}")
             continue
         dataset: Dataset | LinkedDataset = get_dataset(
-            dset_name, model_name=Path(dict_path).name, level=level, key_df=None
+            dset_name, weights_name=Path(dict_path).name, level=level, key_df=None
         )
         logger.info(
             "{} {}, n before subsampling: {}", level, dset_name, dataset.shape[0]
@@ -208,7 +208,7 @@ def train_sae():
     dset_name = path.stem
     model_name = f"{level}_{path.stem}.pth"
     dset: Dataset | LinkedDataset = get_dataset(
-        name=dset_name, model_name=model_name, level=level, key_df=subset
+        name=dset_name, weights_name=model_name, level=level, key_df=subset
     )
 
     # TODO: review how to train saes
