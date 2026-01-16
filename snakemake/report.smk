@@ -22,13 +22,7 @@ def define_eval_out(key, cat):
         if not (edir / group).exists():
             continue
         k = f"{key}_{group}"
-        RESULTS[k] = report(
-            directory(edir / f".{group}"),
-            patterns=["{metric}_{task}.png"],
-            category=cat,
-            subcategory=eval_tasks.get(group, group),
-            labels={"Metric": "{metric}", "Type": "{task}"},
-        )
+        RESULTS[k] = edir / f".{group}"
         for task in ("classification", "regression"):
             INPUTS["evaluation"][f"{group}_{task[0]}"] = list(
                 (edir / group).rglob(f"*{task}.csv")
@@ -45,7 +39,7 @@ def define_ec_out(key, cat):
         if not (ec_dir / group).exists():
             continue
         if group == "pooled_distance_correlation":
-            RESULTS[f"{key}_{group}"] = report(
+            RESULTS[f"exists_{key}_{group}"] = report(
                 directory(ec_dir / group),
                 patterns=["{dataset}.png"],
                 category=cat,
@@ -54,26 +48,20 @@ def define_ec_out(key, cat):
             )
         else:
             for scale in ("continuous", "discrete"):
-                pattern = "{dataset}/{iter,\d+}_{dataset}_{ptype,pca|umap}.png"
+                pattern = "{dataset}/{iter,\\d+}_{dataset}_{ptype,pca|umap}.png"
                 labels = {
                     "Iteration": "{iter}",
                     "Dataset": "{dataset}",
                     "Type": "{ptype}",
                 }
-                RESULTS[f"{key}_{group}_dim_reduction"] = report(
+                RESULTS[f"exists_{key}_{group}_dim_reduction"] = report(
                     directory(ec_dir / group / f"plots-{scale[0]}"),
                     patterns=[pattern],
                     category=cat,
                     subcategory=f"{group.title()} Plots ({scale.title()})",
                     labels=labels,
                 )
-            RESULTS[f"{key}_{group}_plots"] = report(
-                directory(ec_dir / group / ".summary_plots"),
-                patterns=["{pname}.png"],
-                category=cat,
-                subcategory=group.title(),
-                labels={"Analysis": "{pname}"},
-            )
+            RESULTS[f"{key}_{group}_plots"] = ec_dir / group / ".summary_plots"
 
 
 # ** SAE
@@ -83,7 +71,7 @@ def define_sae_out(key, cat):
     sae_dir = INDIR / key
     cat = "Interpretation"
     for pdir in ("latent_umap", "activation_plots"):
-        RESULTS[f"{key}_{pdir}"] = report(
+        RESULTS[f"exists_{key}_{pdir}"] = report(
             directory(sae_dir / pdir),
             patterns=["{level}-level_{dataset}/{source,model_raw|sae}_{concept}.png"],
             category=cat,
@@ -102,13 +90,7 @@ def define_sae_out(key, cat):
         labels={"Name": "SAE Latent Type Composition"},
     )
     RESULTS[f"{key}_concept_score"] = sae_dir / "concept_scores.csv"
-    RESULTS[f"{key}_latent_score_plots"] = report(
-        directory(sae_dir / "score_plots"),
-        patterns=["{concept}.svg"],
-        category=cat,
-        subcategory="Latent Concept Scoring",
-        labels={"Concept": "{concept}"},
-    )
+    RESULTS[f"{key}_latent_score_plots"] = sae_dir / "score_plots"
 
 
 # ** Write to RESULTS
@@ -127,7 +109,18 @@ for group, fn in {
 
 rule all:
     input:
-        **RESULTS,
+        **{k: str(v) for k, v in RESULTS.items()},
+
+
+rule gather_existing:
+    output:
+        **{k: v for k, v in RESULTS.items() if k.startswith("exists")},
+
+
+eval_tasks = {
+    "ctrl_cv": "Cross-validation (Control tasks)",
+    "cv": "Cross-validation",
+}
 
 
 rule evaluation:
@@ -135,7 +128,15 @@ rule evaluation:
         **INPUTS["evaluation"],
         outdir=INDIR / "evaluation",
     output:
-        directory(f"{INDIR}/evaluation/.{{eval_task}}"),
+        report(
+            directory(f"{INDIR}/evaluation/.{{eval_task}}"),
+            patterns=["{metric}_{task}.png"],
+            category="Evaluation",
+            subcategory=lambda wc: eval_tasks.get(
+                wc.get("eval_task"), wc.get("eval_task")
+            ),
+            labels={"Metric": "{metric}", "Type": "{task}"},
+        ),
     script:
         "scripts/report.py"
 
@@ -150,7 +151,13 @@ for level, rname in zip(
         input:
             INDIR / "embedding_comparison" / level,
         output:
-            directory(INDIR / "embedding_comparison" / level / ".summary_plots"),
+            report(
+                directory(INDIR / "embedding_comparison" / level / ".summary_plots"),
+                patterns=["{pname}.png"],
+                category="Embedding Comparison",
+                subcategory=level.title(),
+                labels={"Analysis": "{pname}"},
+            ),
         params:
             rule=rname,
         script:
@@ -164,6 +171,12 @@ rule eval_sae:
         latent_counts=INDIR / "sae" / "latent_counts.csv",
         concept_scores=INDIR / "sae" / "concept_scores.csv",
         frac_plot=INDIR / "sae" / "latent_fractions_plot.svg",
-        score_plot=directory(INDIR / "sae" / "score_plots"),
+        score_plot=report(
+            directory(INDIR / "sae" / "score_plots"),
+            patterns=["{concept}.svg"],
+            category="Interpretation",
+            subcategory="Latent Concept Scoring",
+            labels={"Concept": "{concept}"},
+        ),
     script:
         "scripts/report.py"
