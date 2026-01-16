@@ -69,12 +69,18 @@ def nn_plot(
             cur, gg.aes(x="metric", y=y_col, fill="dataset", color="metric")
         ) + gg.geom_col(stat="identity", position="dodge")
         if is_bootstrap:
-            plot = plot + gg.geom_errorbar(gg.aes(ymin="-std", ymax="std"))
+            plot = plot + gg.geom_errorbar(
+                gg.aes(y=y_col, ymin=f"{y_col}-std", ymax=f"{y_col}+std"), color="black"
+            )
         if facet is not None and not wrap:
             plot = plot + gg.facet_grid(facet)
         elif facet is not None:
             plot = plot + gg.facet_wrap(facet)
-        subtitle = f"{batch_value} across bootstrap samples" if is_bootstrap else None
+        subtitle = (
+            f"{batch_value} across bootstrap samples, bars show std"
+            if is_bootstrap
+            else None
+        )
         return (
             plot
             + gg.ggtitle(title, subtitle=subtitle)
