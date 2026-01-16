@@ -36,16 +36,17 @@ def default_log(rule_name):
 
 
 OUTDIRS = {"sae": f"{REMOTE}/{DATE}/sae", "datasets": f"{REMOTE}/{DATE}/datasets"}
-OUTDIRS["save_activations"] = Path(OUTDIRS["datasets"]) / "sae_activations"
-OUTDIRS["reconstruct_datasets"] = Path(OUTDIRS["datasets"]) / "reconstructed"
+sae_gen = {
+    "save_activations": ("sae-act", Path(OUTDIRS["datasets"]) / "sae_activations"),
+    "reconstruct_datasets": ("recon", Path(OUTDIRS["datasets"]) / "reconstructed"),
+}
 
 DEVICE = config.get("device", "cuda")
+DPATH = Path(f"{REMOTE}/{IN_DATE}/datasets")
 
-dpath = Path(f"{REMOTE}/{IN_DATE}/datasets")
 
-
-DATASETS = {"text": list(dpath.joinpath("processed_sequences").iterdir()), "pooled": []}
-for d in dpath.joinpath("pooled").iterdir():
+DATASETS = {"text": list(DPATH.joinpath("processed_sequences").iterdir()), "pooled": []}
+for d in DPATH.joinpath("pooled").iterdir():
     name = d.stem.split("-", 1)[0]
     if (config["preprocessing"][name]).get("method") not in get_args(EMBEDDING_METHODS):
         DATASETS["pooled"].append(d)
@@ -56,152 +57,95 @@ LEVELS = [
     if config["train_sae"][s]["run"]
 ]
 
-# TODO: rename MODELS to WEIGHTS in the variable and as output
-
 WEIGHTS = {}
 # Mapping of weight file name to the dataset containing the sample metadata
-RECONSTRUCTIONS = {"path": Path(OUTDIRS["datasets"]) / "reconstructed", "list": []}
-ACTIVATIONS = {"path": Path(OUTDIRS["datasets"]) / "sae_activations", "list": []}
-
-
-def add_sae_saved(level, path):
-    if level != "genome-level":
-        RECONSTRUCTIONS["list"].append(
-            RECONSTRUCTIONS["path"] / f"recon_{level}_{path.stem}"
-        )
-        ACTIVATIONS["list"].append(ACTIVATIONS["path"] / f"sae-act_{level}_{path.stem}")
-    else:
-        RECONSTRUCTIONS["list"].append(RECONSTRUCTIONS["path"] / f"recon_{path.stem}")
-        ACTIVATIONS["list"].append(ACTIVATIONS["path"] / f"sae-act_{path.stem}")
-
 
 # For each dataset, train SAE at different embedding levels
 for group, paths in DATASETS.items():
     for path in paths:
         if group == "pooled" and "genome-level" in LEVELS:
-            WEIGHTS[f"genome-level_{path.stem}.pth"] = path
-            add_sae_saved("genome-level", path)
+            WEIGHTS[f"genome-level_{path.stem}"] = path
         if group == "text" and "token-level" in LEVELS:
-            WEIGHTS[f"token-level_{path.stem}.pth"] = path
-            add_sae_saved("token-level", path)
+            WEIGHTS[f"token-level_{path.stem}"] = path
         if group == "text" and "sequence-level" in LEVELS:
-            WEIGHTS[f"sequence-level_{path.stem}.pth"] = path
-            add_sae_saved("sequence-level", path)
+            WEIGHTS[f"sequence-level_{path.stem}"] = path
 
-
-def sae_plotting_paths(intermediate, as_dir):
-    dataset_names = [Path(v).stem for v in WEIGHTS.values()]
-    ex = expand("{o}/{i}/{s}", o=OUTDIRS["sae"], i=intermediate, s=dataset_names)
-    if as_dir:
-        return directory(ex)
-    return ex
-
-
-SAE_EVALS = {
-    "latent_summary_data": f"{OUTDIRS['sae']}/latent_summary.csv",
-    "concept_scoring_data": f"{OUTDIRS['sae']}/concept_scoring.csv",
-    "latent_summary_plot": f"{OUTDIRS['sae']}/latent_summary.png",
-}
+SAE_OUT_ALL = []
+for pref, outdir in sae_gen.values():
+    SAE_OUT_ALL.extend(expand(f"{outdir}/{pref}_{{m}}", m=WEIGHTS.keys()))
 
 # * Rules
 
 
 rule all:
     input:
-        **SAE_EVALS,
-        reconstructions=RECONSTRUCTIONS["list"],
-        activations=ACTIVATIONS["list"],
-        weights=expand("{o}/weights/{m}", o=OUTDIRS["sae"], m=WEIGHTS.keys()),
-        activation_plots=sae_plotting_paths("activation_plots", False),
-        umaps=sae_plotting_paths("latent_umap", False),
+        *SAE_OUT_ALL,
+        *expand(
+            f"{OUTDIRS['sae']}/.{{w}}_{{n}}.csv",
+            w=WEIGHTS.keys(),
+            n=("concept_scores", "latent_counts"),
+        ),
+        *expand(
+            f"{OUTDIRS['sae']}/{{d}}/{{w}}",
+            w=WEIGHTS.keys(),
+            d=("latent_umap", "activation_plots"),
+        ),
+        weights=expand("{o}/weights/{m}.pth", o=OUTDIRS["sae"], m=WEIGHTS.keys()),
 
 
 rule train_sae:
     input:
-        lambda wc: WEIGHTS[f'{wc.get("level")}_{wc.get("dataset")}.pth'],
+        lambda wc: WEIGHTS[f'{wc.get("level")}_{wc.get("dataset")}'],
     output:
         f"{OUTDIRS['sae']}/weights/{{level,[a-z]+-level}}_{{dataset}}.pth",
     params:
         level=lambda wc: wc.get("level"),
         outdir=Path(OUTDIRS["sae"]),
-        caches=Path(f"{dpath}/embedded"),
-        pooled=Path(f"{dpath}/pooled"),
+        caches=Path(f"{DPATH}/embedded"),
+        pooled=Path(f"{DPATH}/pooled"),
     resources:
         **GPU20,
     log:
-        f"{LOGDIR}/interpret-train_sae_{{level}}_{{dataset}}.log",
+        f"{LOGDIR}/interpret/train_sae_{{level}}_{{dataset}}.log",
     script:
         "scripts/interpret.py"
 
 
-# rule save_activations:
-#     input:
-#         rules.all.input.weights,
-#     params:
-#         caches=Path(f"{dpath}/embedded"),
-#         outdir=ACTIVATIONS["path"],
-#         weight_dict=WEIGHTS,
-#         pooled=Path(f"{dpath}/pooled"),
-#     output:
-#         *directory(ACTIVATIONS["list"]),
-#     log:
-#         default_log("save_activations"),
-#     resources:
-#         **GPU20,
-#     script:
-#         "scripts/interpret.py"
+for rname, (prefix, outdir) in sae_gen.items():
 
-
-rule save_activations:
-    input:
-        rules.all.input.weights,
-    params:
-        caches=Path(f"{dpath}/embedded"),
-        outdir=ACTIVATIONS["path"],
-        weight_dict=WEIGHTS,
-        pooled=Path(f"{dpath}/pooled"),
-    output:
-        *directory(ACTIVATIONS["list"]),
-    log:
-        default_log("save_activations"),
-    resources:
-        **GPU20,
-    script:
-        "scripts/interpret.py"
-
-
-rule reconstruct_datasets:
-    input:
-        rules.all.input.models,
-    params:
-        caches=Path(f"{dpath}/embedded"),
-        model_dict=MODELS,
-        outdir=RECONSTRUCTIONS["path"],
-        pooled=Path(f"{dpath}/pooled"),
-    output:
-        *directory(RECONSTRUCTIONS["list"]),
-    resources:
-        **GPU20,
-    log:
-        default_log("reconstruct"),
-    script:
-        "scripts/interpret.py"
+    rule:
+        name:
+            rname
+        params:
+            caches=Path(f"{DPATH}/embedded"),
+            outdir=outdir,
+            weight_dict=WEIGHTS,
+            pooled=Path(f"{DPATH}/pooled"),
+        input:
+            f"{OUTDIRS['sae']}/weights/{{weights}}.pth",
+        output:
+            directory(f"{outdir}/{prefix}_{{weights}}"),
+        log:
+            f"{LOGDIR}/interpret/{rname}-{{weights}}",
+        resources:
+            **GPU20,
+        script:
+            "scripts/interpret.py"
 
 
 rule eval_sae:
     input:
-        rules.save_activations.output,
+        f"{sae_gen['save_activations'][1]}/sae-act_{{acts}}",
     output:
-        **SAE_EVALS,
-        activation_plots=sae_plotting_paths("activation_plots", True),
-        umaps=sae_plotting_paths("latent_umap", True),
+        concept_scores=f"{OUTDIRS['sae']}/.{{acts}}_concept_scores.csv",
+        latent_counts=f"{OUTDIRS['sae']}/.{{acts}}_latent_counts.csv",
+        umap=directory(f"{OUTDIRS['sae']}/latent_umap/{{acts}}"),
+        activation_plots=directory(f"{OUTDIRS['sae']}/activation_plots/{{acts}}"),
     params:
-        caches=Path(f"{dpath}/embedded"),
-        model_dict=MODELS,
+        caches=Path(f"{DPATH}/embedded"),
+        weight_dict=WEIGHTS,
         outdir=OUTDIRS["sae"],
-        pooled=Path(f"{dpath}/pooled"),
-        seqs=Path(f"{dpath}/processed_sequences"),
-    log:
-        default_log("eval_sae"),
+        pooled=Path(f"{DPATH}/pooled"),
+        seqs=Path(f"{DPATH}/processed_sequences"),
     script:
         "scripts/interpret.py"
