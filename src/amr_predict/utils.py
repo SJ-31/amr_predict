@@ -1236,11 +1236,6 @@ def with_metadata(
             df = load_as(path, "polars").with_columns(
                 pl.any_horizontal(cs.contains("gene").is_not_null()).alias("in_gene")
             )
-            df = add_random_cols(
-                df,
-                cols=filter(lambda x: "gene" in x, df.columns),
-                choices=list(ascii_uppercase)[:10],
-            )
             key_col = "uid"
         elif m in {"ast", "sample"}:
             key_col = cfg[f"{m}_metadata"]["id_col"]
@@ -1262,14 +1257,25 @@ def with_metadata(
             df, left_on=sample_col, right_on=key_col, how="left", maintain_order="left"
         )
         if for_test and m == "ast":
-            class_cols = list(filter(lambda x: x.endswith("_class"), df.columns))
+            cols = [
+                col
+                for col, dtype in df.schema.items()
+                if not isinstance(dtype, pl.Boolean)
+            ]
+            class_cols = list(filter(lambda x: x.endswith("_class"), cols))
             other_cols = list(
-                filter(lambda x: x != key_col and not x.endswith("_class"), df.columns)
+                filter(lambda x: x != key_col and not x.endswith("_class"), cols)
             )
             merging = add_random_cols(
                 merging, class_cols, ["resistant", "susceptible", "intermediate"]
             )
             merging = add_random_cols(merging, other_cols, low=0.01, high=1024)
+        elif for_test and m == "sequence":
+            df = add_random_cols(
+                df,
+                cols=filter(lambda x: "gene" in x and x != "in_gene", df.columns),
+                choices=list(ascii_uppercase)[:10],
+            )
         elif for_test:
             merging = add_random_cols(
                 merging,

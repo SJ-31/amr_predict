@@ -30,3 +30,5 @@ snakemake/lightning_logs
 /snakemake/amr_predict/
 /tests/lightning_logs/
 /snakemake/slurm_logs/
+/docs/reports/no_date/
+/docs/reports/no_date.zip
