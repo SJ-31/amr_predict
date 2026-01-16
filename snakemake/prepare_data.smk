@@ -153,7 +153,7 @@ rule pool_embeddings:
         textdir=DATA_OUTS["S"],
         plotdir=PLOT_OUT,
     resources:
-        **GPU40,
+        **BIG_MEM,
     log:
         **default_log("pool_embeddings"),
     output:

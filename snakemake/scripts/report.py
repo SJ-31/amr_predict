@@ -7,6 +7,7 @@ from typing import Literal
 import matplotlib
 import plotnine as gg
 import polars as pl
+from amr_predict.utils import plot_params
 from loguru import logger
 from plotnine.helpers import get_aesthetic_limits
 
@@ -28,14 +29,6 @@ CONFIG = smk.config
 
 
 # * Plotting functions
-
-
-def plot_params(key: str):
-    top = CONFIG["report_plots"]
-    lookup = top.get(key)
-    if not lookup:
-        return top["default"]
-    return lookup
 
 
 def safe_round(val, to: int = 3):
@@ -269,7 +262,7 @@ def evaluation():
                     + gg.geom_boxplot()
                     + gg.facet_wrap("model")
                 )
-                bplots.save(metric_outfile, **plot_params("evaluation"))
+                bplots.save(metric_outfile, **plot_params("evaluation", CONFIG))
             # TODO: generate aggregated files for datavzrd
             # TODO:
             # agg = combined.group_by(["dataset", "model", "task", "metric"]).agg(
@@ -317,7 +310,7 @@ def embedding_comparison():
                 plot = cluster_metric_plot(all_metrics)
             else:
                 raise ValueError("method not recognized")
-            plot.save(save_file, **plot_params("embedding_comparison"))
+            plot.save(save_file, **plot_params("embedding_comparison", CONFIG))
     except Exception as e:
         shutil.rmtree(outdir)
         raise e

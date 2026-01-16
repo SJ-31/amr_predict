@@ -380,7 +380,7 @@ def pool_embeddings():
             savepath = Path(smk.params["outdir"]) / f"{ds_name}-{EMBEDDING}-{name}"
             figpath = Path(smk.params["plotdir"]) / f"{ds_name}-{EMBEDDING}-{name}.png"
             if not savepath.exists():
-                logger.info(f"Pooling for {inpath.stem} with method `{method}` started")
+                logger.info(f"{inpath.stem} `{method}` pooling: started")
                 sp: StaticPooler = StaticPooler(
                     method=method,
                     # NOTE: merge with metadata during evals to save space
@@ -390,8 +390,9 @@ def pool_embeddings():
                 )
                 dset = get_seq_level(texts_path, cache)
                 pooled = sp(dset)
+                logger.success(f"{inpath.stem} `{method}` pooling: complete")
                 pooled.save_to_disk(dataset_path=savepath)
-                logger.success("Pooling complete")
+                logger.info(f"{inpath.stem} `{method}` pooling: saved to disk")
             else:
                 pooled = load_as(savepath)
             original = get_seq_level(texts_path, cache)

@@ -31,7 +31,7 @@ except ImportError:
     smk = type("snakemake", (), {"rule": None, "config": {}, "log": [0]})
 
 
-CONFIG = smk.get("config", {})
+CONFIG = smk.config
 
 logger.enable("amr_predict")
 if len(smk.log) == 1:
