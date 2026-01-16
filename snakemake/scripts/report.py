@@ -45,11 +45,9 @@ def safe_round(val, to: int = 3):
 # "metrics.csv" produced by compare_embeddings
 
 
-# TODO: should break this up, it's too small
 def nn_plot(
     metrics: pl.DataFrame,
     batch_value: Literal["mean", "median"] = "mean",
-    composition_size: tuple[int, int] = (20, 10),
 ) -> dict:
     df = metrics.filter(pl.col("method").str.starts_with("nn_")).with_columns(
         pl.col("p_value")
@@ -71,18 +69,16 @@ def nn_plot(
         title: str,
         y_lab: str,
         facet: str | None = None,
+        wrap: bool = False,
     ) -> gg.ggplot:
-        plot = (
-            gg.ggplot(cur, gg.aes(x="metric", y=y_col, fill="dataset"))
-            + gg.geom_col(stat="identity", position="dodge")
-            + gg.geom_label(
-                gg.aes(label="p_value"),
-                position=gg.position_dodge(width=0.9),
-            )
-        )
+        plot = gg.ggplot(
+            cur, gg.aes(x="metric", y=y_col, fill="dataset", color="metric")
+        ) + gg.geom_col(stat="identity", position="dodge")
         if is_bootstrap:
             plot = plot + gg.geom_errorbar(gg.aes(ymin="-std", ymax="std"))
-        if facet is not None:
+        if facet is not None and not wrap:
+            plot = plot + gg.facet_grid(facet)
+        elif facet is not None:
             plot = plot + gg.facet_wrap(facet)
         subtitle = f"{batch_value} across bootstrap samples" if is_bootstrap else None
         return (
@@ -90,37 +86,44 @@ def nn_plot(
             + gg.ggtitle(title, subtitle=subtitle)
             + gg.xlab("Neighbor distribution")
             + gg.ylab(y_lab)
+            + gg.guides(fill="none", color="none")
+            + gg.geom_label(
+                gg.aes(label="p_value", y=float("inf"), x=0),
+                stat="unique",
+                color="black",
+                ha="left",
+                va="top",
+                format_string="  {}",
+            )
         )
 
     if "nn_distance" in df["name"]:
         nn_dist = df.filter(pl.col("name") == "nn_distance")
         df = df.filter(pl.col("name") != "nn_distance")
-        dist_plot = plot_helper(nn_dist, "Average distance between neighbors", "Value")
+        dist_plot = plot_helper(
+            nn_dist,
+            "Average distance between neighbors",
+            "Value",
+            facet="dataset",
+            wrap=True,
+        )
     prop_plot = plot_helper(
         df.filter(pl.col("method") == "nn_prop"),
         "Proportion of neighbors with the same label",
         "Proportion",
-        facet="name",
+        facet="name ~ dataset",
     )
     imp_plot = plot_helper(
         df.filter(pl.col("method") == "nn_impurity").with_columns(pl.col(y_col)),
         "Gini impurity by labels",
         "Impurity",
-        facet="name",
+        facet="name ~ dataset",
     )
-    result = {"nn_prop": prop_plot, "nn_impurity": imp_plot}
-    if dist_plot is not None:
-        result["composed"] = dist_plot | (
-            (
-                prop_plot
-                + gg.theme(axis_title_x=gg.element_blank(), legend_position="none")
-            )
-            / (imp_plot + gg.theme(legend_position="none"))
-        )
-        result["nn_dist"] = dist_plot
-    else:
-        result["composed"] = (prop_plot + gg.theme(legend_position=None)) | imp_plot
-    result["composed"] = result["composed"] + gg.theme(figure_size=composition_size)
+    result = {
+        "nn_proportion": prop_plot,
+        "nn_impurity": imp_plot,
+        "nn_distance": dist_plot,
+    }
     return result
 
 
@@ -256,7 +259,7 @@ def evaluation():
             )
             metrics = combined["metric"].unique()
             for metric in metrics:
-                metric_outfile = outdir / f"{metric}_{task}.png"
+                metric_outfile = outdir / f"{metric}_{task}.svg"
                 filtered = combined.filter(pl.col("metric") == metric)
                 bplots = (
                     gg.ggplot(filtered, gg.aes(x="task", y="value", fill="dataset"))
@@ -283,10 +286,15 @@ def embedding_comparison():
     )
     try:
         for method in smk.config[smk.params["rule"]]["methods"]:
-            save_file = outdir / f"{method}.png"
+            save_file = outdir / f"{method}.svg"
             if method == "neighbor_proportion":
                 nn: dict = nn_plot(all_metrics)
-                plot = nn["composed"]
+                for k, v in nn.items():
+                    v.save(
+                        outdir / f"{k}.svg",
+                        **plot_params("embedding_comparison", CONFIG),
+                    )
+                continue
             elif method == "covariate_distance_correlation":
                 plot = covar_dist_plot(
                     all_metrics,
