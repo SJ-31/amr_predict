@@ -383,6 +383,7 @@ class EvalSAE:
         bins: int = 15,
         binwidth=0.1,
         log_x: bool = True,
+        top_labels: dict[str, Sequence] | None = None,
     ) -> dict[str, gg.ggplot] | gg.ggplot:
         """Plot the activation distribution for a single latent `latent_idx`, showing
         the relationship between it and the label classes in `label_cols`
@@ -395,6 +396,10 @@ class EvalSAE:
             DataFrame aligned to activations, containing annotations about samples
         label_cols : Sequence
             columns of `obs` to derive labels from
+        top_labels : dict[(str, str), str]
+            dictionary returning values from `label_cols` to display as the top label for each latent
+            e.g. obtained from the `label_max` column with `score_latents`.
+            Keys are tuples of (latent_idx, label_col)
 
         Returns
         -------
@@ -416,11 +421,21 @@ class EvalSAE:
                 dfs.append(cur)
             df = pl.concat(dfs)
 
+        def labeller(colname: str, label_col: str) -> str:  # colname is the latent_idx
+            val = f"{colname} ({latent2fa[colname]}%)"
+            if top_labels is not None and (colname, label_col) in top_labels:
+                val = f"{val}\nTop label: {top_labels[(colname, label_col)]}"
+            return val
+
         def plot_one(label_col):
             if only_one:
                 tmp = df.with_columns(pl.Series(obs[label_col]).alias(label_col))
                 title = f"Latent {latent_idx}"
                 subtitle = f"Activation density: {round(frac_active, 1)}%"
+                if top_labels is not None:
+                    subtitle = (
+                        f"{subtitle}, Top label: {top_labels[(latent_idx, label_col)]}"
+                    )
             else:
                 tmp = df.join(
                     pl.Series(obs[label_col]).to_frame(label_col).with_row_index(),
@@ -441,7 +456,7 @@ class EvalSAE:
                 plot = plot + gg.facet_wrap(
                     "Latent id",
                     scales="fixed",
-                    labeller=gg.labeller(cols=lambda x: f"{x} ({latent2fa[x]}%)"),
+                    labeller=gg.labeller(cols=lambda x: labeller(x, label_col)),
                 )
             if log_x:
                 plot = (
