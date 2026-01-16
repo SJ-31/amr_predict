@@ -50,12 +50,6 @@ def nn_plot(
     batch_value: Literal["mean", "median"] = "mean",
 ) -> dict:
     df = metrics.filter(pl.col("method").str.starts_with("nn_")).with_columns(
-        pl.col("p_value")
-        .cast(pl.String)
-        .replace("NaN", "")
-        .map_elements(
-            lambda x: f"p: {safe_round(x)}" if x else x, return_dtype=pl.String
-        ),
         pl.col("metric").replace_strict(
             {"observed_avg": "Observed", "null_avg": "Null"}
         ),
@@ -141,7 +135,7 @@ def covar_dist_plot(
     ).with_columns(
         pl.struct(["p_value", y_col])
         .map_elements(
-            lambda x: f"{safe_round(x[y_col])} (p: {safe_round(x['p_value'])})",
+            lambda x: f"{safe_round(x[y_col])} ({x['p_value']})",
             return_dtype=pl.String,
         )
         .alias("annotation")
@@ -180,23 +174,30 @@ def pair_dist_plot(
     batch_value: Literal["mean", "median"] = "mean",
 ) -> gg.ggplot:
     value = batch_value if "mean" in metrics.columns else "value"
-    df = raw.join(
+    df = raw.rename({"value": "raw_value"}).join(
         metrics.filter(
             (pl.col("metric") == "pair_distribution")
             & (~pl.col("method").str.ends_with("pairs"))
-        ).pivot(on="method", values=[value, "p_value"]),
+        ),
         on=["name", "dataset"],
         how="left",
-    ).with_columns(
-        pl.struct([f"{value}_kl_div", "p_value_ks_2samp"])
+    )
+    p_val_lookup: dict = {
+        k: v[0]["p_value"]
+        for k, v in df.filter(pl.col("method") == "ks_2samp")
+        .rows_by_key(["name", "dataset"], named=True)
+        .items()
+    }
+    df = df.filter(pl.col("method") == "kl_div").with_columns(
+        pl.struct([value, "name", "dataset"])
         .map_elements(
-            lambda x: f"{safe_round(x[f"{value}_kl_div"])} (p: {safe_round(x["p_value_ks_2samp"])})",
+            lambda x: f"{safe_round(x[value])} ({p_val_lookup[(x["name"], x["dataset"])]})",
             return_dtype=pl.String,
         )
         .alias("annotation")
     )
     plot = (
-        gg.ggplot(df, gg.aes(x="value", fill="group"))
+        gg.ggplot(df, gg.aes(x="raw_value", fill="group"))
         + gg.geom_histogram(bins=bins)
         + gg.facet_grid("name ~ dataset")
     )
@@ -283,6 +284,13 @@ def embedding_comparison():
     outdir.mkdir(exist_ok=True)
     all_metrics: pl.DataFrame = pl.concat(
         [pl.read_csv(file) for file in dir.glob("*metrics.csv")]
+    ).with_columns(
+        pl.col("p_value")
+        .cast(pl.String)
+        .replace("NaN", "")
+        .map_elements(
+            lambda x: f"p: {safe_round(x)}" if x else x, return_dtype=pl.String
+        ),
     )
     try:
         for method in smk.config[smk.params["rule"]]["methods"]:
