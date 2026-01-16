@@ -53,18 +53,25 @@ def define_ec_out(key, cat):
                 labels={"Dataset": "{dataset}"},
             )
         else:
-            # for ptype in ("umap", "pca"):
-            #     RESULTS[f"{key}_{group}_{ptype}"] = report(
-            #         directory(ec_dir / group),
-            #         patterns=[f"{{dataset}}_plots/{{iter}}_{{dataset}}_{ptype}.png"],
-            #         category=cat,
-            #         subcategory=f"{group} plots ({group})",
-            #         labels={
-            #             "Iteration": "{iter}",
-            #             "Dataset": "{dataset}",
-            #             "Type": "{type}",
-            #         },
-            #     )
+            # TODO: might want to categorize this better. You should have just removed
+            # the distinction between c, d for the different levels...
+            labels = {
+                "Iteration": "{iter}",
+                "Dataset": "{dataset}",
+                "Type": "{ptype}",
+            }
+            if group == "pooled":
+                pattern = "{dataset}_plots/{iter}_{dataset}_{ptype}-{scale}.png"
+                labels["Scale"] = "{scale}"
+            else:
+                pattern = "{dataset}_plots/{iter}_{dataset}_{ptype}.png"
+                RESULTS[f"{key}_{group}_dim_reduction"] = report(
+                    directory(ec_dir / group),
+                    patterns=[pattern],
+                    category=cat,
+                    subcategory=f"{group.title()} Plots (UMAP, PCA)",
+                    labels=labels,
+                )
             RESULTS[f"{key}_{group}_plots"] = report(
                 directory(ec_dir / group / ".summary_plots"),
                 patterns=["{pname}.png"],
@@ -78,7 +85,35 @@ def define_ec_out(key, cat):
 
 
 def define_sae_out(key, cat):
-    return
+    sae_dir = INDIR / key
+    cat = "Interpretation"
+    for pdir in ("latent_umap", "activation_plots"):
+        RESULTS[f"{key}_{pdir}"] = report(
+            directory(sae_dir / pdir),
+            patterns=["{level}-level_{dataset}/{source,model_raw|sae}_{concept}.png"],
+            category=cat,
+            subcategory=f"SAE {pdir.replace("_", " ").title()}",
+            labels={
+                "Dataset": "{dataset}",
+                "Level": "{level}",
+                "Activation Source": "{source}",
+                "Concept group": "{concept}",
+            },
+        )
+    RESULTS[f"{key}_latent_counts"] = sae_dir / "latent_counts.csv"
+    RESULTS[f"{key}_latent_counts_plot"] = report(
+        sae_dir / "latent_fractions_plot.svg",
+        category=cat,
+        labels={"Name": "SAE Latent Type Composition"},
+    )
+    RESULTS[f"{key}_concept_score"] = sae_dir / "concept_scores.csv"
+    RESULTS[f"{key}_latent_score_plots"] = report(
+        directory(sae_dir / "score_plots"),
+        patterns=["{concept}.svg"],
+        category=cat,
+        subcategory="Latent Concept Scoring",
+        labels={"Concept": "{concept}"},
+    )
 
 
 # ** Write to RESULTS
@@ -125,3 +160,15 @@ for level, rname in zip(
             rule=rname,
         script:
             "scripts/report.py"
+
+
+rule eval_sae:
+    input:
+        INDIR / "sae",
+    output:
+        latent_counts=INDIR / "sae" / "latent_counts.csv",
+        concept_scores=INDIR / "sae" / "concept_scores.csv",
+        frac_plot=INDIR / "sae" / "latent_fractions_plot.svg",
+        score_plot=directory(INDIR / "sae" / "score_plots"),
+    script:
+        "scripts/report.py"

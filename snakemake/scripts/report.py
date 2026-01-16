@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import re
 import shutil
 from pathlib import Path
 from typing import Literal
@@ -18,7 +19,7 @@ matplotlib.use("QtAgg")
 try:
     from snakemake.script import snakemake as smk
 except ImportError:
-    smk = type("snakemake", (), {"rule": None, "config": {}, "log": [0]})
+    smk = type("snakemake", (), {"rule": "none", "config": {}, "log": [0]})
 
 RNG: int = smk.config.get("rng")
 logger.enable("amr_predict")
@@ -316,9 +317,83 @@ def embedding_comparison():
         raise e
 
 
+def eval_sae():
+    dfs: dict[str, pl.DataFrame] = {}
+    for suffix in ("latent_counts", "concept_scores"):
+        cur = pl.concat(
+            [
+                pl.read_csv(file).with_columns(
+                    pl.lit(re.findall(f"\\.(.*)_{suffix}", file.stem)[0]).alias(
+                        "dataset"
+                    ),
+                )
+                for file in Path(smk.input[0]).glob(f".*_{suffix}.csv")
+            ]
+        )
+        dfs[suffix] = cur
+        cur.write_csv(smk.output[suffix])
+
+    lc_df = dfs["latent_counts"].with_columns(
+        (pl.col("count") / pl.col("count").sum())
+        .over(["activation_source", "dataset"])
+        .alias("frac")
+    )
+    lc_plot = (
+        gg.ggplot(lc_df, gg.aes(x="activation_source", y="frac", fill="type"))
+        + gg.geom_col(position="dodge", stat="identity")
+        + gg.facet_wrap("dataset")
+        + gg.xlab("Activation source")
+        + gg.ylab("Fraction")
+        + gg.ggtitle("Latent categories per dataset")
+    )
+    lc_plot.save(smk.output["frac_plot"], **plot_params("sae_latent_fractions", CONFIG))
+
+    score_dir = Path(smk.output["score_plot"])
+    score_dir.mkdir(exist_ok=True)
+    metric_cols = [
+        col
+        for col in dfs["concept_scores"].columns
+        if col
+        not in {
+            "dataset",
+            "level",
+            "concept",
+            "cluster",
+            "latent_idx",
+            "activation_source",
+            "label_max",
+        }
+    ]
+    score_df = dfs["concept_scores"].unpivot(
+        index=["latent_idx", "activation_source", "concept", "dataset"], on=metric_cols
+    )
+    classification_metrics = [
+        "sensitivity",
+        "precision",
+        "specificity",
+        "f1",
+        "silhouette_samples",
+    ]
+    for concept in score_df["concept"].unique():
+        splot = (
+            gg.ggplot(
+                score_df.filter(
+                    (pl.col("variable").is_in(classification_metrics))
+                    & (pl.col("concept") == concept)
+                ),
+                gg.aes(y="value", fill="dataset"),
+            )
+            + gg.geom_boxplot()
+            + gg.facet_grid("variable ~ activation_source ", scales="free_y")
+        )
+        splot.save(
+            score_dir / f"{concept}.svg", **plot_params("sae_concept_scores", CONFIG)
+        )
+
+
 # * Entry point
 
-if smk.rule == "evaluation":
-    evaluation()
+if fn := globals().get(smk.rule):
+    fn()
 elif smk.rule.startswith("compare_"):
     embedding_comparison()
