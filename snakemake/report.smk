@@ -53,23 +53,18 @@ def define_ec_out(key, cat):
                 labels={"Dataset": "{dataset}"},
             )
         else:
-            # TODO: might want to categorize this better. You should have just removed
-            # the distinction between c, d for the different levels...
-            labels = {
-                "Iteration": "{iter}",
-                "Dataset": "{dataset}",
-                "Type": "{ptype}",
-            }
-            if group == "pooled":
-                pattern = "{dataset}_plots/{iter}_{dataset}_{ptype}-{scale}.png"
-                labels["Scale"] = "{scale}"
-            else:
-                pattern = "{dataset}_plots/{iter}_{dataset}_{ptype}.png"
+            for scale in ("continuous", "discrete"):
+                pattern = "{dataset}/{iter,\d+}_{dataset}_{ptype,pca|umap}.png"
+                labels = {
+                    "Iteration": "{iter}",
+                    "Dataset": "{dataset}",
+                    "Type": "{ptype}",
+                }
                 RESULTS[f"{key}_{group}_dim_reduction"] = report(
-                    directory(ec_dir / group),
+                    directory(ec_dir / group / f"plots-{scale[0]}"),
                     patterns=[pattern],
                     category=cat,
-                    subcategory=f"{group.title()} Plots (UMAP, PCA)",
+                    subcategory=f"{group.title()} Plots ({scale.title()})",
                     labels=labels,
                 )
             RESULTS[f"{key}_{group}_plots"] = report(
