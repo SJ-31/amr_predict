@@ -384,6 +384,8 @@ class EvalSAE:
         binwidth=0.1,
         log_x: bool = True,
         top_labels: dict[str, Sequence] | None = None,
+        ncol: int | None = None,
+        nrow: int | None = None,
     ) -> dict[str, gg.ggplot] | gg.ggplot:
         """Plot the activation distribution for a single latent `latent_idx`, showing
         the relationship between it and the label classes in `label_cols`
@@ -457,6 +459,8 @@ class EvalSAE:
                     "Latent id",
                     scales="fixed",
                     labeller=gg.labeller(cols=lambda x: labeller(x, label_col)),
+                    ncol=ncol,
+                    nrow=nrow,
                 )
             if log_x:
                 plot = (
@@ -466,6 +470,8 @@ class EvalSAE:
                 )
             return plot
 
+        if len(label_cols) == 1:
+            return plot_one(label_cols[0])
         return {col: plot_one(col) for col in label_cols}
 
     def _get_activation_df(self, idx: str) -> tuple[pl.DataFrame, float]:

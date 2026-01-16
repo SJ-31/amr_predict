@@ -16,6 +16,7 @@ from amr_predict.utils import (
     LinkedDataset,
     ModuleConfig,
     load_as,
+    plot_params,
     with_metadata,
 )
 from datasets import Dataset
@@ -29,6 +30,8 @@ try:
 except ImportError:
     smk = type("snakemake", (), {"rule": None, "config": {}, "log": [0]})
 
+
+CONFIG = smk.get("config", {})
 
 logger.enable("amr_predict")
 if len(smk.log) == 1:
@@ -280,7 +283,9 @@ def eval_sae():
             )
             meta = meta.with_columns(pl.col(concepts).fill_null("unknown"))
             SE: EvalSAE = EvalSAE(dataset[X_KEY][:])
+            logger.info("Beginning categorize_latents")
             latent_cats: dict = SE.categorize_latents(dense_threshold=1 / 10, save=True)
+            logger.success("categorize_latents complete")
             for ltype in ["dead", "dense", "sparse"]:
                 latent_summary["type"].append(ltype)
                 latent_summary["count"].append(len(latent_cats[ltype]))
@@ -294,7 +299,7 @@ def eval_sae():
             # NOTE: some preprocessing on concept cols to collapse them into a single
             # label column. would be ideal, but not possible because it would just create
             # so many specific cases. Or is this a good thing?
-            topk_plot = RCONFIG["activation_density_topk"]
+            topk_plot = RCONFIG["activation_density"]
             SE.drop_latents(drop_dead=True, inplace=True)
             logger.info(f"shape of latent df {SE.acts.shape}")
             logger.info("Starting umap")
@@ -304,6 +309,7 @@ def eval_sae():
             latent_clusters: pl.DataFrame = SE.cluster_latents(False)
             logger.success("Clustering complete")
             for concept in concepts:
+                logger.info(f"Scoring latent with {concept} labels")
                 best_latents: pl.DataFrame = (
                     SE.score_latents(labels=meta[concept])
                     .with_columns(
@@ -320,24 +326,23 @@ def eval_sae():
                     )
                 )
                 concept_scoring.append(best_latents)
-                for idx in best_latents.sort("max_activation_prop", descending=True)[
+                top_best = best_latents.sort("max_activation_prop", descending=True)[
                     "latent_idx"
-                ][:topk_plot]:
-                    plots: dict = SE.plot_activation_density(idx, meta, [concept])
-                    for k, v in plots.items():
-                        try:
-                            v: gg.ggplot
-                            v.save(act_outdir / f"{level}_{k}_{group}.png")
-                        except Exception as e:
-                            logger.warning(f"""
-                            Failed to produce plot for combination of {k} {group}
-                            Exception: {e}
-                            """)
+                ][: topk_plot["topk"]]
+                plot: gg.ggplot = SE.plot_activation_density(
+                    top_best, meta, [concept], top_labels=None, **topk_plot["kws"]
+                )
+                plot.save(
+                    act_outdir / f"{level}_{group}_{concept}.png",
+                    **plot_params("sae_activations", CONFIG),
+                )
                 labels = best_latents["label_max"]
                 logger.info(f"Number of labels: {len(meta[concept])}")
                 SE.plot_umap(labels=labels).figure.savefig(
-                    umap_outdir / f"{level}_{concept}.png"
+                    umap_outdir / f"{level}_{concept}.png",
+                    **plot_params("sae_umap", CONFIG),
                 )
+            logger.success("Scoring complete")
     # TODO: should look into using a concept to guide clustering
     # TODO: add a routine here that checks whether a latent does multiple concepts,
     # can do this after aggregating them all, grouping by idx, dataset etc.
@@ -348,7 +353,9 @@ def eval_sae():
         + gg.geom_bar(position="dodge")
         + gg.ggtitle(title="Count of latent categories")
     )
-    summary_plot.save(smk.output["latent_summary_plot"])
+    summary_plot.save(
+        smk.output["latent_summary_plot"], **plot_params("sae_summary", CONFIG)
+    )
     summary_df.write_csv(smk.output["latent_summary_data"])
     concept_df: pl.DataFrame = pl.concat(concept_scoring)
     concept_df.write_csv(smk.output["concept_scoring_data"])

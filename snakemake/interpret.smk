@@ -18,6 +18,17 @@ if TEST:
     config["train_sae"]["expansion_factor"] = 3
     config["train_sae"]["trainer"]["max_epochs"] = 3
     config["train_sae"]["dataloader"]["batch_size"] = 3
+    config["save_activations"]["genome-level"]["n"] = 5
+    config["reconstruct_datasets"]["genome-level"]["n"] = 5
+    config["save_activations"]["sequence-level"]["n"] = 9
+    config["save_activations"]["sequence-level"]["n_sequence"] = 3
+    config["reconstruct_datasets"]["sequence-level"]["n"] = 9
+    config["reconstruct_datasets"]["sequence-level"]["n_sequence"] = 3
+    config["eval_sae"]["concept_cols"]["sequence-level"].remove("any_resistant")
+    config["eval_sae"]["concept_cols"]["sequence-level"].remove("any_susceptible")
+    config["eval_sae"]["concept_cols"]["sequence-level"].remove("in_gene")
+    config["eval_sae"]["concept_cols"]["genome-level"].remove("any_resistant")
+    config["eval_sae"]["concept_cols"]["genome-level"].remove("any_susceptible")
 
 
 def default_log(rule_name):

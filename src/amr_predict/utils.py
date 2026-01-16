@@ -37,6 +37,14 @@ logger.disable("amr_predict")
 TASK_TYPES: TypeAlias = Literal["classification", "regression", "reconstruction"]
 
 
+def plot_params(key: str, cfg):
+    top = cfg["report_plots"]
+    lookup = top.get(key)
+    if not lookup:
+        return top["default"]
+    return lookup
+
+
 def encode_strs(
     data: Dataset | LinkedDataset | ad.AnnData, task_names: tuple
 ) -> tuple[Dataset | ad.AnnData, dict[str, LabelEncoder]]:
