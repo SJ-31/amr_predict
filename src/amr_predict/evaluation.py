@@ -376,8 +376,14 @@ class EvalSAE:
         return result
 
     def plot_activation_density(
-        self, latent_idx: int, obs: pl.DataFrame, label_cols: Sequence
-    ) -> dict[str, gg.ggplot]:
+        self,
+        latent_idx: str | Sequence,
+        obs: pl.DataFrame,
+        label_cols: Sequence,
+        bins: int = 15,
+        binwidth=0.1,
+        log_x: bool = True,
+    ) -> dict[str, gg.ggplot] | gg.ggplot:
         """Plot the activation distribution for a single latent `latent_idx`, showing
         the relationship between it and the label classes in `label_cols`
 
@@ -394,20 +400,63 @@ class EvalSAE:
         -------
         Dictionary of plot objects, keyed by column in label_cols
         """
+        df: pl.DataFrame
+        frac_active: float | None = None
+        latent2fa: dict[str, float] = {}
+        if isinstance(latent_idx, str):
+            only_one = True
+            df, frac_active = self._get_activation_df(latent_idx)
+        else:
+            only_one = False
+            dfs = []
+            for idx in latent_idx:
+                cur, frac = self._get_activation_df(idx)
+                cur = cur.with_columns(pl.lit(idx).alias("Latent id")).with_row_index()
+                latent2fa[idx] = str(round(frac, 1))
+                dfs.append(cur)
+            df = pl.concat(dfs)
 
         def plot_one(label_col):
-            selected = self.acts[:, latent_idx]
-            frac_active = ((selected > 0).sum() / selected.shape[0]) * 100
-            to_df = pl.DataFrame({"Activation": selected, label_col: obs[label_col]})
-            title = f"Latent {latent_idx}"
-            return (
-                gg.ggplot(to_df, gg.aes(x="Activation", fill=label_col))
-                + gg.geom_histogram(binwidth=0.1)
-                + gg.ggtitle(title, subtitle=f"Activation density: {frac_active}%")
-                + gg.theme(title=gg.element_text(style="oblique"))
+            if only_one:
+                tmp = df.with_columns(pl.Series(obs[label_col]).alias(label_col))
+                title = f"Latent {latent_idx}"
+                subtitle = f"Activation density: {round(frac_active, 1)}%"
+            else:
+                tmp = df.join(
+                    pl.Series(obs[label_col]).to_frame(label_col).with_row_index(),
+                    on="index",
+                    how="left",
+                    validate="m:1",
+                )
+                title = "Latent Activations"
+                subtitle = "Subplot name format: <latent id> (<total active>%)"
+            plot = (
+                gg.ggplot(tmp, gg.aes(x="Activation", fill=label_col))
+                + gg.geom_histogram(binwidth=binwidth, bins=bins)
+                + gg.ggtitle(title, subtitle=subtitle)
+                + gg.theme(plot_title=gg.element_text(style="oblique"))
+                + gg.xlab("Activation value")
             )
+            if not only_one:
+                plot = plot + gg.facet_wrap(
+                    "Latent id",
+                    scales="fixed",
+                    labeller=gg.labeller(cols=lambda x: f"{x} ({latent2fa[x]}%)"),
+                )
+            if log_x:
+                plot = (
+                    plot
+                    + gg.scale_x_log10()
+                    + gg.theme(panel_grid_minor_x=gg.element_blank())
+                )
+            return plot
 
         return {col: plot_one(col) for col in label_cols}
+
+    def _get_activation_df(self, idx: str) -> tuple[pl.DataFrame, float]:
+        selected = self.acts[idx]
+        frac_active: float = ((selected > 0).sum() / selected.shape[0]) * 100
+        return pl.DataFrame(({"Activation": selected})), frac_active
 
     def umap(self, from_grouped: bool, **kws) -> None:
         if from_grouped:

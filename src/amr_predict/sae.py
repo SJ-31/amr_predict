@@ -50,6 +50,7 @@ class BatchTopK(BaseNN):
         """For inference
         Return SAE activations for a batch of samples i.e. ReLU((X+b)*W_e)
         """
+        self.eval()
         if X.shape[1] != self.in_features:
             raise ValueError(
                 f"The sample dimensions ({X.shape[0]}) don't match what the model was trained on {self.in_features}"
@@ -63,6 +64,7 @@ class BatchTopK(BaseNN):
             return acts * relu_mask
 
     def reconstruct(self, X: Tensor) -> Tensor:
+        self.eval()
         activations = self.predict_step(X)
         with torch.no_grad():
             return activations @ self.m.W_dec + self.m.b_dec
