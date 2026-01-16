@@ -29,7 +29,8 @@ DATASETS = {
 RESULTS = {}
 for k, r in DIRS2RULE.items():
     dnames = [d.stem for d in DATASETS[k].iterdir()]
-    RESULTS[f"{k}_plots"] = expand("{o}/{d}_plots", o=OUTDIRS[k], d=dnames)
+    RESULTS[f"{k}_plots_c"] = expand("{o}/plots-c/{d}", o=OUTDIRS[k], d=dnames)
+    RESULTS[f"{k}_plots_d"] = expand("{o}/plots-d/{d}", o=OUTDIRS[k], d=dnames)
     RESULTS[f"{k}_metrics"] = expand(f"{OUTDIRS[k]}/{{d}}_metrics.csv", d=dnames)
 
 
@@ -47,7 +48,8 @@ for key, rname in DIRS2RULE.items():
             f"{DATASETS[key]}/{{dataset}}",
         output:
             metrics=f"{OUTDIRS[key]}/{{dataset}}_metrics.csv",
-            plots=directory(f"{OUTDIRS[key]}/{{dataset}}_plots"),
+            plots_c=directory(f"{OUTDIRS[key]}/plots-c/{{dataset}}"),
+            plots_d=directory(f"{OUTDIRS[key]}/plots-d/{{dataset}}"),
         log:
             f"{LOGDIR}/compare_embeddings/{rname}_{{dataset}}.log",
         params:

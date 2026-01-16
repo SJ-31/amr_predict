@@ -337,9 +337,11 @@ def comparison_routine(
     sc.tl.umap(adata)
     sc.tl.leiden(adata)
 
-    plot_dir = Path(smk.output["plots"])
-    plot_dir.mkdir(exist_ok=True)
     for ck_name, ck in color_keys.items():
+        plot_dir = Path(smk.output[f"plots_{ck_name}"])
+        plot_dir.mkdir(exist_ok=True, parents=True)
+        if not RCONFIG.get(ck):
+            continue
         for plot_style in ["pca", "umap"]:
             name = f"{dataset_name}_{plot_style}"
             fig: ggplot = plot_adata(
@@ -348,7 +350,7 @@ def comparison_routine(
                 plot_mode=plot_style,
             )
             fig = fig + gg.ggtitle(title=dataset_name)
-            fig.save(plot_dir / f"{round}_{name}{ck_name}.png", width=15, height=10)
+            fig.save(plot_dir / f"{round}_{name}.png", width=15, height=10)
 
     result_dfs = []
     for metric_group in RCONFIG["methods"]:
@@ -440,10 +442,7 @@ def run_bootstrap(dset_name: str, adata: ad.AnnData) -> pl.DataFrame:
         subsampled = adata[adata.obs["sample"].isin(samples), :]
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            if smk.rule == "compare_embeddings":
-                color_keys = {"": "cluster_on"}
-            else:
-                color_keys = {"-d": "cluster_on", "-c": "continuous"}
+            color_keys = {"d": "cluster_on", "c": "continuous"}
             cur = comparison_routine(
                 adata=subsampled,
                 dataset_name=dset_name,
