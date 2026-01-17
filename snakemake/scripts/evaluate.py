@@ -98,6 +98,10 @@ def modify_for_test(dataset: Dataset, x_key) -> Dataset:
         dataset = dataset.remove_columns(v).add_column(
             v, np.random.choice(list(ascii_lowercase), n, replace=True)
         )
+    for col in ["species", "genus"]:
+        dataset = dataset.remove_columns(col).add_column(
+            col, np.random.choice(list("ABCDE"), n, replace=True)
+        )
     return dataset
 
 
@@ -139,14 +143,15 @@ def make_eval_kws(
     ), val_kws
 
 
-# * Rule functions
-def holdout(
-    evaluator_kws: dict, dataset: Dataset, model_name: str, validation_kws: dict
-) -> pl.DataFrame:
-    logger.info(f"Running holdout with {model_name}")
+def make_holdout_splits(dataset: Dataset) -> tuple[dict, dict]:
+    """
+    Return tuple of holdout_splits, split_methods
+
+    The former is the dictionary defining holdout tasks, passed to Evaluator.holdout
+    The latter is the specification for splitting the dataset to create the splits
+    """
     holdout_splits = {}
     split_methods = {}
-    eva = ae.Evaluator(**evaluator_kws)
     obs: pl.DataFrame | None = dataset.remove_columns(X_KEY).to_polars()
     for split_name, spec in RCONFIG["splits"].items():
         train_mask, test_mask = train_test_from_dict(df=obs, spec=spec)
@@ -155,6 +160,20 @@ def holdout(
             split_methods[f"{split_name}_{t}"] = m
             hsplit_lst.append(f"{split_name}_{t}")
         holdout_splits[split_name] = hsplit_lst
+    return holdout_splits, split_methods
+
+
+# * Rule functions
+def holdout(
+    evaluator_kws: dict,
+    holdout_splits,
+    split_methods,
+    dataset: Dataset,
+    model_name: str,
+    validation_kws: dict,
+) -> pl.DataFrame:
+    logger.info(f"Running holdout with {model_name}")
+    eva = ae.Evaluator(**evaluator_kws)
     split_dset: DatasetDict = ae.make_splits(dataset, split_methods=split_methods)
     result = eva.holdout(split_dset, holdout_splits, validation_kws=validation_kws)
     logger.info(f"Holdout with {model_name} complete")
@@ -255,6 +274,13 @@ def main():
     ).with_format("torch")
     if smk.config.get("test"):
         dataset = modify_for_test(dataset, X_KEY)
+
+    kws = {}
+    if smk.rule.startswith("holdout-"):
+        hs, sm = make_holdout_splits(dataset)
+        kws["holdout_splits"] = hs
+        kws["split_methods"] = sm
+
     baseline_re = "|".join(map(lambda x: x + ".*", get_args(EMBEDDING_METHODS)))
     # The above re is fine because FM embeddings are named after pooling methods
     if (
@@ -313,6 +339,7 @@ def main():
             model_name=mname,
             dataset=dataset,
             validation_kws=validation_kws,
+            **kws,
         )
         logger.debug(result)
         if result is not None:

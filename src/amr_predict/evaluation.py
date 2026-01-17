@@ -188,6 +188,11 @@ class Evaluator:
             logger.info(f"Holdout on key {key}")
             logger.info(f"Train, test shape: {train_dset.shape}, {test_dset.shape}")
 
+            if test_dset.shape[0] == 0:
+                raise ValueError("no samples in test dataset")
+            if train_dset.shape[0] == 0:
+                raise ValueError("no samples in train dataset")
+
             if validation_kws is not None:
                 val_split = train_dset.train_test_split(**validation_kws)
                 train_dset = val_split["train"]
@@ -234,6 +239,8 @@ class Evaluator:
                 )
             df = multitask_metrics2df(metrics)
             results.append(df.with_columns(pl.lit(key).alias("test_set")))
+        if not results:
+            raise ValueError("no splits were given")
         return pl.concat(results)
 
 
