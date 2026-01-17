@@ -3,13 +3,17 @@
 import re
 import shutil
 from pathlib import Path
+from subprocess import run
 from typing import Literal
 
 import matplotlib
+import plotly.express as px
 import plotnine as gg
 import polars as pl
+import yaml
 from amr_predict.utils import plot_params
 from loguru import logger
+from plotly.graph_objs._figure import Figure
 from plotnine.helpers import get_aesthetic_limits
 
 matplotlib.use("QtAgg")
@@ -19,7 +23,9 @@ matplotlib.use("QtAgg")
 try:
     from snakemake.script import snakemake as smk
 except ImportError:
-    smk = type("snakemake", (), {"rule": "none", "config": {}, "log": [0]})
+    smk = type(
+        "snakemake", (), {"rule": "none", "config": {}, "log": [0], "params": {}}
+    )
 
 RNG: int = smk.config.get("rng")
 logger.enable("amr_predict")
@@ -283,7 +289,6 @@ def evaluation():
             # )
 
 
-# TODO: make the plot parameters configurable
 def embedding_comparison():
     dir = Path(smk.input[0])
     outdir = Path(smk.output[0])
@@ -337,6 +342,91 @@ def embedding_comparison():
     except Exception as e:
         shutil.rmtree(outdir)
         raise e
+
+
+def record_env(
+    with_rich: bool = True,
+    outdir: Path | None = None,
+    cfg: dict = CONFIG,
+    rich_kws: dict | None = None,
+):
+    """Write relevant parts of the analysis configuration to separate yaml
+        files to display
+
+    Parameters
+    ----------
+    with_rich : bool
+        Whether to use rich-cli to produce formatted versions of the config
+        groups, with syntax highlighting
+
+
+    Notes
+    -----
+    This only includes configuration items relevant to interpretation of results i.e.
+        file paths, plotting parameters, renaming rules etc. will be excluded
+
+    """
+    outdir = outdir or Path(smk.params["outdir"])
+    outdir.mkdir(exist_ok=True)
+    rich_kws = rich_kws or CONFIG.get("report_plots", {}).get("rich-cli") or {}
+    to_save: dict[str | tuple, dict[str, str | None]] = {
+        "evaluation": {
+            "models": "model_parameters",
+            "baseline_filtering": None,
+            "trainer": "lightning_trainer",
+            "dataloader": "torch_dataloader",
+            "cross_validate": "cross_validation",
+            "holdout": None,
+            "tasks": None,
+        },
+        "embedding_interpretation": {
+            "train_sae": "SAE_training",
+            ("eval_sae", "umap"): "latent_umap",
+        },
+        "embedding_parameters": {
+            ("embedding_methods", CONFIG["embedding"]): CONFIG["embedding"]
+        },
+        "data_preparation": {
+            ("pool_embeddings", "methods"): "pooling methods",
+            "preprocessing": "sequence_preprocessing",
+        },
+        "embedding_comparison": {
+            "compare_embeddings": "sequence_embeddings",
+            "compare_pooled": "pooled_genome_embeddings",
+        },
+    }
+    # mapping of config groups to dictionary describing items. The dictionary
+    # has the format {"CONFIG_KEY": "OPTIONAL_SYNONYM"}
+    # If the CONFIG_KEY is a tuple, then descend sequentially through the keys listed
+    saved_groups: dict[str, dict] = {}
+    for group_name, items in to_save.items():
+        saved_groups[group_name] = {}
+        for k, v in items.items():
+            if isinstance(k, tuple):
+                to_iter = iter(k)
+                item = cfg[next(to_iter)]
+                for nt in to_iter:
+                    item = item[nt]
+            else:
+                item = cfg[k]
+            key = v if v else group_name
+            saved_groups[group_name][key] = item
+    for k, v in saved_groups.items():
+        saved_file = outdir / f"{k}.yaml"
+        with open(saved_file, "w") as f:
+            yaml.safe_dump(v, f)
+        if with_rich:
+            html_file = outdir / f"{k}.html"
+            command = f"rich {saved_file} -o {html_file}"
+            for arg, val in rich_kws.items():
+                if val is not None:
+                    command = f"{command} --{arg} {val}"
+                else:
+                    command = f"{command} --{arg}"
+            proc = run(command, shell=True, capture_output=True)
+            proc.check_returncode()
+            if not html_file.exists():
+                raise ValueError(f"rich failed to produce html file {html_file}")
 
 
 def eval_sae():

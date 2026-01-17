@@ -3,11 +3,18 @@ include: "Snakefile"
 
 INPUTS = {}
 RESULTS = {}
-
 INDIR = Path(f"{OUT}/{IN_DATE}")
+EVAL_TASKS = {
+    "ctrl_cv": "Cross-validation (Control tasks)",
+    "cv": "Cross-validation",
+}
 
 
 # * Define output
+
+
+SAVE_ENV = INDIR / ".config_for_report"
+
 # ** Model evaluation
 
 
@@ -110,17 +117,52 @@ for group, fn in {
 rule all:
     input:
         **{k: str(v) for k, v in RESULTS.items()},
+        env_record=SAVE_ENV,
+        env_record_files=expand(
+            f"{SAVE_ENV}/{{f}}.{{e}}",
+            f=(
+                "embedding_comparison",
+                "embedding_parameters",
+                "data_preparation",
+                "evaluation",
+            ),
+            e=("html", "yaml"),
+        ),
+
+
+# The top-level category should be Config
+# [2026-01-16 Fri] TODO: Do this for each rule and stuff, naming the file after the rule
+# e.g.
+# Save config["compar_embeddings"] and config["compare_pooled"] to embedding_comparison.html
+#
+
+
+rule record_env:
+    output:
+        report(
+            directory(SAVE_ENV),
+            patterns=["{group}.{file}"],
+            category="Configuration",
+            labels=lambda wc: {
+                "Config group": wc.get("group").replace("_", " ").title(),
+                "Mode": {"html": "Display", "yaml": "Yaml (Download)"}[wc.get("file")],
+            },
+        ),
+        *rules.all.input.env_record_files,
+    params:
+        outdir=SAVE_ENV,
+    script:
+        "scripts/report.py"
+
+
+# TODO: [2026-01-16 Fri] add this to a top-level category called Dataset
+# use plotly
+# rule describe_dataset:
 
 
 rule gather_existing:
     output:
         **{k: v for k, v in RESULTS.items() if k.startswith("exists")},
-
-
-eval_tasks = {
-    "ctrl_cv": "Cross-validation (Control tasks)",
-    "cv": "Cross-validation",
-}
 
 
 rule evaluation:
