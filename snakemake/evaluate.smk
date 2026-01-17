@@ -22,7 +22,7 @@ for sae_data in ("reconstructed", "sae_activations"):
 
 
 def default_log(rule_name):
-    return f"{LOGDIR}/evaluate-{rule_name}.log"
+    return f"{LOGDIR}/evaluate/{rule_name}.log"
 
 
 # [2026-01-13 Tue] passed
@@ -33,23 +33,12 @@ if TEST:
     config["cross_validate"]["models"] = ["baseline", "mlp"]
     config["dataloader"]["batch_size"] = 20
     config["holdout"]["models"] = ["baseline", "mlp"]
-    config["holdout"]["splits"] = None
-    # config["holdout"]["splits"] = {
-    #     "test1": {
-    #         "sample": {
-    #             "SAMN29490345": "EXACT",
-    #             "SAMN29490346": "EXACT",
-    #             "SAMN29490347": "EXACT",
-    #         }
-    #     },
-    #     "test2": {
-    #         "sample": {
-    #             "SAMN29490348": "EXACT",
-    #             "SAMN29490350": "EXACT",
-    #             "SAMN29490351": "EXACT",
-    #         }
-    #     },
-    # }
+    config["holdout"]["validation_kws"] = {}
+    config["holdout"]["splits"] = {
+        "test1": {"species": {e: "EXACT" for e in "DE"}},
+        "test2": {"genus": {e: "EXACT" for e in "AB"}},
+    }
+
 
 all_results = expand(
     "{o}/{m}/{d}_{t}.csv",
@@ -152,7 +141,7 @@ for model in config["cross_validate"]["models"]:
                 log:
                     default_log(f"holdout-{model}_{name}"),
                 output:
-                    **get_output("ctrl_cv"),
+                    **get_output("holdout"),
                 script:
                     "scripts/evaluate.py"
 
