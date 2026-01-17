@@ -58,7 +58,7 @@ X_KEY, SAMPLE_KEY = (
     smk.config["pool_embeddings"]["sample_key"],
 )
 
-if "validation_kws" in RCONFIG:
+if "validation_kws" in RCONFIG and not smk.config.get("test"):
     RCONFIG["validation_kws"]["seed"] = RNG
 DEFAULT_TRAIN = smk.config.get("trainer", {})
 DEFAULT_LOADER = smk.config.get("dataloader", {})
@@ -306,6 +306,21 @@ def main():
             fn = sym
     if fn is None:
         raise ValueError("prefix and function not defined")
+
+    all_tasks = {t for tasks in smk.config["tasks"].values() for t in tasks}
+    cols_remove = [
+        col
+        for col in dataset.column_names
+        if col not in all_tasks
+        and col
+        not in {
+            "sample",
+            "uid",
+            X_KEY,
+        }
+    ]
+    for col in cols_remove:
+        dataset = dataset.remove_columns(col)
 
     for ttype, task_names in smk.config["tasks"].items():
         if not task_names or (

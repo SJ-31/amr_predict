@@ -195,6 +195,7 @@ class Evaluator:
 
             if validation_kws is not None:
                 val_split = train_dset.train_test_split(**validation_kws)
+                logger.info("Generating validation set from kws {}", validation_kws)
                 train_dset = val_split["train"]
                 val_dset = val_split["test"]
 
