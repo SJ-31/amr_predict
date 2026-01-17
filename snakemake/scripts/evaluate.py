@@ -314,6 +314,7 @@ def main():
             dataset=dataset,
             validation_kws=validation_kws,
         )
+        logger.debug(result)
         if result is not None:
             result.write_csv(outfile)
 

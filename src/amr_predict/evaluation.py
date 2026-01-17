@@ -130,7 +130,7 @@ class Evaluator:
     def holdout(
         self,
         dataset: Path | DatasetDict | Dataset,
-        splits: dict[str, tuple[str, str, str | None | Dataset]] | None = None,
+        splits: dict[str, list[str | None | Dataset]] | None = None,
         validation_kws: dict | None = None,
         **kws,
     ) -> pl.DataFrame:
@@ -158,12 +158,21 @@ class Evaluator:
                 dataset = tmp["train"]
             else:
                 validation = None
-            print("Using automatic split")
+            logger.info("Using automatic split")
             dataset = dataset.train_test_split(**kws)
             splits = {"auto": ("train", "test", validation)}
 
         tasks = self.model.task_names
-        for key, (train, test, val) in splits.items():
+        for key, dsets in splits.items():
+            val = None
+            if len(dsets) == 2:
+                train, test = dsets
+            elif len(dsets) == 3:
+                train, test, val = dsets
+            else:
+                raise ValueError(
+                    "At least train, test datasets must be supplied for holdout"
+                )
             if isinstance(val, str) and isinstance(dataset, Path):
                 val_dset: Dataset | None = load_as(dataset / val)
             elif isinstance(val, Dataset):
