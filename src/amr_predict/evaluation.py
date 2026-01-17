@@ -193,7 +193,7 @@ class Evaluator:
             if train_dset.shape[0] == 0:
                 raise ValueError("no samples in train dataset")
 
-            if validation_kws is not None:
+            if validation_kws:
                 val_split = train_dset.train_test_split(**validation_kws)
                 logger.info("Generating validation set from kws {}", validation_kws)
                 train_dset = val_split["train"]

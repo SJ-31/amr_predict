@@ -274,9 +274,7 @@ class BaseNN(L.LightningModule):
             return tuple(p.detach() for p in proba)
         return proba.detach()
 
-    @override
-    def training_step(self, batch, batch_idx):
-        x = batch[self.x_key]
+    def maybe_get_y(self, batch: dict) -> Tensor | None:
         if self.supervised and (
             self.task_type == "classification" or self.task_type == "regression"
         ):
@@ -289,6 +287,12 @@ class BaseNN(L.LightningModule):
             y = batch[self.task_names]
         else:
             raise ValueError("no way to get y")
+        return y
+
+    @override
+    def training_step(self, batch, batch_idx):
+        x = batch[self.x_key]
+        y = self.maybe_get_y(batch)
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, batch=batch, context="train")
         self.log("train_loss", loss)
@@ -318,10 +322,10 @@ class BaseNN(L.LightningModule):
             return tuple([fn(p) for p in forward_out])
         return fn(forward_out)
 
-    def _log_step(self, log_to, prefix: str, batch, batch_idx):
+    def _log_step(self, log_to, prefix: str, batch, batch_idx, y: Tensor | None = None):
         x = batch[self.x_key]
-        y = batch.get("y")
         output = self(x)
+        y = self.maybe_get_y(batch)
         loss = self.criterion(y_pred=output, y_true=y, context=prefix)
         self.log(log_to, loss)
         self._try_cache_to(log_to, loss)
