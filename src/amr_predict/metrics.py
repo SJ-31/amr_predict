@@ -394,7 +394,7 @@ def nn_proportions(
         rand_pairs = gen.choice(
             list(range(adata.shape[0])), (null_bootstrap_rounds, 2), replace=True
         )
-        logger.info(f"{rand_pairs.shape}")
+        logger.info(f"Shape of rand_pairs: {rand_pairs.shape}")
         col_df: pd.DataFrame = adata.obs.loc[:, columns]
         nulls, ecdfs = {}, {}
         observed_dist = result["nn_dist"]["mean"].mean()

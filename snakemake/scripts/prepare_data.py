@@ -122,9 +122,11 @@ def compare_pooled(
     unique_samples = p_cols[sample_key_p].unique()
     o_lookup = {s: (o_cols[sample_key] == s).arg_true() for s in unique_samples}
     p_lookup = {s: (p_cols[sample_key_p] == s).arg_true() for s in unique_samples}
+    # Maps of sample ids to their indices in the dataset
     to_compute = batched(
         o_cols[sample_key].sample(n, shuffle=True, with_replacement=replacement), 2
     )
+    # Random pairs of samples
     for x, y in to_compute:
         for dset, lookup, key, val_key in zip(
             [original, pooled],
@@ -371,6 +373,7 @@ def pool_embeddings():
     embedding_ds = smk.input[0]
     inpath = Path(embedding_ds).with_suffix("")
     cache = EmbeddingCache(dir=inpath)
+    logger.info("Size of cache {}", len(cache))
     ds_name = inpath.stem.removesuffix(f"_{EMBEDDING}_cache")
     texts_path = Path(smk.params["textdir"]).joinpath(ds_name)
     for spec in methods:
@@ -386,13 +389,18 @@ def pool_embeddings():
             logger.info(f"{inpath.stem} `{method}` pooling: started")
             sp: StaticPooler = StaticPooler(
                 method=method,
-                # NOTE: merge with metadata during evals to save space
+                # NOTE: we merge with metadata during evals to save space
                 sample_metadata=None,
                 sample_metadata_key=None,
                 **spec_kws,
             )
             dset = get_seq_level(texts_path, cache)
+            logger.info("Size of dataset {}: {}", ds_name, dset.shape[0])
+            if dset["embedding"][:].isnan().all():
+                raise ValueError("All of the sequence embeddings are nan...")
             pooled = sp(dset)
+            if pooled[RCONFIG["key"]][:].isnan().all():
+                raise ValueError("All of the pooled embeddings are nan...")
             logger.success(f"{inpath.stem} `{method}` pooling: complete")
             pooled.save_to_disk(dataset_path=savepath)
             logger.info(f"{inpath.stem} `{method}` pooling: saved to disk")
@@ -418,7 +426,7 @@ def pool_embeddings():
             + gg.xlab("Contig distance")
             + gg.ylab("Genome distance")
         )
-        plot.save(filename=figpath, verbose=False, width=15)
+        plot.save(filename=figpath, verbose=False, width=15, height=12)
 
 
 # * Run

@@ -392,10 +392,6 @@ present_am <- local({
     )
 })
 
-## ** Add AWARE labeling
-
-# TODO: add this
-
 ## ** Label AM groups
 
 # %%
