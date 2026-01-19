@@ -24,12 +24,12 @@ if TEST:
         "file"
     ] = f"{config["data"]["meta"]}/combined_sample_meta.tsv"
     config["sample_metadata"]["id_col"] = "sample"
-    del config["preprocessing"]["feature_presence_bakta"]
+    del config["preprocessing"]["baseline-feature_presence_bakta"]
 
 PREPROCESSING = config["preprocessing"]
 EMBEDDING = config["embedding"]
 
-DATA_OUTS = {
+OUTDIRS = {
     k: f"{REMOTE}/{DATE}/datasets/{s}"
     for k, s in zip(
         ["S", "E", "P"],
@@ -60,7 +60,7 @@ elif config["embedding"] == "Evo2":
     EMBEDDING_RES = {"qos": "cpu24h", "mem": "30G"}
 
 
-PLOT_OUT = f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation"
+PLOT_OUT = Path(f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation")
 
 POOLED_ALREADY = [
     d
@@ -72,92 +72,110 @@ POOLED_PLOTS = expand(
     "{o}/{d}-{e}-{p}.png", o=PLOT_OUT, d=TO_POOL, e=EMBEDDING, p=pooling_methods
 )
 
-CACHE_CHECKS = ([f"{DATA_OUTS['E']}/{d}_{EMBEDDING}_cache.complete" for d in TO_POOL],)
 
-
-def default_log(rule_name):
-    return {
-        "log": f"{LOGDIR}/prepare_data-{rule_name}.log",
-        "profile": f"{LOGDIR}/prepare_data-{rule_name}_mem.bin",
-    }
-
-
-def get_pooled_out(as_dir: bool = False):
-    expanded = expand(
-        "{o}/{d}-{e}-{p}",
-        o=DATA_OUTS["P"],
-        e=EMBEDDING,
-        d=TO_POOL,
-        p=pooling_methods,
-    )
-    if as_dir:
-        return directory(expanded)
-    return expanded
+CACHE_CHECKS = [f"{OUTDIRS['E']}/{d}_{EMBEDDING}_cache.complete" for d in TO_POOL]
 
 
 rule all:
     input:
-        POOLED_PLOTS,
+        expand(
+            "{o}/{d}-{e}-{p}.png",
+            o=PLOT_OUT,
+            d=TO_POOL,
+            e=EMBEDDING,
+            p=pooling_methods,
+        ),
         embedded=CACHE_CHECKS,
-        pooled=get_pooled_out(),
-        other_pooled=[f"{DATA_OUTS['P']}/{d}" for d in POOLED_ALREADY],
+        pooled=expand(
+            f"{OUTDIRS['P']}/{{d}}-{EMBEDDING}-{{p}}", d=TO_POOL, p=pooling_methods
+        ),
+        other_pooled=[f"{OUTDIRS['P']}/{d}" for d in POOLED_ALREADY],
         meta=f"{PROCESSED}/{DATE}/seq_metadata.csv",
 
 
 rule get_seq_metadata:
     output:
-        rules.all.input.meta,
+        f"{PROCESSED}/{DATE}/seq_metadata.csv",
     log:
-        **default_log("get_seq_metadata"),
+        log=f"{LOGDIR}/prepare_data/get_seq_metadata.log",
+        profile=f"{LOGDIR}/prepare_data/get_seq_metadata_mem.bin",
     script:
         "scripts/prepare_data.py"
 
 
-rule make_text_datasets:
+rule make_text_dataset:
     output:
-        [directory(f"{DATA_OUTS['S']}/{d}") for d in TO_POOL],
-        [directory(f"{DATA_OUTS['P']}/{d}") for d in POOLED_ALREADY],
+        directory(f"{OUTDIRS['S']}/{{dataset}}"),
     input:
         rules.get_seq_metadata.output,
     log:
-        **default_log("make_text_datasets"),
+        log=f"{LOGDIR}/prepare_data/make_text_dataset-{{dataset}}.log",
+        profile=f"{LOGDIR}/prepare_data/make_text_dataset-{{dataset}}_mem.bin",
     params:
-        outdir=DATA_OUTS["S"],
-        outdir_pooled=DATA_OUTS["P"],
         preprocessing=PREPROCESSING,
     script:
         "scripts/prepare_data.py"
 
 
-rule make_embedded_datasets:
+rule make_baseline:
+    output:
+        directory(f"{OUTDIRS['P']}/{{dataset}}"),
+    wildcard_constraints:
+        dataset="baseline-.*",
     input:
-        rules.make_text_datasets.output,
+        rules.get_seq_metadata.output,
     log:
-        **default_log("make_embedded_datasets"),
+        log=f"{LOGDIR}/prepare_data/make_baseline-{{dataset}}.log",
+        profile=f"{LOGDIR}/prepare_data/make_baseline-{{dataset}}_mem.bin",
+    params:
+        preprocessing=PREPROCESSING,
+    script:
+        "scripts/prepare_data.py"
+
+
+rule make_embedded_dataset:
+    input:
+        f"{OUTDIRS['S']}/{{dataset}}",
+    log:
+        log=f"{LOGDIR}/prepare_data/make_embedded_dataset-{{dataset}}.log",
+        profile=f"{LOGDIR}/prepare_data/make_embedded_dataset-{{dataset}}_mem.bin",
     resources:
         **EMBEDDING_RES,
     params:
-        outdir=DATA_OUTS["E"],
-        ignore=POOLED_ALREADY,
+        outdir=OUTDIRS["E"],
     output:
-        CACHE_CHECKS,
+        f"{OUTDIRS['E']}/{{dataset}}_{EMBEDDING}_cache.complete",
     script:
         "scripts/prepare_data.py"
 
 
 rule pool_embeddings:
     input:
-        rules.make_embedded_datasets.output,
+        lambda wc: f"{OUTDIRS['E']}/{wc.get('dataset')}_{EMBEDDING}_cache.complete",
     params:
-        outdir=DATA_OUTS["P"],
-        textdir=DATA_OUTS["S"],
+        outdir=OUTDIRS["P"],
+        textdir=OUTDIRS["S"],
         plotdir=PLOT_OUT,
     resources:
         **BIG_MEM,
     log:
-        **default_log("pool_embeddings"),
+        log=f"{LOGDIR}/prepare_data/pool_embeddings-{{dataset}}.log",
+        profile=f"{LOGDIR}/prepare_data/pool_embeddings-{{dataset}}_mem.bin",
     output:
-        get_pooled_out(True),
-        POOLED_PLOTS,
+        datasets=directory(
+            expand(
+                "{o}/{{dataset}}-{e}-{p}",
+                o=OUTDIRS["P"],
+                e=EMBEDDING,
+                p=pooling_methods,
+            )
+        ),
+        plots=expand(
+            "{o}/{{dataset}}-{e}-{p}.{ext}",
+            o=PLOT_OUT,
+            e=EMBEDDING,
+            p=pooling_methods,
+            ext=["png", "csv"],
+        ),
     script:
         "scripts/prepare_data.py"
