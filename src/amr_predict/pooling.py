@@ -407,7 +407,7 @@ class StaticPooler(SeqPooler):
             )
         summed = torch.matmul(mask, embeddings)
         if weigh:
-            summed = torch.mul(summed, mask.sum(axis=1).reshape(-1, 1))
+            summed = torch.mul(summed, 1 / mask.sum(axis=1).reshape(-1, 1))
         return summed
 
 

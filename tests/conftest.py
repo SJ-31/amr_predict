@@ -55,7 +55,7 @@ def rdset(remote):
 
 @pytest.fixture
 def rng(env):
-    return np.random.default_rng(env["rng"])
+    return np.random.default_rng(49274)
 
 
 @pytest.fixture
