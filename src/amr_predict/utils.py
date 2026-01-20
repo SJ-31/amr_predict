@@ -37,6 +37,25 @@ logger.disable("amr_predict")
 TASK_TYPES: TypeAlias = Literal["classification", "regression", "reconstruction"]
 
 
+def debug_tensor_vals(tensor: Tensor, name: str):
+    logger.debug(
+        """
+    Checking values of tensor `{}`
+       contains nan: {}
+       is all nan: {}
+       nan_prop: {}
+       contains inf: {}
+       is all inf: {}
+    """,
+        name,
+        tensor.isnan().any(),
+        tensor.isnan().all(),
+        tensor.isnan().sum() / tensor.numel(),
+        tensor.isinf().any(),
+        tensor.isinf().all(),
+    )
+
+
 def plot_params(key: str, cfg):
     top = cfg["report_plots"]
     lookup = top.get(key)

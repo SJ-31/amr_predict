@@ -9,7 +9,13 @@ import polars as pl
 import torch
 import torch.nn as nn
 from amr_predict.models import BaseNN
-from amr_predict.utils import LinkedDataset, ModuleConfig, load_as, read_tabular
+from amr_predict.utils import (
+    LinkedDataset,
+    ModuleConfig,
+    debug_tensor_vals,
+    load_as,
+    read_tabular,
+)
 from datasets import Array2D, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from loguru import logger
@@ -395,17 +401,28 @@ class StaticPooler(SeqPooler):
 
         """
         samples = self._encode_samples(dataset)
-        embeddings = dataset[self.embedding_key][:]
+        embeddings: Tensor = dataset[self.embedding_key][:]
+        # debug_tensor_vals(embeddings, "embeddings")
         unique_samples = torch.unique(samples, sorted=True)
+        if embeddings.isnan().any():
+            logger.warning(
+                "nans detected in embedding tensor. Converting to 0 for stability"
+            )
+            embeddings = embeddings.nan_to_num(nan=0)
         if weight_fn is None:
             mask = torch.stack([samples == s for s in unique_samples]).to(
                 torch.get_default_dtype()
             )  # shape of n_samples x sequences
+            logger.debug(
+                "sum of mask equal to number of samples {}",
+                mask.sum() == embeddings.shape[0],
+            )
         else:
             mask = torch.stack(
                 [weight_fn(embeddings, samples == s) for s in unique_samples]
             )
         summed = torch.matmul(mask, embeddings)
+        debug_tensor_vals(summed, "summed")
         if weigh:
             summed = torch.mul(summed, 1 / mask.sum(axis=1).reshape(-1, 1))
         return summed
