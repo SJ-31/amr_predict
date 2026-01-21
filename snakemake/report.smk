@@ -185,6 +185,16 @@ rule gather_existing:
                 shutil.copytree(src, dest)
 
 
+def get_eval_subcategory(wc):
+    task = wc.get("eval_task")
+    mapping = {
+        "ctrl_cv": "Cross-validation (Control tasks)",
+        "cv": "Cross-validation",
+    }
+    if task in mapping:
+        return mapping[task]
+    return f"Holdout: {wc.get('test_set')}"
+
 
 rule evaluation:
     params:
@@ -216,7 +226,7 @@ for level, rname in zip(
         output:
             report(
                 directory(INDIR / "embedding_comparison" / level / ".summary_plots"),
-                patterns=["{pname}.png"],
+                patterns=["{pname}.svg"],
                 category="Embedding Comparison",
                 subcategory=level.title(),
                 labels={"Analysis": "{pname}"},

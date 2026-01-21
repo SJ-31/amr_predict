@@ -249,16 +249,36 @@ def cluster_metric_plot(
 # * Rule functions
 
 
+def plot_eval(df: pl.DataFrame, task, outdir, method):
+    metrics = df["metric"].unique()
+    for metric in metrics:
+        metric_outfile = outdir / f"{metric}_{task}.svg"
+        filtered = df.filter(pl.col("metric") == metric)
+        plots = gg.ggplot(filtered, gg.aes(x="task", y="value", fill="dataset"))
+        if method == "holdout":
+            plots = (
+                plots
+                + gg.geom_bar(stat="identity", position="dodge")
+                + gg.facet_grid("model ~ test_set")
+            )
+        else:
+            plots = plots + gg.geom_boxplot() + gg.facet_wrap("model")
+        plots.save(metric_outfile, **plot_params("evaluation", CONFIG))
+
+
 def evaluation():
-    groups, ttypes = ("cv", "holdout", "ctrl_cv"), ("regression", "classification")
+    eval_methods, ttypes = (
+        ("cv", "holdout", "ctrl_cv"),
+        ("regression", "classification"),
+    )
     out = Path(smk.params["outdir"])
-    for group in groups:
-        if not (out / group).exists():
+    for method in eval_methods:
+        if not (out / method).exists():
             continue
-        outdir = out / f".{group}"
+        outdir = out / f".{method}"
         outdir.mkdir(exist_ok=True)
         for task in ttypes:
-            key = f"{group}_{task[0]}"
+            key = f"{method}_{task[0]}"
             if key not in smk.params.keys():
                 continue
             combined: pl.DataFrame = pl.concat(
@@ -270,16 +290,8 @@ def evaluation():
                     for csv in (Path(f) for f in smk.params[key])
                 ]
             )
-            metrics = combined["metric"].unique()
-            for metric in metrics:
-                metric_outfile = outdir / f"{metric}_{task}.svg"
-                filtered = combined.filter(pl.col("metric") == metric)
-                bplots = (
-                    gg.ggplot(filtered, gg.aes(x="task", y="value", fill="dataset"))
-                    + gg.geom_boxplot()
-                    + gg.facet_wrap("model")
-                )
-                bplots.save(metric_outfile, **plot_params("evaluation", CONFIG))
+            plot_eval(combined, task=task, outdir=outdir, method=method)
+
             # TODO: generate aggregated files for datavzrd
             # TODO:
             # agg = combined.group_by(["dataset", "model", "task", "metric"]).agg(
