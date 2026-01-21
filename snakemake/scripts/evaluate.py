@@ -160,7 +160,28 @@ def make_holdout_splits(dataset: Dataset) -> tuple[dict, dict]:
             split_methods[f"{split_name}_{t}"] = m
             hsplit_lst.append(f"{split_name}_{t}")
         holdout_splits[split_name] = hsplit_lst
-    return holdout_splits, split_methods
+    inclusions = {}
+    if "bootstrap_splits" in RCONFIG:
+        b_cfg = RCONFIG["bootstrap_splits"]
+        for name in b_cfg.keys():
+            if (spec := b_cfg[name].get("exclude")) and spec:
+                mask, _ = train_test_from_dict(obs, spec)
+                inclusions[name] = np.argwhere(mask).flatten()
+    return holdout_splits, split_methods, inclusions
+
+
+def holdout_bootstrap(
+    task_name: str, dataset: Dataset, evaluator: ae.Evaluator, validation_kws
+) -> pl.DataFrame:
+    cfg = RCONFIG["bootstrap_splits"][task_name]
+    dfs = []
+    for i in range(cfg["repeat"]):
+        split_dset = dataset.train_test_split(seed=RNG, **cfg.get("kws") or {})
+        df = evaluator.holdout(
+            split_dset, {task_name: ["train", "test"]}, validation_kws
+        ).with_columns(pl.lit(i).alias("iter"))
+        dfs.append(df)
+    return pl.concat(dfs)
 
 
 # * Rule functions
@@ -171,12 +192,26 @@ def holdout(
     dataset: Dataset,
     model_name: str,
     validation_kws: dict,
+    bootstrap_inclusions: dict,
 ) -> pl.DataFrame:
     logger.info(f"Running holdout with {model_name}")
     eva = ae.Evaluator(**evaluator_kws)
     split_dset: DatasetDict = ae.make_splits(dataset, split_methods=split_methods)
     result = eva.holdout(split_dset, holdout_splits, validation_kws=validation_kws)
     logger.info(f"Holdout with {model_name} complete")
+    if "bootstrap_splits" in RCONFIG:
+        dfs = []
+        result = result.with_columns(pl.lit(0).alias("iter"))
+        for htask in RCONFIG["bootstrap_splits"].keys():
+            include = bootstrap_inclusions.get(htask)
+            if include is not None:
+                res = holdout_bootstrap(
+                    htask, dataset.select(include), eva, validation_kws
+                )
+            else:
+                res = holdout_bootstrap(htask, dataset, eva, validation_kws)
+            dfs.append(res)
+        result = pl.concat([result] + dfs)
     return result
 
 
@@ -277,9 +312,10 @@ def main():
 
     kws = {}
     if smk.rule.startswith("holdout-"):
-        hs, sm = make_holdout_splits(dataset)
+        hs, sm, include = make_holdout_splits(dataset)
         kws["holdout_splits"] = hs
         kws["split_methods"] = sm
+        kws["bootstrap_inclusions"] = include
 
     baseline_re = "|".join(map(lambda x: x + ".*", get_args(EMBEDDING_METHODS)))
     # The above re is fine because FM embeddings are named after pooling methods
@@ -356,7 +392,6 @@ def main():
             validation_kws=validation_kws,
             **kws,
         )
-        logger.debug(result)
         if result is not None:
             result.write_csv(outfile)
 
