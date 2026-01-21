@@ -10,8 +10,9 @@ import matplotlib
 import plotly.express as px
 import plotnine as gg
 import polars as pl
+import polars.selectors as cs
 import yaml
-from amr_predict.utils import plot_params
+from amr_predict.utils import load_as, plot_params, with_metadata
 from loguru import logger
 from plotly.graph_objs._figure import Figure
 from plotnine.helpers import get_aesthetic_limits
@@ -249,8 +250,34 @@ def cluster_metric_plot(
 # * Rule functions
 
 
-def plot_eval(df: pl.DataFrame, task, outdir, method):
+def format_metadata(cfg: dict = CONFIG):
+    df: pl.DataFrame = load_as(smk.input[0], "polars").select("sample")
+    all_tasks = [t for tasks in cfg["tasks"].values() for t in tasks]
+    cfg["ast_metadata"]["binarize"] = True
+    ast_binarized = (
+        with_metadata(df, cfg, "sample", "ast")
+        .select(["sample"] + all_tasks)
+        .rename(lambda x: x.replace("_class", "_resistant"))
+        .select("sample", cs.ends_with("_resistant"))
+    )
+    cfg["ast_metadata"]["binarize"] = False
+    ast = (
+        with_metadata(df, cfg, "sample", "ast")
+        .select(["sample"] + all_tasks)
+        .join(ast_binarized, on="sample")
+    )
+    ast.write_csv(smk.output["ast"], null_value="NA")
+    with_metadata(df, cfg, "sample", "sample").write_csv(
+        smk.output["meta"], null_value="NA"
+    )
+
+
+def plot_eval(
+    df: pl.DataFrame, task, outdir, method, plotly: bool = False, cfg: dict = CONFIG
+):
     metrics = df["metric"].unique()
+    if plotly:
+        raise NotImplementedError()
     for metric in metrics:
         metric_outfile = outdir / f"{metric}_{task}.svg"
         filtered = df.filter(pl.col("metric") == metric)
@@ -263,7 +290,7 @@ def plot_eval(df: pl.DataFrame, task, outdir, method):
             )
         else:
             plots = plots + gg.geom_boxplot() + gg.facet_wrap("model")
-        plots.save(metric_outfile, **plot_params("evaluation", CONFIG))
+        plots.save(metric_outfile, **plot_params("evaluation", cfg))
 
 
 def evaluation():

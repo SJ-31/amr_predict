@@ -1331,9 +1331,12 @@ def modify_metadata_test(
         other_cols = list(
             filter(lambda x: x != key_col and not x.endswith("_class"), cols)
         )
-        merging = add_random_cols(
-            merging, class_cols, ["resistant", "susceptible", "intermediate"]
-        )
+        if original_df.schema[class_cols[0]] == pl.String:
+            merging = add_random_cols(
+                merging, class_cols, ["resistant", "susceptible", "intermediate"]
+            )
+        else:
+            merging = add_random_cols(merging, class_cols, [0, 1])
         merging = add_random_cols(merging, other_cols, low=0.01, high=1024)
     elif meta_type == "sequence":
         merging = add_random_cols(
@@ -1400,10 +1403,10 @@ def with_metadata(
             merging = modify_metadata_test(m, df, key_col, merging)
         tmp = (merging.null_count() / merging.height).unpivot()
         null_dict = dict(zip(tmp["variable"], tmp["value"]))
-        logger.info(
-            "Percentage of nulls in merged metadata\n{}",
-            null_dict,
-        )
+        # logger.info(
+        #     "Percentage of nulls in merged metadata\n{}",
+        #     null_dict,
+        # )
     if not align and isinstance(dset, ad.AnnData):
         new = dset.copy()
         new.obs = merging.to_pandas()

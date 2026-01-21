@@ -38,6 +38,13 @@ if TEST:
         "test1": {"species": {e: "EXACT" for e in "DE"}},
         "test2": {"genus": {e: "EXACT" for e in "AB"}},
     }
+    config["holdout"]["bootstrap_splits"] = {
+        "test_bootstrap": {
+            "repeat": 3,
+            "kws": {"train_size": 0.5, "shuffle": True},
+            "exclude": {"species": {e: "EXACT" for e in "DE"}},
+        }
+    }
 
 
 all_results = expand(
