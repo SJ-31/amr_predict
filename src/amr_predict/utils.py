@@ -1268,6 +1268,88 @@ def add_random_cols(
     return df.with_columns(*exprs)
 
 
+# * Metadata functions
+
+
+def smoothen_log2(x: np.ndarray, l2_lower: int = -8, l2_upper: int = 10) -> np.ndarray:
+    """Round values in x to their nearest values along the scale
+    2**[l2_lower, l2_upper]
+    """
+    fit_to = np.arange(l2_lower, l2_upper, dtype=float)
+    logged = np.log2(x)
+    fill = np.zeros_like(x)
+    rounded = logged.round()
+    no_smoothing = logged == rounded
+    fill[no_smoothing] = x[no_smoothing]
+    for idx in np.argwhere(logged != rounded).flatten():
+        to_smooth = logged[idx]
+        nearest = np.argmin(np.abs(fit_to - to_smooth))
+        fill[idx] = 2 ** fit_to[nearest]
+    return fill
+
+
+def get_ast_meta(cfg: dict) -> pl.DataFrame:
+    args = cfg["ast_metadata"]
+    df = read_tabular(args["file"])
+    if not args.get("binarize"):
+        df = df.with_columns(
+            pl.any_horizontal(cs.ends_with("_class") == "resistant").alias(
+                "any_resistant"
+            ),
+            pl.any_horizontal(cs.ends_with("_class") == "susceptible").alias(
+                "any_susceptible"
+            ),
+        )
+    else:
+        df = df.with_columns(
+            cs.ends_with("_class")
+            .replace_strict({"resistant": 1}, default=0)
+            .cast(pl.UInt32)
+        ).with_columns(
+            pl.any_horizontal(cs.ends_with("_class") == 1).alias("any_resistant")
+        )
+    if args.get("smooth"):
+        for col in df.select(cs.by_dtype(pl.Float64)):
+            smoothed = smoothen_log2(df[col].to_numpy())
+            df = df.with_columns(pl.Series(smoothed).alias(col))
+    return df
+
+
+def modify_metadata_test(
+    meta_type: Literal["ast", "sample", "sequence"],
+    original_df: pl.DataFrame,
+    key_col: str,
+    merging: pl.DataFrame,
+) -> pl.DataFrame:
+    if meta_type == "ast":
+        cols = [
+            col
+            for col, dtype in original_df.schema.items()
+            if not isinstance(dtype, pl.Boolean)
+        ]
+        class_cols = list(filter(lambda x: x.endswith("_class"), cols))
+        other_cols = list(
+            filter(lambda x: x != key_col and not x.endswith("_class"), cols)
+        )
+        merging = add_random_cols(
+            merging, class_cols, ["resistant", "susceptible", "intermediate"]
+        )
+        merging = add_random_cols(merging, other_cols, low=0.01, high=1024)
+    elif meta_type == "sequence":
+        merging = add_random_cols(
+            merging,
+            cols=filter(lambda x: "gene" in x and x != "in_gene", original_df.columns),
+            choices=list(ascii_uppercase)[:10],
+        )
+    else:
+        merging = add_random_cols(
+            merging,
+            filter(lambda x: x != key_col, original_df.columns),
+            choices=list(ascii_uppercase)[:15],
+        )
+    return merging
+
+
 def with_metadata(
     dset: DSET_TYPES,
     cfg: dict,
@@ -1301,57 +1383,27 @@ def with_metadata(
             )
             key_col = "uid"
         elif m in {"ast", "sample"}:
-            key_col = cfg[f"{m}_metadata"]["id_col"]
-            df = read_tabular(cfg[f"{m}_metadata"]["file"])
-            df = df.with_columns(
-                pl.any_horizontal(cs.ends_with("_class") == "resistant").alias(
-                    "any_resistant"
-                ),
-                pl.any_horizontal(cs.ends_with("_class") == "susceptible").alias(
-                    "any_susceptible"
-                ),
+            df = (
+                get_ast_meta(cfg)
+                if m == "ast"
+                else read_tabular(cfg["sample_metadata"]["file"])
             )
+            key_col = cfg[f"{m}_metadata"]["id_col"]
         else:
             raise ValueError(
                 f"metadata type `{m}` must be one of 'ast', 'sequence', 'sample'"
             )
-
         merging = merging.join(
             df, left_on=sample_col, right_on=key_col, how="left", maintain_order="left"
         )
-        if for_test and m == "ast":
-            cols = [
-                col
-                for col, dtype in df.schema.items()
-                if not isinstance(dtype, pl.Boolean)
-            ]
-            class_cols = list(filter(lambda x: x.endswith("_class"), cols))
-            other_cols = list(
-                filter(lambda x: x != key_col and not x.endswith("_class"), cols)
-            )
-            merging = add_random_cols(
-                merging, class_cols, ["resistant", "susceptible", "intermediate"]
-            )
-            merging = add_random_cols(merging, other_cols, low=0.01, high=1024)
-        elif for_test and m == "sequence":
-            df = add_random_cols(
-                df,
-                cols=filter(lambda x: "gene" in x and x != "in_gene", df.columns),
-                choices=list(ascii_uppercase)[:10],
-            )
-        elif for_test:
-            merging = add_random_cols(
-                merging,
-                filter(lambda x: x != key_col, df.columns),
-                choices=list(ascii_uppercase)[:15],
-            )
+        if for_test:
+            merging = modify_metadata_test(m, df, key_col, merging)
         tmp = (merging.null_count() / merging.height).unpivot()
         null_dict = dict(zip(tmp["variable"], tmp["value"]))
         logger.info(
             "Percentage of nulls in merged metadata\n{}",
             null_dict,
         )
-    logger.debug("Merging df: {}", merging)
     if not align and isinstance(dset, ad.AnnData):
         new = dset.copy()
         new.obs = merging.to_pandas()

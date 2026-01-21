@@ -9,7 +9,7 @@ import numpy as np
 import polars as pl
 import pytest
 import torch
-from amr_predict.utils import EmbeddingCache, LinkedDataset, deduplicate
+from amr_predict.utils import EmbeddingCache, LinkedDataset, deduplicate, smoothen_log2
 from datasets import Dataset
 from loguru import logger
 from torch.utils.data import DataLoader
@@ -206,6 +206,13 @@ def test_deduplicate():
     dset = Dataset.from_polars(df)
     deduplicated = deduplicate(dset, "key")
     assert len(deduplicated["key"]) == 6
+
+
+def test_smoothen():
+    vals = np.array([3.82e-03, 7.8125e-03, 3.225e-02, 5.12e2, 2.1])
+    expected = np.array([3.90625e-03, 7.8125e-03, 3.125e-2, 5.12e2, 2])
+    smoothened = smoothen_log2(vals)
+    assert (smoothened == expected).all()
 
 
 # cache = EmbeddingCache(
