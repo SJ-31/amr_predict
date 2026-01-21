@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import reduce
 from pathlib import Path
+from shutil import copyfile
 from string import ascii_uppercase
 from typing import Any, Literal, TypeAlias, override
 
@@ -801,6 +802,28 @@ class EmbeddingCache:
 
     def __len__(self) -> int:
         return len(self._seen)
+
+    @staticmethod
+    def combine(
+        caches: Sequence[EmbeddingCache | Path],
+        new_path: Path,
+        rewrite: bool = False,
+        rewrite_kws: dict | None = None,
+        **kws,
+    ) -> EmbeddingCache:
+        new: EmbeddingCache = EmbeddingCache(dir=new_path, **kws)
+        acc: int = 0
+        for cache in caches:
+            cache = EmbeddingCache(cache) if isinstance(cache, Path) else cache
+            dir: Path = cache._dir
+            for i, file in enumerate(dir.glob(cache._glob(False))):
+                cur_index = i + acc
+                new_loc = new._dir / f"{new._prefix}_{cur_index}.parquet"
+                copyfile(file, new_loc)
+                acc += i
+        if rewrite:
+            new.rewrite(**(rewrite_kws or {}))
+        return new
 
     def save(
         self,

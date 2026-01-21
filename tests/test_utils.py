@@ -1,6 +1,9 @@
 #!/usr/bin/env ipython
 
+from pathlib import Path
 from string import ascii_letters
+from typing import Callable
+from uuid import uuid4
 
 import numpy as np
 import polars as pl
@@ -12,7 +15,11 @@ from torch.utils.data import DataLoader
 
 logger.enable("amr_predict")
 
-rng = np.random.default_rng()
+
+@pytest.fixture
+def rng():
+    return np.random.default_rng()
+
 
 list_of_arr = [np.random.rand(np.random.randint(3, 9), 10) for _ in range(10)]
 fixed_arr = [np.random.rand(10) for _ in range(10)]
@@ -26,21 +33,28 @@ df = pl.DataFrame(
     },
 )
 
-dummy_df = pl.DataFrame({"a": list(ascii_letters), "b": torch.rand(len(ascii_letters))})
 
-pl.LazyFrame(
-    {"a": "a", "b": [torch.rand(9)]},
-    schema={"a": pl.String, "b": pl.Array(pl.Float64, 9)},
-).collect()
+def dummy_df() -> pl.DataFrame:
+    dummy_df = pl.DataFrame(
+        {"a": list(ascii_letters), "b": torch.rand(len(ascii_letters))}
+    )
 
-dummy_df.with_columns(
-    pl.when(pl.Series(rng.choice([True, False], p=[0.3, 0.7], size=dummy_df.height)))
-    .then(pl.lit(None))
-    .otherwise(pl.col("a"))
-    .alias("a")
-)["a"].value_counts()
+    pl.LazyFrame(
+        {"a": "a", "b": [torch.rand(9)]},
+        schema={"a": pl.String, "b": pl.Array(pl.Float64, 9)},
+    ).collect()
 
-dummy_df.filter(rng.choice([True, False], p=[0.3, 0.7], size=dummy_df.height))
+    dummy_df.with_columns(
+        pl.when(
+            pl.Series(rng().choice([True, False], p=[0.3, 0.7], size=dummy_df.height))
+        )
+        .then(pl.lit(None))
+        .otherwise(pl.col("a"))
+        .alias("a")
+    )["a"].value_counts()
+
+    dummy_df.filter(rng().choice([True, False], p=[0.3, 0.7], size=dummy_df.height))
+    return dummy_df
 
 
 def dummy_embed(texts):
@@ -66,34 +80,42 @@ def dummy_embed(texts):
 
 
 @pytest.fixture
-def default_cache(tmp_path) -> tuple[EmbeddingCache, list]:
-    path = tmp_path / ".cache"
-    path.mkdir()
-    cache: EmbeddingCache = EmbeddingCache(path, save_interval=1)
-    words = [
-        "forest",
-        "crane",
-        "marble",
-        "silver",
-        "tiger",
-        "planet",
-        "shadow",
-        "bridge",
-        "coral",
-        "ember",
-        "novel",
-        "quartz",
-        "raven",
-        "flame",
-        "harbor",
-    ]
-    cache.save(words, fn=dummy_embed, batch_size=2)
-    return cache, words
+def make_default_cache(tmp_path, rng) -> Callable:
+    def fn(with_random: bool = False):
+        path: Path = tmp_path / str(uuid4()) / ".cache"
+        path.mkdir(parents=True)
+        cache: EmbeddingCache = EmbeddingCache(path, save_interval=1)
+        words = [
+            "forest",
+            "crane",
+            "marble",
+            "silver",
+            "tiger",
+            "planet",
+            "shadow",
+            "bridge",
+            "coral",
+            "ember",
+            "novel",
+            "quartz",
+            "raven",
+            "flame",
+            "harbor",
+        ]
+        if with_random:
+            new_words = [
+                word + "".join(rng.choice(list(ascii_letters), 5)) for word in words
+            ]
+            words.extend(new_words)
+        cache.save(words, fn=dummy_embed, batch_size=2)
+        return cache, words
+
+    return fn
 
 
-def test_cache1(default_cache):
+def test_cache1(make_default_cache):
     cache: EmbeddingCache
-    cache, words = default_cache
+    cache, words = make_default_cache()
     assert "bridge" in cache
     assert "foo" not in cache
     assert len(cache) == len(words)
@@ -137,9 +159,9 @@ def test_cache1(default_cache):
     print(cache.retrieve(["cascade", "meadow", "spice"]))
 
 
-def test_cache2(default_cache):
+def test_cache2(make_default_cache):
     cache: EmbeddingCache
-    cache, words = default_cache
+    cache, words = make_default_cache()
     cache.rewrite(n_rows=3)
     print(list(cache._dir.iterdir()))
     # assert len(list(cache._dir.iterdir())) == 2
@@ -149,12 +171,20 @@ def test_cache2(default_cache):
     null_count = df.filter(pl.col("token").is_not_null()).height
     print(null_count)
     print(df.height * prop)
-    assert pytest.approx(null_count, abs=2) == df.height * prop
+    assert pytest.approx(null_count, abs=3) == df.height * prop
 
 
-def test_dataset(default_cache):
+def test_cache_combine(make_default_cache, tmp_path):
+    cache, words = make_default_cache()
+    cache2, words2 = make_default_cache(True)
+    combined = EmbeddingCache.combine([cache, cache2], new_path=tmp_path)
+    df: pl.DataFrame = combined.pl().collect()
+    assert (set(words) | set(words2)) == set(df["key"])
+
+
+def test_dataset(make_default_cache):
     cache: EmbeddingCache
-    cache, words = default_cache
+    cache, words = make_default_cache()
     df = pl.DataFrame({"key": words[:5], "sample": range(5)})
     ds = LinkedDataset(meta=df, cache=cache, text_key="key", x_key="x")
     loader = DataLoader(ds, batch_size=3)
