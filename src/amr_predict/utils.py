@@ -1309,7 +1309,7 @@ def get_ast_meta(cfg: dict) -> pl.DataFrame:
             pl.any_horizontal(cs.ends_with("_class") == 1).alias("any_resistant")
         )
     if args.get("smooth"):
-        for col in df.select(cs.by_dtype(pl.Float64)):
+        for col in df.select(cs.by_dtype(pl.Float64)).columns:
             smoothed = smoothen_log2(df[col].to_numpy())
             df = df.with_columns(pl.Series(smoothed).alias(col))
     return df
