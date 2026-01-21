@@ -38,6 +38,19 @@ logger.disable("amr_predict")
 TASK_TYPES: TypeAlias = Literal["classification", "regression", "reconstruction"]
 
 
+def deduplicate(dset: Dataset, key: str, num_proc: int = 64) -> Dataset:
+    # https://huggingface.co/datasets/Finnish-NLP/mc4_fi_cleaned/blob/main/deduplicate.py
+    uniques: set = set(dset[key][:])
+
+    def check_unique(x):
+        if x[key] in uniques:
+            uniques.remove(x[key])
+            return True
+        return False
+
+    return dset.filter(lambda x: check_unique(x), num_proc=num_proc)
+
+
 def debug_tensor_vals(tensor: Tensor, name: str):
     logger.debug(
         """

@@ -9,7 +9,8 @@ import numpy as np
 import polars as pl
 import pytest
 import torch
-from amr_predict.utils import EmbeddingCache, LinkedDataset
+from amr_predict.utils import EmbeddingCache, LinkedDataset, deduplicate
+from datasets import Dataset
 from loguru import logger
 from torch.utils.data import DataLoader
 
@@ -198,6 +199,13 @@ def test_dataset(make_default_cache):
     print(d2.shape)
     assert ds.meta.shape[0] == ds["x"].shape[0]
     assert ds.meta.shape[0] == ds[:]["x"].shape[0]
+
+
+def test_deduplicate():
+    df = pl.DataFrame({"key": list("aaabbccddfe"), "x": np.random.random(11)})
+    dset = Dataset.from_polars(df)
+    deduplicated = deduplicate(dset, "key")
+    assert len(deduplicated["key"]) == 6
 
 
 # cache = EmbeddingCache(
