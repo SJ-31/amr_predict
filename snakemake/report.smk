@@ -1,27 +1,38 @@
 include: "Snakefile"
 
 
+import shutil
+
+
+configfile: "models.yaml"
+
+
+# TODO: write this up, should be the last thing you do
+# report: "report/main.rst"
+
+
 INPUTS = {}
 RESULTS = {}
+COPY_EXISTING = {}
 INDIR = Path(f"{OUT}/{IN_DATE}")
-EVAL_TASKS = {
-    "ctrl_cv": "Cross-validation (Control tasks)",
-    "cv": "Cross-validation",
-}
 
 
 # * Define output
 
 
-SAVE_ENV = INDIR / ".config_for_report"
+EXISTING_SAVED = INDIR / ".plots_for_report"
+ENV_SAVED = INDIR / ".config_for_report"
 
 # ** Model evaluation
+
+EVAL_OUT = {}
 
 
 def define_eval_out(key, cat):
     eval_tasks = {
         "ctrl_cv": "Cross-validation (control tasks)",
         "cv": "Cross-validation",
+        "holdout": "Holdout",
     }
     edir = INDIR / key
     INPUTS["evaluation"] = {}
@@ -46,8 +57,9 @@ def define_ec_out(key, cat):
         if not (ec_dir / group).exists():
             continue
         if group == "pooled_distance_correlation":
+            COPY_EXISTING[ec_dir / group] = EXISTING_SAVED / group
             RESULTS[f"exists_{key}_{group}"] = report(
-                directory(ec_dir / group),
+                directory(EXISTING_SAVED / group),
                 patterns=["{dataset}.png"],
                 category=cat,
                 subcategory=group.replace("_", " ").title(),
@@ -61,8 +73,11 @@ def define_ec_out(key, cat):
                     "Dataset": "{dataset}",
                     "Type": "{ptype}",
                 }
+                COPY_EXISTING[ec_dir / group / f"plots-{scale[0]}"] = (
+                    EXISTING_SAVED / group / f"plots-{scale[0]}"
+                )
                 RESULTS[f"exists_{key}_{group}_dim_reduction"] = report(
-                    directory(ec_dir / group / f"plots-{scale[0]}"),
+                    directory(EXISTING_SAVED / group / f"plots-{scale[0]}"),
                     patterns=[pattern],
                     category=cat,
                     subcategory=f"{group.title()} Plots ({scale.title()})",
@@ -78,8 +93,9 @@ def define_sae_out(key, cat):
     sae_dir = INDIR / key
     cat = "Interpretation"
     for pdir in ("latent_umap", "activation_plots"):
+        COPY_EXISTING[sae_dir / pdir] = EXISTING_SAVED / pdir
         RESULTS[f"exists_{key}_{pdir}"] = report(
-            directory(sae_dir / pdir),
+            directory(EXISTING_SAVED / pdir),
             patterns=["{level}-level_{dataset}/{source,model_raw|sae}_{concept}.png"],
             category=cat,
             subcategory=f"SAE {pdir.replace("_", " ").title()}",
@@ -117,9 +133,9 @@ for group, fn in {
 rule all:
     input:
         **{k: str(v) for k, v in RESULTS.items()},
-        env_record=SAVE_ENV,
+        env_record=ENV_SAVED,
         env_record_files=expand(
-            f"{SAVE_ENV}/{{f}}.{{e}}",
+            f"{ENV_SAVED}/{{f}}.{{e}}",
             f=(
                 "embedding_comparison",
                 "embedding_parameters",
@@ -140,7 +156,7 @@ rule all:
 rule record_env:
     output:
         report(
-            directory(SAVE_ENV),
+            directory(ENV_SAVED),
             patterns=["{group}.{file}"],
             category="Configuration",
             labels=lambda wc: {
@@ -150,7 +166,7 @@ rule record_env:
         ),
         *rules.all.input.env_record_files,
     params:
-        outdir=SAVE_ENV,
+        outdir=ENV_SAVED,
     script:
         "scripts/report.py"
 
@@ -163,6 +179,11 @@ rule record_env:
 rule gather_existing:
     output:
         **{k: v for k, v in RESULTS.items() if k.startswith("exists")},
+    run:
+        for src, dest in COPY_EXISTING.items():
+            if not dest.exists():
+                shutil.copytree(src, dest)
+
 
 
 rule evaluation:
