@@ -264,12 +264,19 @@ def format_metadata(cfg: dict = CONFIG):
     ast = (
         with_metadata(df, cfg, "sample", "ast")
         .select(["sample"] + all_tasks)
+        .with_columns(
+            cs.ends_with("_class").replace_strict(
+                {"resistant": "R", "intermediate": "I", "susceptible": "S"}
+            )
+        )
         .join(ast_binarized, on="sample")
     )
     ast.write_csv(smk.output["ast"], null_value="NA")
-    with_metadata(df, cfg, "sample", "sample").write_csv(
-        smk.output["meta"], null_value="NA"
-    )
+    sample_meta = with_metadata(df, cfg, "sample", "sample")
+    for col in smk.params["to_remove"]:
+        if col in sample_meta.columns:
+            sample_meta = sample_meta.drop(col)
+    sample_meta.write_csv(smk.output["meta"], null_value="NA")
 
 
 def plot_eval(

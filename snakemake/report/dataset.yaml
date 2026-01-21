@@ -1,0 +1,43 @@
+datasets:
+  seq_meta:
+    path: ?input["seq_meta"]
+  ast:
+    path: ?input["ast"]
+  sample_meta:
+    path: ?input["sample_meta"]
+
+views:
+  "Sequences":
+    dataset: seq_meta
+    desc: "Sequence annotations, obtained with funcscan"
+    render-table:
+      columns:
+        sample:
+          label: "BioSample"
+  "Antibiotic Susceptibility Testing":
+    dataset: ast
+    render-table:
+      columns:
+        sample:
+          label: "BioSample"
+        ?for col in params["ast_boolean"]:
+          ?f"{col}":
+            spell:
+              url: v1.5.1/logic/boolean
+              with:
+                true_value: 1
+                false_value: 0
+        ?for col in params["ast"]:
+          ?f"{col}":
+            plot:
+              ticks:
+                scale: log
+                color:
+                  range: ["green", "red"]
+  "Sample":
+    desc: "Unified sample metadata"
+    dataset: sample_meta
+    render-table:
+      columns:
+        sample:
+          label: "BioSample"

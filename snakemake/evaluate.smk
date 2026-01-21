@@ -151,7 +151,3 @@ for model in config["cross_validate"]["models"]:
                     **get_output("holdout"),
                 script:
                     "scripts/evaluate.py"
-
-
-# TODO: [2026-01-08 Thu] need to test that this works
-# TODO: would like a rule that aggregates all the results across everything

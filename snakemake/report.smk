@@ -2,6 +2,7 @@ include: "Snakefile"
 
 
 import shutil
+import polars as pl
 
 
 configfile: "models.yaml"
@@ -144,13 +145,7 @@ rule all:
             ),
             e=("html", "yaml"),
         ),
-
-
-# The top-level category should be Config
-# [2026-01-16 Fri] TODO: Do this for each rule and stuff, naming the file after the rule
-# e.g.
-# Save config["compar_embeddings"] and config["compare_pooled"] to embedding_comparison.html
-#
+        datavzrd=INDIR / ".datavzrd",
 
 
 rule record_env:
@@ -169,11 +164,6 @@ rule record_env:
         outdir=ENV_SAVED,
     script:
         "scripts/report.py"
-
-
-# TODO: [2026-01-16 Fri] add this to a top-level category called Dataset
-# use plotly
-# rule describe_dataset:
 
 
 rule gather_existing:
@@ -253,3 +243,48 @@ rule eval_sae:
         ),
     script:
         "scripts/report.py"
+
+
+# TODO: [2026-01-16 Fri] add this to a top-level category called Dataset
+# use plotly
+rule format_metadata:
+    input:
+        next((INDIR / "datasets" / "pooled").iterdir()),
+    output:
+        ast=INDIR / ".samples_with_ast.csv",
+        meta=INDIR / ".samples_with_meta.csv",
+    script:
+        "scripts/report.py"
+
+
+module shared:
+    snakefile:
+        "shared.smk"
+
+
+use rule datavzrd from shared as make_interactive_table with:
+    input:
+        seq_meta=INDIR / "seq_metadata.csv",
+        sample_meta=INDIR / ".samples_with_meta.csv",
+        ast=INDIR / ".samples_with_ast.csv",
+    params:
+        template="report/dataset.yaml",
+        to_remove=["ProjectID", "BioProject", "TaxID"],
+        ast_boolean=[
+            t.replace("_class", "_resistant")
+            for t in config["tasks"]["classification"]
+        ],
+        ast=config["tasks"]["regression"],
+        seq_annotations=[
+            col
+            for col in pl.read_csv(INDIR / "seq_metadata.csv", n_rows=5).columns
+            if col not in {"sample", "seqid", "start", "stop"}
+        ],
+    output:
+        dir=report(
+            directory(f"{INDIR}/.datavzrd"),
+            category="Dataset",
+            htmlindex="index.html",
+            labels={"Name": "Metadata explorer"},
+        ),
+        config=f"{INDIR}/evaluation/.datavzrd_template.yaml",
