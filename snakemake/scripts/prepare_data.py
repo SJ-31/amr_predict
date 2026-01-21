@@ -395,9 +395,6 @@ def pool_embeddings():
                 **spec_kws,
             )
             dset = get_seq_level(texts_path, cache)
-            logger.info("Size of dataset {}: {}", ds_name, dset.shape[0])
-            if dset["embedding"][:].isnan().all():
-                raise ValueError("All of the sequence embeddings are nan...")
             pooled = sp(dset)
             if pooled[RCONFIG["key"]][:].isnan().all():
                 raise ValueError("All of the pooled embeddings are nan...")
