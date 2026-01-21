@@ -187,7 +187,6 @@ class Evaluator:
                 test_dset = dataset[test]
             logger.info(f"Holdout on key {key}")
             logger.info(f"Train, test shape: {train_dset.shape}, {test_dset.shape}")
-
             if test_dset.shape[0] == 0:
                 raise ValueError("no samples in test dataset")
             if train_dset.shape[0] == 0:
@@ -198,33 +197,13 @@ class Evaluator:
                 logger.info("Generating validation set from kws {}", validation_kws)
                 train_dset = val_split["train"]
                 val_dset = val_split["test"]
-
             if val_dset is not None:
                 logger.info(f"Validation set shape: {val_dset.shape}")
 
             if self.pp is not None:
-                old_in_features: int = train_dset[self.x_key][:].shape[1]
-                train_dset = self.pp.fit_transform(train_dset)
-                test_dset = self.pp.transform(test_dset)
-                new_in_features: int = train_dset[self.x_key][:].shape[1]
-                if new_in_features != test_dset[self.x_key][:].shape[1]:
-                    raise ValueError(
-                        "Number of features in train and test datasets must be identical after preprocessing"
-                    )
-                if val_dset is not None:
-                    val_dset = self.pp.transform(val_dset)
-                    if new_in_features != val_dset[self.x_key][:].shape[1]:
-                        raise ValueError(
-                            "Number of features in train and validation datasets must be identical after preprocessing"
-                        )
-                if new_in_features != old_in_features:
-                    logger.warning("""
-                    Number of features changed during preprocessing.
-                    Ensure the model can handle this if no `model_fn` was passed
-                    """)
-                if self.model_fn is not None:
-                    self.model = self.model_fn(new_in_features)
-
+                train_dset, test_dset, val_dset = self._preprocess(
+                    train_dset, test_dset, val_dset
+                )
             self._fit(train=train_dset, val=val_dset)
             y_true: Tensor = test_dset.to_polars().select(tasks).to_torch()
             if self.task_type == "regression":
@@ -243,6 +222,30 @@ class Evaluator:
         if not results:
             raise ValueError("no splits were given")
         return pl.concat(results)
+
+    def _preprocess(self, train_dset, test_dset, val_dset):
+        old_in_features: int = train_dset[self.x_key][:].shape[1]
+        train_dset = self.pp.fit_transform(train_dset)
+        test_dset = self.pp.transform(test_dset)
+        new_in_features: int = train_dset[self.x_key][:].shape[1]
+        if new_in_features != test_dset[self.x_key][:].shape[1]:
+            raise ValueError(
+                "Number of features in train and test datasets must be identical after preprocessing"
+            )
+        if val_dset is not None:
+            val_dset = self.pp.transform(val_dset)
+            if new_in_features != val_dset[self.x_key][:].shape[1]:
+                raise ValueError(
+                    "Number of features in train and validation datasets must be identical after preprocessing"
+                )
+        if new_in_features != old_in_features:
+            logger.warning("""
+            Number of features changed during preprocessing.
+            Ensure the model can handle this if no `model_fn` was passed
+            """)
+        if self.model_fn is not None:
+            self.model = self.model_fn(new_in_features)
+        return train_dset, test_dset, val_dset
 
 
 def make_splits(
