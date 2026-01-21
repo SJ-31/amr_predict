@@ -506,7 +506,6 @@ class SeqEmbedder:
         layer: int = 30,
         retries: int = 3,
     ) -> Dataset | None:
-        dset = dset.add_column("uid", list(range(len(dset)))).sort("uid")
         df: pl.DataFrame = dset.to_polars()
         logger.info(f"{df.shape[0]} sequences to embed")
         cache: EmbeddingCache = EmbeddingCache(
@@ -616,7 +615,7 @@ class SeqEmbedder:
         model = AutoModelForMaskedLM.from_pretrained(model_key)
         model.to(device)
         model.config.output_hidden_states = True
-        dataset = dset.add_column("uid", list(range(len(dset))))
+        dataset = dset.add_column("seqlens_uid", list(range(len(dset))))
         df: pl.DataFrame = dataset.to_polars()
         cache: EmbeddingCache = EmbeddingCache(
             self.workdir,
@@ -624,7 +623,7 @@ class SeqEmbedder:
             with_tokens=self.with_tokens,
             token_prop=self.token_prop,
         )
-        to_remove = [c for c in dset.column_names if c != "uid"]
+        to_remove = [c for c in dset.column_names if c != "seqlens_uid"]
 
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
@@ -637,7 +636,7 @@ class SeqEmbedder:
                 batched=True,
                 remove_columns=to_remove,
             )
-            uid2seq = dict(zip(current["uid"][:], current[text_key][:]))
+            seqlens_uid2seq = dict(zip(current["seqlens_uid"][:], current[text_key][:]))
 
             loader = DataLoader(
                 tokenized, batch_size=batch_size, collate_fn=data_collator
@@ -677,10 +676,13 @@ class SeqEmbedder:
                         ],
                         dim=1,
                     )
-                for i, (e, uid) in enumerate(
-                    zip(torch.unbind(embedding, axis=0), torch.unbind(batch["uid"]))
+                for i, (e, seqlens_uid) in enumerate(
+                    zip(
+                        torch.unbind(embedding, axis=0),
+                        torch.unbind(batch["seqlens_uid"]),
+                    )
                 ):
-                    seq = uid2seq[uid.cpu().item()]
+                    seq = seqlens_uid2seq[seqlens_uid.cpu().item()]
                     # WARNING: you got memory issues from the below line when
                     # hidden_masked[i, :, :] came before None
                     token = None if not self.with_tokens else hidden_masked[i, :, :]
@@ -688,7 +690,7 @@ class SeqEmbedder:
 
         with torch.no_grad():
             cache.save(df[text_key], fn=seqlens, batch_size=batch_size * 3)
-        df = df.drop("uid")
+        df = df.drop("seqlens_uid")
         return self._finalize_dataset(df, text_key, cache)
 
     @staticmethod
