@@ -31,4 +31,7 @@ rule datavzrd:
             f"yte --template {params.template} --variable-file {variables.name} > {output.config}"
         )
         shell(f"mkdir {output.dir}")
-        shell(f"datavzrd {output.config} --output {output.dir}")
+        try:
+            shell(f"datavzrd {output.config} --output {output.dir}")
+        except:
+            shell(f"rm -R {output.dir}")
