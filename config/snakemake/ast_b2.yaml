@@ -1,0 +1,6 @@
+seq_metadata:
+  hamronization: "../data/remote/output/ast_browser/funcscan/batch2/reports/hamronization_summarize/hamronization_combined_report.tsv"
+  combgc: "../data/remote/output/ast_browser/funcscan/batch2/reports/combgc"
+  bakta: "../data/remote/output/ast_browser/funcscan/batch2/annotation/bakta/all"
+  ampcombi: "../data/remote/output/ast_browser/funcscan/batch2/reports/ampcombi2/Ampcombi_summary_cluster.tsv"
+genomes: "../data/remote/genomes/ast_browser_batches/2"

@@ -1,0 +1,76 @@
+pool_embeddings:
+  methods:
+    - method: mean
+    - method: sum
+    - method: similarity
+
+tasks:
+  # [2025-12-26 Fri] Details on selection in `data_curation.org` and `preprocessing.org`
+  classification:
+    [
+      "gentamicin_class",
+      "tetracycline_class",
+      "trimethoprim-sulfamethoxazole_class",
+      "ciprofloxacin_class",
+      "cefoxitin_class",
+    ]
+  regression:
+    [
+      "gentamicin",
+      "tetracycline",
+      "trimethoprim-sulfamethoxazole",
+      "ciprofloxacin",
+      "cefoxitin",
+    ]
+
+# TODO: fill out all of the below properly
+compare_embeddings:
+  bootstrap_rounds: 3
+  n_samples_per: 4
+  methods:
+    - neighbor_proportion
+    - pair_distance_distribution
+    - clustering
+  pair_distance_distribution:
+    cols: ["sample"]
+    distance_metric: cosine
+    kws:
+      n_pairs_per: 20
+  neighbor_proportion:
+    cols: ["sample"]
+    kws:
+      metric: "cosine"
+      n_neighbors: 5
+  cluster_on:
+    - "sample" # do the sequence embeddings recover their original genomes when clustered?
+    - "bakta_gene" # do sequence embeddings cluster by genes?
+    - "hamr_drug_class"
+
+compare_pooled:
+  bootstrap_rounds: 1
+  n_samples_per: null
+  methods:
+    - neighbor_proportion
+    - covariate_distance_correlation
+    - pair_distance_distribution
+    - clustering
+  pair_distance_distribution:
+    cols: [""]
+    distance_metric: cosine
+    kws:
+      n_pairs_per: 20
+  covariate_distance_correlation:
+    cols: ["species"]
+    distance_metric: "cosine"
+  neighbor_proportion:
+    cols: ["species"]
+    kws:
+      metric: "cosine"
+      n_neighbors: 7
+      null_bootstrap_rounds: 1000
+      include_null: true
+      include_impurity: true
+  cluster_on:
+    - "amikacin_class"
+  continuous:
+    - "AMK"

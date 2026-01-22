@@ -6,12 +6,7 @@ pool_embeddings:
     - method: similarity
 
 seq_metadata:
-  renaming_rules:
-    id_col: "sample"
-    seqid_col: "seqid"
-    start_col: "start"
-    stop_col: "stop"
-    # Change the below to reflect the batch (or `all` when you eventually combine them)
+  # Change the below to reflect the batch (or `all` when you eventually combine them)
   hamronization: "../data/remote/output/ast_browser/funcscan/batch1/reports/hamronization_summarize/hamronization_combined_report.tsv" # hamronization summary tsv
   combgc: "../data/remote/output/ast_browser/funcscan/batch1/reports/combgc" # combgc directory
   bakta: "../data/remote/output/ast_browser/funcscan/batch1/annotation/bakta/all" # bakta directory
