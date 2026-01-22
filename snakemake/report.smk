@@ -2,7 +2,6 @@ include: "Snakefile"
 
 
 import shutil
-import polars as pl
 
 
 configfile: "models.yaml"
@@ -133,6 +132,8 @@ for group, fn in {
 
 rule all:
     input:
+        *expand(f"{INDIR}/.samples_with_{{f}}.csv", f=("ast", "meta")),
+        *expand(f"{INDIR}/.datavzrd_{{f}}", f=("seqs", "samples")),
         **{k: str(v) for k, v in RESULTS.items()},
         env_record=ENV_SAVED,
         env_record_files=expand(
@@ -145,7 +146,6 @@ rule all:
             ),
             e=("html", "yaml"),
         ),
-        datavzrd=INDIR / ".datavzrd",
 
 
 rule record_env:
@@ -250,9 +250,12 @@ rule eval_sae:
 rule format_metadata:
     input:
         next((INDIR / "datasets" / "pooled").iterdir()),
+        INDIR / "seq_metadata.csv",
     output:
         ast=INDIR / ".samples_with_ast.csv",
         meta=INDIR / ".samples_with_meta.csv",
+        count_tables=directory(INDIR / ".seq_meta/count_tables"),
+        seq_values_per=INDIR / ".seq_meta/values_per_sample.csv",
     script:
         "scripts/report.py"
 
@@ -262,10 +265,26 @@ module shared:
         "shared.smk"
 
 
-use rule datavzrd from shared as make_interactive_table with:
+use rule datavzrd from shared as show_sequence_annotations with:
     input:
-        sample_meta=INDIR / ".samples_with_meta.csv",
-        ast=INDIR / ".samples_with_ast.csv",
+        count_dir=rules.format_metadata.output.count_tables,
+    params:
+        template="report/seq_anno.yaml",
+    output:
+        dir=report(
+            directory(f"{INDIR}/.datavzrd_seqs"),
+            category="Dataset",
+            htmlindex="index.html",
+            labels={"Name": "Sequence annotation counts"},
+        ),
+        config=f"{INDIR}/evaluation/.datavzrd_seqs.yaml",
+
+
+use rule datavzrd from shared as show_sample_metadata with:
+    input:
+        sample_meta=rules.format_metadata.output.meta,
+        ast=rules.format_metadata.output.ast,
+        seq_meta=rules.format_metadata.output.seq_values_per,
     params:
         template="report/dataset.yaml",
         to_remove=["ProjectID", "BioProject", "TaxID"],
@@ -297,12 +316,11 @@ use rule datavzrd from shared as make_interactive_table with:
             "family",
             "order",
         ],
-        scols=pl.read_csv(INDIR / ".samples_with_meta.csv", n_rows=5).columns,
     output:
         dir=report(
-            directory(f"{INDIR}/.datavzrd"),
+            directory(f"{INDIR}/.datavzrd_samples"),
             category="Dataset",
             htmlindex="index.html",
-            labels={"Name": "Sample explorer"},
+            labels={"Name": "Sample metadata"},
         ),
-        config=f"{INDIR}/evaluation/.datavzrd_template.yaml",
+        config=f"{INDIR}/evaluation/.datavzrd_samples.yaml",

@@ -1,8 +1,14 @@
+__definitions__:
+  - import polars as pl
+  - scols = pl.read_csv(input["sample_meta"], n_rows = 5).columns
+
 datasets:
   ast:
     path: ?input["ast"]
   sample_meta:
     path: ?input["sample_meta"]
+  seq_meta:
+    path: ?input["seq_meta"]
 
 views:
   "Taxonomy":
@@ -10,16 +16,19 @@ views:
     desc: "Taxonomic attributes"
     render-table:
       columns:
-        ?for col in params["scols"]:
+        ?for col in scols:
           ?if col not in params["tax_cols"] and col != "sample":
             ?col:
               display-mode: hidden
+  "Annotation counts":
+    desc: "Number of unique sequence annotations within each sample"
+    dataset: seq_meta
   "Sample handling":
     desc: "Metadata relating to sequencing and AST platform"
     dataset: sample_meta
     render-table:
       columns:
-        ?for col in params["scols"]:
+        ?for col in scols:
           ?if col not in params["handle_cols"] and col != "sample":
             ?col:
               display-mode: hidden
@@ -28,7 +37,7 @@ views:
     dataset: sample_meta
     render-table:
       columns:
-        ?for col in params["scols"]:
+        ?for col in scols:
           ?if col not in params["source_cols"] and col != "sample":
             ?col:
               display-mode: hidden
@@ -37,7 +46,7 @@ views:
     dataset: sample_meta
     render-table:
       columns:
-        ?for col in params["scols"]:
+        ?for col in scols:
           ?if col not in params["patho_cols"] and col != "sample":
             ?col:
               display-mode: hidden

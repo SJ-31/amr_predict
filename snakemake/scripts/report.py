@@ -247,6 +247,68 @@ def cluster_metric_plot(
     return plot
 
 
+def make_count_table(
+    df: pl.LazyFrame,
+    column: str,
+    sample_col: str = "sample",
+    split_longer: dict | None = None,
+) -> pl.DataFrame:
+    """
+    Return a GT table displaying the number and proportion of unique values in `column`
+    with respect to `sample_col` i.e. in the final table, if "gene_a" has count of 214,
+    then 214 samples had "gene_a" present
+
+    Parameters
+    ----------
+    split_longer : dict
+        mapping of column names to separators. If `column` is in this dictionary, it
+        will be split prior to the count operation
+    """
+    if split_longer and column in split_longer:
+        df = df.with_columns(pl.col(column).str.split(by=split_longer[column])).explode(
+            column
+        )
+    counts: pl.DataFrame = (
+        df.select(sample_col, column)
+        .with_columns(pl.col(sample_col).n_unique().alias("n"))
+        .group_by(sample_col)
+        .agg(pl.col(column).drop_nulls().unique(), pl.col("n").first())
+        .explode(column)
+        .select(pl.col(column).value_counts(), pl.col("n").first())
+        .unnest(column)
+        .sort("count", descending=True)
+        .with_columns((pl.col("count") / pl.col("n")).alias("proportion"))
+        .drop("n")
+        .collect()
+    )
+    return counts
+
+
+def write_seq_meta_tables(df: pl.LazyFrame, outdir: Path):
+    cols = df.collect_schema().names()
+    to_split = {"hamr_drug_class": ";", "hamr_resistance_mechanism": ";"}
+    ignore = {"bakta_locus_tag"}
+    all_anno_cols = []
+    count_outdir = outdir / "count_tables"
+    count_outdir.mkdir(exist_ok=True)
+    for anno_group in "bakta", "combgc", "ampcombi", "hamr":
+        anno_cols = [c for c in cols if c.startswith(anno_group)]
+        for col in anno_cols:
+            if col in ignore:
+                continue
+            table = make_count_table(df, col, split_longer=to_split).rename(
+                {col: "Name", "proportion": "Proportion", "count": "Count"}
+            )
+            table.write_csv(count_outdir / f"{col}.csv")
+            all_anno_cols.append(col)
+    unique_vals = (
+        df.group_by("sample")
+        .agg(pl.col(all_anno_cols).drop_nulls().n_unique())
+        .collect()
+    )
+    unique_vals.write_csv(outdir / "values_per_sample.csv")
+
+
 # * Rule functions
 
 
@@ -273,10 +335,9 @@ def format_metadata(cfg: dict = CONFIG):
     )
     ast.write_csv(smk.output["ast"], null_value="NA")
     sample_meta = with_metadata(df, cfg, "sample", "sample")
-    for col in smk.params["to_remove"]:
-        if col in sample_meta.columns:
-            sample_meta = sample_meta.drop(col)
     sample_meta.write_csv(smk.output["meta"], null_value="NA")
+    seq_meta = pl.scan_csv(smk.input[1], null_values="NA")
+    write_seq_meta_tables(seq_meta, outdir=Path(smk.output["seq_values_per"]).parent)
 
 
 def plot_eval(
