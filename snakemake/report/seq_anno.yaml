@@ -1,6 +1,6 @@
 __definitions__:
   - from pathlib import Path
-  - tables = list(Path(input['count_dir']).iterdir())
+  - tables = list(Path(input['count_dir']).glob("*csv"))
   - |
     def make_name(stem):
         return stem.capitalize().replace("_", ": ", 1).replace("_", " ")
