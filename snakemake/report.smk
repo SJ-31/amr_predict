@@ -264,7 +264,6 @@ module shared:
 
 use rule datavzrd from shared as make_interactive_table with:
     input:
-        seq_meta=INDIR / "seq_metadata.csv",
         sample_meta=INDIR / ".samples_with_meta.csv",
         ast=INDIR / ".samples_with_ast.csv",
     params:
@@ -275,16 +274,35 @@ use rule datavzrd from shared as make_interactive_table with:
             for t in config["tasks"]["classification"]
         ],
         ast=config["tasks"]["regression"],
-        seq_annotations=[
-            col
-            for col in pl.read_csv(INDIR / "seq_metadata.csv", n_rows=5).columns
-            if col not in {"sample", "seqid", "start", "stop"}
+        source_cols=[
+            "collection_year",
+            "title",
+            "location",
+            "sequenced_by",
+            "umbrella_project",
+            "isolation_source",
+            "isolation_source_broad",
         ],
+        patho_cols=["strain", "serovar", "serotype", "interest_group"],
+        handle_cols=[
+            "sequenced_by",
+            "laboratory_typing_platform",
+            "laboratory_typing_method_version_or_reagent",
+            "Platform",
+        ],
+        tax_cols=[
+            "species",
+            "subspecies",
+            "genus",
+            "family",
+            "order",
+        ],
+        scols=pl.read_csv(INDIR / ".samples_with_meta.csv", n_rows=5).columns,
     output:
         dir=report(
             directory(f"{INDIR}/.datavzrd"),
             category="Dataset",
             htmlindex="index.html",
-            labels={"Name": "Metadata explorer"},
+            labels={"Name": "Sample explorer"},
         ),
         config=f"{INDIR}/evaluation/.datavzrd_template.yaml",

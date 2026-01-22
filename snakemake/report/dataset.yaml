@@ -1,25 +1,51 @@
 datasets:
-  seq_meta:
-    path: ?input["seq_meta"]
   ast:
     path: ?input["ast"]
   sample_meta:
     path: ?input["sample_meta"]
 
 views:
-  "Sequences":
-    dataset: seq_meta
-    desc: "Sequence annotations, obtained with funcscan"
+  "Taxonomy":
+    dataset: sample_meta
+    desc: "Taxonomic attributes"
     render-table:
       columns:
-        sample:
-          label: "BioSample"
-  "Antibiotic Susceptibility Testing":
+        ?for col in params["scols"]:
+          ?if col not in params["tax_cols"] and col != "sample":
+            ?col:
+              display-mode: hidden
+  "Sample handling":
+    desc: "Metadata relating to sequencing and AST platform"
+    dataset: sample_meta
+    render-table:
+      columns:
+        ?for col in params["scols"]:
+          ?if col not in params["handle_cols"] and col != "sample":
+            ?col:
+              display-mode: hidden
+  "Source":
+    desc: "Information about how samples were sourced"
+    dataset: sample_meta
+    render-table:
+      columns:
+        ?for col in params["scols"]:
+          ?if col not in params["source_cols"] and col != "sample":
+            ?col:
+              display-mode: hidden
+  "Pathologic":
+    desc: "Pathological details"
+    dataset: sample_meta
+    render-table:
+      columns:
+        ?for col in params["scols"]:
+          ?if col not in params["patho_cols"] and col != "sample":
+            ?col:
+              display-mode: hidden
+  "AST":
     dataset: ast
+    desc: "Antibiotic Susceptibility Testing data (resistance classification and AST value)"
     render-table:
       columns:
-        sample:
-          label: "BioSample"
         ?for col in params["ast_boolean"]:
           ?f"{col}":
             spell:
@@ -34,10 +60,3 @@ views:
                 scale: log
                 color:
                   range: ["green", "red"]
-  "Sample":
-    desc: "Unified sample metadata"
-    dataset: sample_meta
-    render-table:
-      columns:
-        sample:
-          label: "BioSample"
