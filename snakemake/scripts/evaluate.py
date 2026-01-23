@@ -78,7 +78,9 @@ def randomize_dset(dset: Dataset, x_key: str) -> Dataset:
                 vals = vals.numpy()
             np.random.shuffle(vals)
             dset_dict[col] = vals if not was_tensor else torch.tensor(vals)
-    dset = Dataset.from_dict(dset_dict).with_format("torch")
+    dset = Dataset.from_dict(dset_dict).with_format(
+        "torch", dtype=torch.get_default_dtype()
+    )
     return dset
 
 
@@ -306,7 +308,7 @@ def main():
     dname = Path(dpath).stem
     dataset = with_metadata(
         dataset, smk.config, "sample", meta_options=("ast", "sample")
-    ).with_format("torch")
+    ).with_format("torch", dtype=torch.get_default_dtype())
     if smk.config.get("test"):
         dataset = modify_for_test(dataset, X_KEY)
 

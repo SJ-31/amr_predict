@@ -25,6 +25,8 @@ from loguru import logger
 from torch import Tensor
 from torch.utils.data import DataLoader
 
+torch.set_default_dtype(torch.float32)
+
 try:
     from snakemake.script import snakemake as smk
 except ImportError:
@@ -106,7 +108,7 @@ def get_dataset(
     if level == "genome-level":
         dset: Dataset = load_as(
             smk.params["pooled"].joinpath(name), "huggingface"
-        ).with_format("torch")
+        ).with_format("torch", dtype=torch.float32)
         dset = dset.filter(lambda x: x["sample"] in key_df["sample"])
         return dset
     cache_path = smk.params["caches"].joinpath(f"{name}_{EMBEDDING}_cache")
