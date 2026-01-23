@@ -297,7 +297,11 @@ def eval_sae():
         SE.drop_latents(drop_dead=True, inplace=True)
         logger.info(f"shape of latent df {SE.acts.shape}")
         logger.info("Starting umap")
-        SE.umap(False, **RCONFIG["umap"])
+        umap_points = pl.DataFrame(
+            SE.umap(False, return_array=True, **RCONFIG["umap"])
+        ).rename(lambda x: x.replace("column_", "UMAP"))
+        umap_points = pl.concat([umap_points, meta], how="horizontal")
+        umap_points.write_parquet(umap_outdir / "umap_data.parquet")
         logger.success("umap complete")
         logger.info("Starting latent clustering")
         latent_clusters: pl.DataFrame = SE.cluster_latents(False)
@@ -322,9 +326,11 @@ def eval_sae():
             top_best = best_latents.sort("max_activation_prop", descending=True)[
                 "latent_idx"
             ][: topk_plot["topk"]]
-            plot: gg.ggplot = SE.plot_activation_density(
+            plot: gg.ggplot
+            plot, raw = SE.plot_activation_density(
                 top_best, meta, [concept], top_labels=None, **topk_plot["kws"]
             )
+            raw.write_parquet(act_outdir / f"{group}_{concept}.parquet")
             plot.save(
                 act_outdir / f"{group}_{concept}.png",
                 **plot_params("sae_activations", CONFIG),
@@ -336,14 +342,18 @@ def eval_sae():
                 **plot_params("sae_umap", CONFIG),
             )
         logger.success("Scoring complete")
-    # TODO: should look into using a concept to guide clustering
-    # TODO: add a routine here that checks whether a latent does multiple concepts,
+    # TODO: should look into using a factor to guide clustering
+    # TODO: add a routine here that checks whether a latent does multiple factors,
     # can do this after aggregating them all, grouping by idx, dataset etc.
+    # TODO: another option is to unpivot the data on the factors, but
+    # this is gonna be a huge matrix multiplication
     summary_df = pl.DataFrame(latent_summary).with_columns(
         pl.lit(level).alias("level"), pl.lit(dset_name).alias("dataset")
     )
     summary_df.write_csv(smk.output["latent_counts"])
-    concept_df: pl.DataFrame = pl.concat(concept_scoring).with_columns(
+    concept_df: pl.DataFrame = pl.concat(
+        concept_scoring, how="vertical_relaxed"
+    ).with_columns(
         pl.lit(dset_name).alias("dataset"),
         pl.lit(level).alias("level"),
     )

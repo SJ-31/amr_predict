@@ -406,7 +406,7 @@ class EvalSAE:
         top_labels: dict[str, Sequence] | None = None,
         ncol: int | None = None,
         nrow: int | None = None,
-    ) -> dict[str, gg.ggplot] | gg.ggplot:
+    ) -> dict[str, tuple[gg.ggplot, pl.DataFrame]] | tuple[gg.ggplot, pl.DataFrame]:
         """Plot the activation distribution for a single latent `latent_idx`, showing
         the relationship between it and the label classes in `label_cols`
 
@@ -488,7 +488,7 @@ class EvalSAE:
                     + gg.scale_x_log10()
                     + gg.theme(panel_grid_minor_x=gg.element_blank())
                 )
-            return plot
+            return plot, tmp
 
         if len(label_cols) == 1:
             return plot_one(label_cols[0])
@@ -499,12 +499,16 @@ class EvalSAE:
         frac_active: float = ((selected > 0).sum() / selected.shape[0]) * 100
         return pl.DataFrame(({"Activation": selected})), frac_active
 
-    def umap(self, from_grouped: bool, **kws) -> None:
+    def umap(
+        self, from_grouped: bool, return_array: bool = False, **kws
+    ) -> None | np.ndarray:
         if from_grouped:
             arr = self.acts_grouped.drop("latent_idx").to_numpy()
         else:
             arr = self.acts.to_numpy().transpose()
         self.U = umap.UMAP(**kws)
+        if return_array:
+            return self.U.fit_transform(arr)
         self.U.fit(arr)
 
     def plot_umap(self, labels: Sequence | None = None, **kws) -> Axes | Any:

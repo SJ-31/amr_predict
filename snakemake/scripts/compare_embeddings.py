@@ -342,7 +342,7 @@ def comparison_routine(
         plot_dir.mkdir(exist_ok=True, parents=True)
         if not RCONFIG.get(ck):
             continue
-        for plot_style in ["pca", "umap"]:
+        for plot_style, prefix in zip(["pca", "umap"], ["PC", "UMAP"]):
             name = f"{dataset_name}_{plot_style}"
             fig: ggplot = plot_adata(
                 adata,
@@ -350,6 +350,10 @@ def comparison_routine(
                 plot_mode=plot_style,
             )
             fig = fig + gg.ggtitle(title=dataset_name)
+            raw = pl.DataFrame(adata.obsm[f"X_{plot_style}"]).rename(
+                lambda x: x.replace("column_", prefix)
+            )
+            raw.write_parquet(plot_dir / f"{round}_{name}.parquet")
             fig.save(plot_dir / f"{round}_{name}.png", width=15, height=10)
 
     result_dfs = []
@@ -479,7 +483,7 @@ def run_bootstrap(dset_name: str, adata: ad.AnnData) -> pl.DataFrame:
 def _compare(is_embeddings: bool = True):
     dir: Path = Path(smk.input[0])
     if is_embeddings:
-        cache_path = smk.params["caches"] / f"{dir.stem}_{EMBEDDING}_cache"
+        cache_path = smk.params["caches"] / f"{dir.stem}-{EMBEDDING}_cache"
         cache: EmbeddingCache = EmbeddingCache(cache_path)
         dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), TEXT_KEY)
         adata = ad.AnnData(X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas())
