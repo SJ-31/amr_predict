@@ -338,7 +338,7 @@ def make_embedded_dataset():
     params: dict = CONFIG["embedding_methods"][EMBEDDING]
     kws: dict = params.copy()
     inpath = Path(smk.input[0])
-    cache_name = f"{inpath.stem}_{EMBEDDING}_cache"
+    cache_name = f"{inpath.stem}-{EMBEDDING}_cache"
     savepath = Path(smk.output[0])
     workdir = Path(f"{smk.params['outdir']}") / cache_name
     workdir.mkdir(exist_ok=True)
@@ -374,7 +374,7 @@ def pool_embeddings():
     inpath = Path(embedding_ds).with_suffix("")
     cache = EmbeddingCache(dir=inpath)
     logger.info("Size of cache {}", len(cache))
-    ds_name = inpath.stem.removesuffix(f"_{EMBEDDING}_cache")
+    ds_name = inpath.stem.removesuffix(f"-{EMBEDDING}_cache")
     texts_path = Path(smk.params["textdir"]).joinpath(ds_name)
     for spec in methods:
         method = spec["method"]

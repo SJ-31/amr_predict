@@ -73,7 +73,7 @@ POOLED_PLOTS = expand(
 )
 
 
-CACHE_CHECKS = [f"{OUTDIRS['E']}/{d}_{EMBEDDING}_cache.complete" for d in TO_POOL]
+CACHE_CHECKS = [f"{OUTDIRS['E']}/{d}-{EMBEDDING}_cache.complete" for d in TO_POOL]
 
 
 rule all:
@@ -144,14 +144,14 @@ rule make_embedded_dataset:
     params:
         outdir=OUTDIRS["E"],
     output:
-        f"{OUTDIRS['E']}/{{dataset}}_{EMBEDDING}_cache.complete",
+        f"{OUTDIRS['E']}/{{dataset}}-{EMBEDDING}_cache.complete",
     script:
         "scripts/prepare_data.py"
 
 
 rule pool_embeddings:
     input:
-        lambda wc: f"{OUTDIRS['E']}/{wc.get('dataset')}_{EMBEDDING}_cache.complete",
+        lambda wc: f"{OUTDIRS['E']}/{wc.get('dataset')}-{EMBEDDING}_cache.complete",
     params:
         outdir=OUTDIRS["P"],
         textdir=OUTDIRS["S"],

@@ -60,7 +60,7 @@ def get_level_name(path: Path) -> tuple[EMBEDDING_LEVEL, str]:
     for level in get_args(EMBEDDING_LEVEL):
         if cleaned.startswith(f"{level}_"):
             return level, cleaned.removeprefix(f"{level}_")
-    return "genome-level", cleaned
+    return "genome-level", cleaned.removeprefix("genome-level_")
 
 
 def maybe_subsample(
@@ -111,7 +111,7 @@ def get_dataset(
         ).with_format("torch", dtype=torch.float32)
         dset = dset.filter(lambda x: x["sample"] in key_df["sample"])
         return dset
-    cache_path = smk.params["caches"].joinpath(f"{name}_{EMBEDDING}_cache")
+    cache_path = smk.params["caches"].joinpath(f"{name}-{EMBEDDING}_cache")
     cache: EmbeddingCache = EmbeddingCache(cache_path)
     dset = cache.to_dataset(
         df=key_df,
@@ -148,8 +148,6 @@ def save_from_sae(reconstruct: bool = False):
     dict_path = smk.input[0]
     level, dset_name = get_level_name(Path(dict_path))
     logger.info(f"Saving for dataset {dset_name}")
-    out_name = dset_name if level == "genome-level" else f"{level}_{dset_name}"
-    out_name = f"recon_{out_name}" if reconstruct else f"sae-act_{out_name}"
     dataset: Dataset | LinkedDataset = get_dataset(
         dset_name, weights_name=Path(dict_path).stem, level=level, key_df=None
     )
@@ -245,7 +243,11 @@ def eval_sae():
     acts_path = Path(smk.input[0])
     level: EMBEDDING_LEVEL
     level, dset_name = get_level_name(acts_path)
-
+    dset_name = (
+        dset_name
+        if level == "genome-level"
+        else dset_name.removesuffix(f"-{EMBEDDING}")
+    )
     concepts: Sequence = RCONFIG["concept_cols"][level]
     meta_cols = ("sample", "ast")
     if level == "sequence-level":
