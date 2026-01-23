@@ -90,12 +90,12 @@ rule all:
             f"{OUTDIRS['P']}/{{d}}-{EMBEDDING}-{{p}}", d=TO_POOL, p=pooling_methods
         ),
         other_pooled=[f"{OUTDIRS['P']}/{d}" for d in POOLED_ALREADY],
-        meta=f"{PROCESSED}/{DATE}/seq_metadata.csv",
+        meta=f"{REMOTE}/{DATE}/seq_metadata.csv",
 
 
 rule get_seq_metadata:
     output:
-        f"{PROCESSED}/{DATE}/seq_metadata.csv",
+        f"{REMOTE}/{DATE}/seq_metadata.csv",
     log:
         log=f"{LOGDIR}/prepare_data/get_seq_metadata.log",
         profile=f"{LOGDIR}/prepare_data/get_seq_metadata_mem.bin",
