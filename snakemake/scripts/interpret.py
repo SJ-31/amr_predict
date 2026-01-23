@@ -175,6 +175,77 @@ def save_from_sae(reconstruct: bool = False):
     Dataset.from_dict(into_dset).save_to_disk(smk.output[0])
 
 
+def sae_score_concept(
+    seval: EvalSAE,
+    concept: str,
+    group: str,
+    meta: pl.DataFrame,
+    latent_clusters,
+    act_outdir: Path,
+    umap_outdir: Path,
+):
+    logger.info(f"Scoring latent with {concept} labels")
+    best_latents: pl.DataFrame = (
+        seval.score_latents(labels=meta[concept])
+        .with_columns(
+            pl.lit(concept).alias("concept"),
+            pl.lit(group).alias("activation_source"),
+        )
+        .join(latent_clusters, on="latent_idx")
+        .join(  # Align for UMAP plot
+            pl.DataFrame({"latent_idx": seval.acts.columns}),
+            on="latent_idx",
+            how="right",
+            maintain_order="right",
+        )
+    )
+    topk_plot = RCONFIG["activation_density"]
+    top_best = best_latents.sort("max_activation_prop", descending=True)["latent_idx"][
+        : topk_plot["topk"]
+    ]
+    plot: gg.ggplot
+    plot, raw = seval.plot_activation_density(
+        top_best, meta, [concept], top_labels=None, **topk_plot["kws"]
+    )
+    plot.save(
+        act_outdir / f"{group}_{concept}.png",
+        **plot_params("sae_activations", CONFIG),
+    )
+    raw.write_parquet(act_outdir / f"{group}_{concept}.parquet")
+    labels = best_latents["label_max"]
+    logger.info(f"Number of labels: {len(meta[concept])}")
+    seval.plot_umap(labels=labels).figure.savefig(
+        umap_outdir / f"{group}_{concept}.png",
+        **plot_params("sae_umap", CONFIG),
+    )
+    return best_latents
+
+
+def get_dataset_full(
+    activations: Path, group, name, level, columns
+) -> tuple[Dataset, pl.DataFrame]:
+    if group == "sae":
+        dataset: Dataset = load_as(activations)
+    elif group == "model_raw" and level != "genome-level":
+        dataset = get_dataset(
+            name,
+            level=level,
+            key_df=load_as(smk.params["seqs"] / name, "polars"),
+        )
+    elif group == "model_raw":
+        dataset = load_as(smk.params["pooled"] / name)
+    else:
+        raise ValueError("loading for tokens not implemented yet")
+    return with_metadata(
+        dataset,
+        smk.config,
+        "sample",
+        columns,
+        align=True,
+        dset_name=name,
+    )
+
+
 # * Rules
 
 
@@ -246,11 +317,6 @@ def eval_sae():
     acts_path = Path(smk.input[0])
     level: EMBEDDING_LEVEL
     level, dset_name = get_level_name(acts_path)
-    dset_name = (
-        dset_name
-        if level == "genome-level"
-        else dset_name.removesuffix(f"-{EMBEDDING}")
-    )
     concepts: Sequence = RCONFIG["concept_cols"][level]
     meta_cols = ("sample", "ast")
     if level == "sequence-level":
@@ -259,26 +325,7 @@ def eval_sae():
     # Retrieves the full dataset
     for group in ("sae", "model_raw"):
         meta: pl.DataFrame
-        if group == "sae":
-            dataset: Dataset = load_as(acts_path)
-        elif group == "model_raw" and level != "genome-level":
-            dataset = get_dataset(
-                dset_name,
-                level=level,
-                key_df=load_as(smk.params["seqs"] / dset_name, "polars"),
-            )
-        elif group == "model_raw":
-            dataset = load_as(smk.params["pooled"] / dset_name)
-        else:
-            raise ValueError("loading for tokens not implemented yet")
-        dataset, meta = with_metadata(
-            dataset,
-            smk.config,
-            "sample",
-            meta_cols,
-            align=True,
-            dset_name=dset_name,
-        )
+        dataset, meta = get_dataset_full(acts_path, group, dset_name, level, meta_cols)
         meta = meta.with_columns(pl.col(concepts).fill_null("unknown"))
         SE: EvalSAE = EvalSAE(dataset[X_KEY][:])
         logger.info("Beginning categorize_latents")
@@ -296,7 +343,6 @@ def eval_sae():
         # NOTE: some preprocessing on concept cols to collapse them into a single
         # label column. would be ideal, but not possible because it would just create
         # so many specific cases. Or is this a good thing?
-        topk_plot = RCONFIG["activation_density"]
         SE.drop_latents(drop_dead=True, inplace=True)
         logger.info(f"shape of latent df {SE.acts.shape}")
         logger.info("Starting umap")
@@ -310,40 +356,16 @@ def eval_sae():
         latent_clusters: pl.DataFrame = SE.cluster_latents(False)
         logger.success("Clustering complete")
         for concept in concepts:
-            logger.info(f"Scoring latent with {concept} labels")
-            best_latents: pl.DataFrame = (
-                SE.score_latents(labels=meta[concept])
-                .with_columns(
-                    pl.lit(concept).alias("concept"),
-                    pl.lit(group).alias("activation_source"),
-                )
-                .join(latent_clusters, on="latent_idx")
-                .join(  # Align for UMAP plot
-                    pl.DataFrame({"latent_idx": SE.acts.columns}),
-                    on="latent_idx",
-                    how="right",
-                    maintain_order="right",
-                )
+            score_df = sae_score_concept(
+                seval=SE,
+                concept=concept,
+                group=group,
+                meta=meta,
+                latent_clusters=latent_clusters,
+                act_outdir=act_outdir,
+                umap_outdir=umap_outdir,
             )
-            concept_scoring.append(best_latents)
-            top_best = best_latents.sort("max_activation_prop", descending=True)[
-                "latent_idx"
-            ][: topk_plot["topk"]]
-            plot: gg.ggplot
-            plot, raw = SE.plot_activation_density(
-                top_best, meta, [concept], top_labels=None, **topk_plot["kws"]
-            )
-            raw.write_parquet(act_outdir / f"{group}_{concept}.parquet")
-            plot.save(
-                act_outdir / f"{group}_{concept}.png",
-                **plot_params("sae_activations", CONFIG),
-            )
-            labels = best_latents["label_max"]
-            logger.info(f"Number of labels: {len(meta[concept])}")
-            SE.plot_umap(labels=labels).figure.savefig(
-                umap_outdir / f"{group}_{concept}.png",
-                **plot_params("sae_umap", CONFIG),
-            )
+            concept_scoring.append(score_df)
         logger.success("Scoring complete")
     # TODO: should look into using a factor to guide clustering
     # TODO: add a routine here that checks whether a latent does multiple factors,
