@@ -356,6 +356,8 @@ def split_features(
 
 def read_tabular(file: Path | str, infer_schema_length=None, **kwargs) -> pl.DataFrame:
     file = file if isinstance(file, Path) else Path(file)
+    if file.suffix == ".parquet":
+        return pl.read_parquet(file, **kwargs)
     sep = "\t" if file.suffix == ".tsv" else ","
     df: pl.DataFrame | None = pl.read_csv(
         file,
