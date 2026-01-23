@@ -36,7 +36,7 @@ def default_log(rule_name):
 
 
 OUTDIRS = {"sae": f"{REMOTE}/{DATE}/sae", "datasets": f"{REMOTE}/{DATE}/datasets"}
-sae_gen = {
+SAE_GEN = {
     "save_activations": ("sae-act", Path(OUTDIRS["datasets"]) / "sae_activations"),
     "reconstruct_datasets": ("recon", Path(OUTDIRS["datasets"]) / "reconstructed"),
 }
@@ -45,12 +45,12 @@ DEVICE = config.get("device", "cuda")
 DPATH = Path(f"{REMOTE}/{IN_DATE}/datasets")
 
 
-DATASETS = {"text": list(DPATH.joinpath("processed_sequences").iterdir()), "pooled": []}
-for d in DPATH.joinpath("pooled").iterdir():
-    name = d.stem.split("-", 1)[0]
-    if (config["preprocessing"][name]).get("method") not in get_args(EMBEDDING_METHODS):
-        DATASETS["pooled"].append(d)
-
+DATASETS = {
+    "text": list(DPATH.joinpath("processed_sequences").iterdir()),
+    "pooled": [
+        d for d in (DPATH / "pooled").iterdir() if not d.stem.startswith("baseline-")
+    ],
+}
 LEVELS = [
     s
     for s in ("sequence-level", "token-level", "genome-level")
@@ -66,12 +66,12 @@ for group, paths in DATASETS.items():
         if group == "pooled" and "genome-level" in LEVELS:
             WEIGHTS[f"genome-level_{path.stem}"] = path
         if group == "text" and "token-level" in LEVELS:
-            WEIGHTS[f"token-level_{path.stem}"] = path
+            WEIGHTS[f"token-level_{path.stem}-{config['embedding']}"] = path
         if group == "text" and "sequence-level" in LEVELS:
-            WEIGHTS[f"sequence-level_{path.stem}"] = path
+            WEIGHTS[f"sequence-level_{path.stem}-{config['embedding']}"] = path
 
 SAE_OUT_ALL = []
-for pref, outdir in sae_gen.values():
+for pref, outdir in SAE_GEN.values():
     SAE_OUT_ALL.extend(expand(f"{outdir}/{pref}_{{m}}", m=WEIGHTS.keys()))
 
 # * Rules
@@ -111,7 +111,7 @@ rule train_sae:
         "scripts/interpret.py"
 
 
-for rname, (prefix, outdir) in sae_gen.items():
+for rname, (prefix, outdir) in SAE_GEN.items():
 
     rule:
         name:
@@ -135,7 +135,7 @@ for rname, (prefix, outdir) in sae_gen.items():
 
 rule eval_sae:
     input:
-        f"{sae_gen['save_activations'][1]}/sae-act_{{acts}}",
+        f"{SAE_GEN['save_activations'][1]}/sae-act_{{acts}}",
     output:
         concept_scores=f"{OUTDIRS['sae']}/.{{acts}}_concept_scores.csv",
         latent_counts=f"{OUTDIRS['sae']}/.{{acts}}_latent_counts.csv",

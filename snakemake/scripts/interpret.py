@@ -59,7 +59,10 @@ def get_level_name(path: Path) -> tuple[EMBEDDING_LEVEL, str]:
     cleaned = path.stem.removeprefix("sae-act_").removeprefix("recon_")
     for level in get_args(EMBEDDING_LEVEL):
         if cleaned.startswith(f"{level}_"):
-            return level, cleaned.removeprefix(f"{level}_")
+            cleaned = cleaned.removeprefix(f"{level}_")
+            if level != "genome-level":
+                cleaned = cleaned.removesuffix(f"-{EMBEDDING}")
+            return level, cleaned
     return "genome-level", cleaned.removeprefix("genome-level_")
 
 
