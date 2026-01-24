@@ -1,29 +1,11 @@
 library(tidyverse)
 library(glue)
+library(htmltools)
 library(gt)
 
 
 ## * Helper functions
 
-add_model_spanner <- function(tab, cur_model, last_dset) {
-  pref <- glue("{cur_model}_")
-  tab <- tab_spanner(
-    tab,
-    label = cur_model,
-    columns = starts_with(pref),
-    level = 2
-  ) |>
-    cols_label_with(
-      columns = starts_with(pref),
-      fn = \(x) str_remove(x, pref)
-    )
-  # TODO: would like to have an automated coloring
-  tab <- tab |>
-    cols_nanoplot(
-      starts_with(pref),
-      plot_type = "bar",
-      new_col_name = glue("{pref}_bar"),
-      new_col_label = "",
 ## ** Metadata tables
 
 make_group_count_tables <- function(tb) {
@@ -92,52 +74,91 @@ write_seq_anno_counts <- function(table_csvs, outdir, prefix) {
   save_gt_list(tabs, outdir)
 }
 
-}
+## ** Evaluation tables
 
-
-## ** Holdout tables
-
-make_holdout_table <- function(tb) {
-  models <- unique(tb$model)
-  cols_keep <- c("metric", "task_type")
-  formatted <- tb |>
-    select(-c(evaluation_method, test_set, iter)) |>
-    group_by(task, metric) |>
-    summarise(across(where(is.numeric), mean)) |>
-    # Average across iterations
-    ungroup() |>
-    select(-task) |>
-    pivot_wider(names_from = c(model, dataset)) %>%
-    select(sort(names(.))) |>
-    relocate(all_of(cols_keep), .before = everything())
-  last_dset <- colnames(formatted) |>
-    tail(n = 1) |>
-    str_remove(".*?_")
-  tab <- gt(
-    formatted,
+make_base_table <- function(tb) {
+  # Expects that tb has been widened with names_from dataset
+  gt(
+    tb,
     rowname_col = "metric",
     groupname_col = "task_type",
     row_group_as_column = TRUE
   ) |>
     tab_stubhead(label = "Metric") |>
     fmt_number(decimals = 2)
-  for (m in models) {
-    tab <- add_model_spanner(tab, cur_model = m, last_dset = last_dset)
-  }
-  tab |>
-    tab_spanner(label = md("**Model**"), spanners = models)
 }
 
-write_holdout_tables <- function(tb, outdir) {
-  holdout <- filter(tb, evaluation_method == "holdout") |>
-    mutate(task = str_remove(task, "_class$"))
+split_tab_by_model <- function(tb, datasets, with_bar = TRUE) {
+  lapply(unique(tb$model), \(m) {
+    cur <- filter(tb, model == m) |>
+      select(-model) |>
+      make_base_table() |>
+      tab_header(m)
+    if (with_bar) {
+      # TODO: would like to have an automated coloring
+      cur <- cols_nanoplot(
+        cur,
+        columns = datasets,
+        plot_type = "bar",
+        new_col_name = glue("{m}_bar"),
+        new_col_label = "",
+        autohide = FALSE
+      ) |>
+        cols_move_to_end(glue("{m}_bar"))
+    }
+    cur
+  })
+}
+
+
+write_holdout_tables <- function(tb, outdir, datasets) {
+  dir.create(outdir)
+  holdout <- filter(tb, evaluation_method == "holdout")
+  cols_keep <- c("metric", "task_type", "task")
+  fmt <- tb |>
+    select(-c(evaluation_method, iter)) |>
+    group_by(task, metric, task_type, dataset, model, test_set) |>
+    summarise(across(where(is.numeric), mean)) |>
+    ungroup() |>
+    pivot_wider(names_from = dataset) %>%
+    select(sort(names(.))) |>
+    # Average across iterations
+    relocate(all_of(cols_keep), .before = everything())
   for (test_set_name in unique(holdout$test_set)) {
-    cur <- holdout |> filter(test_set == test_set_name)
-    tab <- make_holdout_table(cur)
-    cur |> gtsave(glue("{outdir}/holdout_{test_set_name}.html"))
+    cur <- fmt |>
+      filter(test_set == test_set_name) |>
+      select(-test_set)
+    tab <- gt_group(
+      .list = split_tab_by_model(cur, datasets = datasets, with_bar = TRUE)
+    )
+    gtsave(tab, glue("{outdir}/holdout_{test_set_name}.html"))
   }
-  # TODO: Write one table for each test set.
-  # In snakemake, subcategory will be "Holdout (table)" and label by test set name
+}
+
+write_cv_tables <- function(tb, outdir, ctrl = FALSE, datasets) {
+  dir.create(outdir)
+  if (ctrl) fname <- "ctrl_cv" else fname <- "cv"
+  cv <- filter(tb, evaluation_method == fname)
+  models <- unique(cv$model)
+  fmt <- cv |>
+    select(-evaluation_method, -iter) |>
+    group_by(task, task_type, metric, dataset, model) |>
+    summarise(
+      mean = mean(value),
+      std = sd(value),
+      min = min(value),
+      max = max(value)
+    ) |>
+    ungroup() |>
+    pivot_longer(cols = c(mean, std, min, max)) |>
+    pivot_wider(names_from = dataset)
+  for (measure in unique(fmt$name)) {
+    cur <- filter(fmt, name == measure) |> select(-name)
+    tab <- gt_group(
+      .list = split_tab_by_model(cur, datasets = datasets, with_bar = TRUE)
+    )
+    gtsave(tab, glue("{outdir}/{fname}_{measure}.html"))
+  }
 }
 
 ## * Rules
@@ -156,10 +177,30 @@ seq_metadata_tables <- function() {
   tabs <- make_group_count_tables(tb)
   save_gt_list(tabs, snakemake@output[[1]])
 }
-# TODO: unfinished
+
+sample_metadata_table <- function() {
+  # TODO: unfinished, do the same for the sample metadata. This
+  # will save you having to store a bunch of intermediate output for no reason
+}
+
 evaluation_tables <- function() {
-  tb <- read_csv(snakemake@input[1])
-  write_holdout_tables(tb)
+  outdir <- snakemake@params[["outdir"]]
+  tb <- read_csv(snakemake@input[[1]]) |>
+    mutate(task = str_remove(task, "_class$"))
+  datasets <- unique(tb$dataset)
+  dir.create(outdir, showWarnings = FALSE)
+  . <- lmap(snakemake@output, \(x) {
+    eval_task <- names(x)
+    eval_out <- x[[1]]
+    if (eval_task == "holdout") {
+      write_holdout_tables(tb, eval_out, datasets = datasets)
+    } else if (eval_task == "ctrl_cv") {
+      write_cv_tables(tb, eval_out, ctrl = TRUE, datasets)
+    } else if (eval_task == "cv") {
+      write_cv_tables(tb, eval_out, ctrl = FALSE, datasets)
+    }
+    list()
+  })
 }
 
 ## * Snakemake entry point

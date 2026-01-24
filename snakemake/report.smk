@@ -26,21 +26,22 @@ ENV_SAVED = INDIR / ".config_for_report"
 
 # ** Model evaluation
 
-EVAL_OUT = {}
+EVAL_TASKS = {
+    "ctrl_cv": "Cross-validation (control tasks)",
+    "cv": "Cross-validation",
+    "holdout": "Holdout",
+}
 
 
 def define_eval_out(key, cat):
-    eval_tasks = {
-        "ctrl_cv": "Cross-validation (control tasks)",
-        "cv": "Cross-validation",
-        "holdout": "Holdout",
-    }
     edir = INDIR / key
     INPUTS["evaluation"] = {}
     for group in ("cv", "ctrl_cv", "holdout"):
         if not (edir / group).exists():
+            del EVAL_TASKS[group]
             continue
         k = f"{key}_{group}"
+        RESULTS[f"{key}_{group}_table"] = INDIR / f"evaluation/.tables/{group}"
         RESULTS[k] = edir / f".{group}"
         for task in ("classification", "regression"):
             INPUTS["evaluation"][f"{group}_{task[0]}"] = list(
@@ -201,17 +202,39 @@ rule evaluation:
         **INPUTS["evaluation"],
         outdir=INDIR / "evaluation",
     output:
-        report(
-            directory(f"{INDIR}/evaluation/.{{eval_task}}"),
-            patterns=["{metric}_{task}.png"],
-            category="Evaluation",
-            subcategory=lambda wc: eval_tasks.get(
-                wc.get("eval_task"), wc.get("eval_task")
-            ),
-            labels={"Metric": "{metric}", "Type": "{task}"},
-        ),
+        *[
+            report(
+                directory(f"{INDIR}/evaluation/.{et}"),
+                patterns=["{metric}_{task}.svg"],
+                category="Evaluation",
+                subcategory=name,
+                labels={"Metric": "{metric}", "Type": "{task}"},
+            )
+            for et, name in EVAL_TASKS.items()
+        ],
+        rules.all.input.eval_all,
     script:
         "scripts/report.py"
+
+
+rule evaluation_tables:
+    input:
+        rules.all.input.eval_all,
+    params:
+        outdir=INDIR / "evaluation/.tables",
+    output:
+        **{
+            et: report(
+                directory(f"{INDIR}/evaluation/.tables/{et}"),
+                patterns=[f"{et}_{{ts}}.html"],
+                category="Evaluation",
+                subcategory=f"{name}: table",
+                labels={"Test set" if et == "holdout" else "Measure": "{ts}"},
+            )
+            for et, name in EVAL_TASKS.items()
+        },
+    script:
+        "scripts/report.R"
 
 
 for level, rname in zip(
