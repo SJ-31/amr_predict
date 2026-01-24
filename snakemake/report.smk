@@ -1,6 +1,7 @@
 include: "Snakefile"
 
 
+import polars as pl
 import shutil
 
 
@@ -129,6 +130,13 @@ for group, fn in {
 
 # * Rules
 
+tools_in_meta = [
+    tool
+    for t in pl.read_csv(INDIR / "seq_metadata.csv", n_rows=3).columns
+    if (tool := t.split("_")[0]) in config["seq_metadata"].keys()
+]
+tools_in_meta = set(tools_in_meta)
+
 
 rule all:
     input:
@@ -146,6 +154,8 @@ rule all:
             ),
             e=("html", "yaml"),
         ),
+        seq_anno_count_tables=[INDIR / f".seq_meta/{t}_counts" for t in tools_in_meta],
+        eval_all=INDIR / "evaluation/all_results.csv",
 
 
 rule record_env:
@@ -260,24 +270,26 @@ rule format_metadata:
         "scripts/report.py"
 
 
+rule seq_metadata_tables:
+    input:
+        rules.format_metadata.output.count_tables,
+    params:
+        tool_prefix=lambda wc: wc.get("tool"),
+    output:
+        report(
+            directory(INDIR / ".seq_meta/{tool}_counts"),
+            htmlindex="index.html",
+            category="Dataset",
+            subcategory="Sequence annotation counts",
+            labels={"Tool": "{tool}"},
+        ),
+    script:
+        "scripts/report.R"
+
+
 module shared:
     snakefile:
         "shared.smk"
-
-
-use rule datavzrd from shared as show_sequence_annotations with:
-    input:
-        count_dir=rules.format_metadata.output.count_tables,
-    params:
-        template="report/seq_anno.yaml",
-    output:
-        dir=report(
-            directory(f"{INDIR}/.datavzrd_seqs"),
-            category="Dataset",
-            htmlindex="index.html",
-            labels={"Name": "Sequence annotation counts"},
-        ),
-        config=f"{INDIR}/evaluation/.datavzrd_seqs.yaml",
 
 
 use rule datavzrd from shared as show_sample_metadata with:

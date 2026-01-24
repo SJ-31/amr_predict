@@ -24,9 +24,74 @@ add_model_spanner <- function(tab, cur_model, last_dset) {
       plot_type = "bar",
       new_col_name = glue("{pref}_bar"),
       new_col_label = "",
-      autohide = FALSE
+## ** Metadata tables
+
+make_group_count_tables <- function(tb) {
+  tables <- apply(tb, 1, \(row) {
+    tmp <- read_csv(row["filenames"])
+    gt(tmp) |>
+      fmt_number(columns = "Proportion", decimals = 2) |>
+      opt_interactive(
+        use_search = TRUE,
+        use_highlight = TRUE,
+        use_compact_mode = TRUE
+      ) |>
+      tab_header(row["group"])
+    # TODO: can prettify this
+  })
+  tables
+}
+
+#' Save a list of gt_tbl objects as a single file
+#'
+#' @description
+#' [2026-01-24 Sat] This is primarily a workaround for gtsave not working on
+#' gt_group objects with interactive components
+save_gt_list <- function(tabs, outdir) {
+  got_lib <- FALSE
+  dir.create(outdir)
+  lib <- glue("{outdir}/lib")
+  html_parts <- lapply(tabs, \(t) {
+    dir <- tempdir()
+    temp_file <- tempfile(fileext = ".html", tmpdir = dir)
+    gtsave(t, filename = temp_file)
+    cur_lib <- glue("{dir}/lib")
+    if (!got_lib && dir.exists(cur_lib)) {
+      dir.create(lib)
+      file.copy(cur_lib, outdir, recursive = TRUE)
+      got_lib <<- TRUE
+    }
+    readLines(temp_file)
+  })
+  file <- glue("{outdir}/index.html")
+  tryCatch(
+    {
+      combined_html <- unlist(html_parts)
+      writeLines(combined_html, file)
+    },
+    error = \(e) {
+      unlink(outdir, recursive = TRUE)
+      stop(e)
+    }
+  )
+}
+
+#' Generate count tables with gt from the csvs written by `write_seq_meta_tables`
+#' in report.py
+#'
+write_seq_anno_counts <- function(table_csvs, outdir, prefix) {
+  table_csvs <- table_csvs |> keep(\(x) str_starts(glue("{prefix}_"), x))
+  tb <- tibble(filenames = list.files(table_csvs, full.names = TRUE)) |>
+    mutate(
+      tmp = basename(filenames),
+      tool = map_chr(tmp, \(x) str_split_1(x, "_")[1]),
+      group = map_chr(tmp, \(x) str_remove(x, ".*?_") |> str_remove(".csv$"))
     ) |>
-    cols_move(glue("{pref}_bar"), after = glue("{cur_model}_{last_dset}"))
+    select(-tmp)
+  tabs <- make_group_count_tables(tb)
+  save_gt_list(tabs, outdir)
+}
+
 }
 
 
@@ -77,6 +142,20 @@ write_holdout_tables <- function(tb, outdir) {
 
 ## * Rules
 
+seq_metadata_tables <- function() {
+  csv_path <- snakemake@input[[1]]
+  prefix <- snakemake@params[["tool_prefix"]]
+  tb <- tibble(filenames = list.files(csv_path, full.names = TRUE)) |>
+    mutate(
+      tmp = basename(filenames),
+      tool = map_chr(tmp, \(x) str_split_1(x, "_")[1]),
+      group = map_chr(tmp, \(x) str_remove(x, ".*?_") |> str_remove(".csv$"))
+    ) |>
+    select(-tmp) |>
+    filter(tool == prefix)
+  tabs <- make_group_count_tables(tb)
+  save_gt_list(tabs, snakemake@output[[1]])
+}
 # TODO: unfinished
 evaluation_tables <- function() {
   tb <- read_csv(snakemake@input[1])
