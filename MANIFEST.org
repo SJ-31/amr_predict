@@ -1,10 +1,23 @@
 # -*- eval: (jinx-mode -1) -*-
+* reference_genomes.tsv
+*Relative Path:* =data/meta/reference_genomes.tsv=
+*Date Added:* <2025-12-04 Thu>
+*Source:* Custom
+TSV file of reference genomes to use the TaxIDs present in the AST browser samples. For each TaxID, metadata for all available NCBI genomes were downloaded and a score for each assembly was computed based on the assembly level and ANI matching status. Up to three of the top-scoring assemblies were taken to be the reference genome for that TaxID.
+Atypical assemblies were filtered out.
+See full details in =reports/view_dataset.py=
+* ncbi_datasets_lookup.tsv
+*Relative Path:* =data/meta/ncbi_datasets_lookup.tsv=
+*Date Added:* <2025-12-04 Thu>
+*Source:* Custom
+TSV file containing genome lookups for the TaxIDs of the AST browser samples.
+Produced by =find_reference_genomes.py= using calls to the NCBI =datasets= tool
 * ncbi_datasets_bioprojects.tsv
 *Relative Path:* =data/meta/ncbi_datasets_bioprojects.tsv=
 *Date Added:* <2025-12-04 Thu>
 *Source:* Custom
 TSV file containing genome lookups for all bioprojects in the available AST browser sammples (=biosample_mapping_2025-11-21.csv=).
-Produced by =find_reference_genomes.py= by calls to the NCBI =datasets= tool
+Produced by =find_reference_genomes.py= using calls to the NCBI =datasets= tool
 * biosample_attributes.tsv
 *Relative Path:* =data/meta/biosample_attributes.tsv=
 *Date Added:* <2025-11-26 Wed>
