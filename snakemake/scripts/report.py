@@ -367,6 +367,7 @@ def evaluation():
         ("regression", "classification"),
     )
     out = Path(smk.params["outdir"])
+    all_out = []
     for method in eval_methods:
         if not (out / method).exists():
             continue
@@ -386,14 +387,13 @@ def evaluation():
                 ]
             )
             plot_eval(combined, task=task, outdir=outdir, method=method)
-
-            # TODO: generate aggregated files for datavzrd
-            # TODO:
-            # agg = combined.group_by(["dataset", "model", "task", "metric"]).agg(
-            #     pl.col("value").mean().alias("mean"),
-            #     pl.col("value").median().alias("median"),
-            #     pl.col("value").std().alias("std"),
-            # )
+            all_out.append(
+                combined.with_columns(
+                    pl.lit(task).alias("task_type"),
+                    pl.lit(method).alias("evaluation_method"),
+                )
+            )
+    pl.concat(all_out, how="diagonal_relaxed").write_csv(smk.output[-1])
 
 
 def embedding_comparison():
