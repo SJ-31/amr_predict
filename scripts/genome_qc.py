@@ -1,10 +1,11 @@
-#!/usr/bin/env ipython
+#!/usr/bin/env python
 
 import operator
 import re
 import subprocess as sp
 from functools import reduce
 from pathlib import Path
+from typing import get_args
 
 import polars as pl
 import yaml
@@ -65,20 +66,21 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
     command = "fastANI "
     for k, v in config.items():
         if k != "mapping":
-            command += f"--{k} {v}"
+            command += f" --{k} {v} "
 
     def run_fastani(command, group: pl.DataFrame, group_name) -> pl.DataFrame:
         rl = outdir.joinpath(f"{group_name}_refs.txt")
         ql = outdir.joinpath(f"{group_name}_queries.txt")
         outfile = outdir.joinpath(f"{group_name}_result.tsv")
-        rl.write_text("\n".join(group["reference"].first()))
-        ql.write_text("\n".join(group["query"]))
-        for path, flag in zip([ql, rl], ["--ql", "--rl"]):
-            if path is not None:
-                command += f" {flag} {path}"
-        command += f" --output {outfile}"
-        proc = sp.run(command, shell=True)
-        proc.check_returncode()
+        if not outfile.exists():
+            rl.write_text("\n".join(group["reference"].first()))
+            ql.write_text("\n".join(group["query"]))
+            for path, flag in zip([ql, rl], ["--ql", "--rl"]):
+                if path is not None:
+                    command += f" {flag} {path} "
+            command += f" --output {outfile}"
+            proc = sp.run(command, shell=True)
+            proc.check_returncode()
         return pl.read_csv(
             outfile,
             separator="\t",
@@ -89,6 +91,7 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
                 "bidirectional_fragments",
                 "total_query_fragments",
             ),
+            has_header=False,
         )
 
     dfs = []
@@ -98,9 +101,9 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
     ):
         if p := config["mapping"].get(path):
             if headers is not None:
-                maps[path] = pl.read_csv(p, separator="\t", new_columns=headers).cast(
-                    pl.String
-                )
+                maps[path] = pl.read_csv(
+                    p, separator="\t", new_columns=headers, has_header=False
+                ).cast(pl.String)
             else:
                 with open(p, "r") as f:
                     tmp = yaml.safe_load(f)
@@ -117,12 +120,14 @@ def fastani_wrapper(outdir: Path, config: dict) -> pl.DataFrame:
     if q2t is not None and t2r is not None:
         merged = q2t.join(t2r, on="taxid")
         for taxid, group in merged.group_by("taxid"):
+            # "many-to-one" mode: many queries, one reference genome
             df = run_fastani(command=command, group_name=taxid[0], group=group)
             dfs.append(df)
     if q2r is not None:
         for i, (_, group) in enumerate(
             q2r.group_by("query").agg("reference").group_by("reference")
         ):
+            # "one-to-many" mode: one query, multiple references
             df = run_fastani(command=command, group_name=f"group_{i}", group=group)
             dfs.append(df)
     return pl.concat(dfs).with_columns(
@@ -206,8 +211,8 @@ def filter_fastani(spec: dict, file: Path) -> list:
 
 def filter_quast(spec: dict, file: Path) -> list:
     df = pl.read_csv(file, separator="\t")
-    df = df.transpose(
-        column_names="Assembly", include_header=True, header_name="sample"
+    df = df.rename({"Assembly": "sample"}).with_columns(
+        pl.col("sample").str.strip_suffix(".scaffolds")
     )
     filtered = filter_w_operators(df, spec=spec["filters"], all=True)
     return list(filtered["sample"])
@@ -239,8 +244,8 @@ def filter_kraken2(sample2exptax: dict, spec: dict, path: Path) -> list:
                 "taxid": pl.Int64,
                 "name": pl.String,
             },
+            has_header=False,
         )
-        # TODO: maybe want to add a version that uses n_reads
         expected_tax = sample2exptax.get(sample)
         if not expected_tax:
             raise ValueError(
@@ -255,6 +260,7 @@ def filter_kraken2(sample2exptax: dict, spec: dict, path: Path) -> list:
             others = df.filter(
                 (pl.col("rank") == rank) & (pl.col("taxid") != expected_tax)
             )
+            # TODO: maybe want to add a version that uses n_reads
             if any(others["p_reads_covered"] > max_percent_other):
                 return
         passed.append(sample)
@@ -277,7 +283,7 @@ def parse_args():
         "-r",
         "--run",
         default=None,
-        help="Run a wrapper for a QC program. Currently supported: fcs",
+        help=f"Run a wrapper for a QC program. Currently supported: {get_args(AVAILABLE_WRAPPERS)}",
         action="store",
     )
     parser.add_argument(
@@ -304,8 +310,8 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    with open(args["config"], "r") as f:
-        conf: dict = yaml.safe_load(f)
+    with open(args["config"], "r") as path:
+        conf: dict = yaml.safe_load(path)
 
     if (to_run := args.get("run")) in AVAILABLE_WRAPPERS:
         run_conf = conf.get("run")
@@ -325,6 +331,7 @@ if __name__ == "__main__":
     if not path_map:
         raise ValueError("No paths to qc files provided in config")
     passing: dict = {}
+    tax_mapping: dict | None = None
     for qc in AVAILABLE_QC:
         paths = path_map.get(qc)
         if not paths:
@@ -337,19 +344,24 @@ if __name__ == "__main__":
                     "`kraken2_expected_taxids` field must not be empty to filter with kraken2"
                 )
             tax_df = pl.read_csv(
-                expected_tax_file, separator="\t", new_columns=["sample", "taxid"]
+                expected_tax_file,
+                separator="\t",
+                new_columns=["sample", "taxid"],
+                has_header=False,
             )
             tax_mapping = dict(zip(tax_df["sample"], tax_df["taxid"]))
         spec = get_spec(qc, config=conf)
         if not isinstance(paths, list):
             paths = [paths]
-        for f in paths:
+        for path in (Path(f) for f in paths):
             if qc == "kraken2":
-                passed = filter_kraken2(tax_mapping, spec, path=Path(f))
+                passed = filter_kraken2(tax_mapping, spec, path=path)
             elif qc == "quast":
-                passed = filter_quast(spec, Path(f))
+                passed = filter_quast(spec, path)
             elif qc == "fastani":
-                passed = filter_fastani(spec, Path(f))
+                passed = filter_fastani(spec, path)
+            else:
+                raise ValueError("Not qc")
             passing[qc].extend(passed)
     intersection = list(reduce(lambda x, y: x & y, [set(v) for v in passing.values()]))
     if out := args["output"]:
