@@ -1,22 +1,34 @@
-# [2025-12-02 Tue] need to wait for ast browser's bacass to finish first before filling
-# this in.
 # Only for genomes which aren't available from refseq already or have insufficient data for QC
 paths:
-  kraken2: [] # TODO: put in the Nextflow outdirectory for bacass kraken2 here
-  kraken2_expected_taxids: # TODO: prepare mapping file
-  quast: [] # TODO: put in the Nextflow summary for bacass quast
-  fastani: [] # TODO: prepare run of fastani
+  kraken2:
+    [
+      "/data/project/stemcell/shannc/repos/amr_predict/output/ast_browser/bacass_2025-12-05/Kraken2",
+    ]
+    # Output directory for bacass kraken2
+  kraken2_expected_taxids: /data/home/shannc/amr_predict/data/temp/ast_subsampled_sample2taxid.tsv
+  # headerless tsv file mapping sample ids to expected NCBI taxids
+  # first column is sample ids, second taxids
+  quast: [
+      "/data/project/stemcell/shannc/repos/amr_predict/output/ast_browser/bacass_2025-12-05/QUAST/report/transposed_report.tsv",
+    ] # Nextflow summary for bacass quast
+  fastani:
+    ["/data/home/shannc/amr_predict/data/temp/2026-01-26_fastani_result.tsv"]
+    # Summary file from fastANI
 
 run:
+  # Foreign Contamination Screening: https://github.com/ncbi/fcs
   fcs: # Aside from `fasta-input`, values are the same as they are in the cli versions
     fasta-input: # TODO: get it from nextflow
     image: "~/tools/fcs-adaptor.sif"
     taxonomy: prok
     container-engine: singularity
+  # Average Nucleotide Identity estimation: https://github.com/ParBLiSS/FastANI
   fastani:
     mapping:
-      query2taxid: # TODO: use the same thing as kraken2. tsv file mapping query files to NCBI taxids
-      taxid2reference: # TODO: prepare this
+      query2taxid: /data/home/shannc/amr_predict/data/temp/ast_subsampled_query2taxid.tsv
+      # tsv file mapping query fasta files to NCBI taxids
+      taxid2reference: /data/home/shannc/amr_predict/data/temp/ast_subsampled_taxid2ref.yaml
+      # yaml file mapping NCBI taxids to list of reference genomes
       # Other k, v pairs are fastANI long flags
     kmer: 16
     threads: 1
@@ -40,5 +52,5 @@ quast:
 fastani:
   # tuples of [<operator>, value] e.g. [">", 90]
   ani_avg: null
-  ani_all: null
-  ani_any: null
+  ani_all: [">", 90]
+  ani_any: [">=", 96]

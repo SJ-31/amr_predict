@@ -33,7 +33,7 @@ genome_dir <- here(remote, "genomes/ast_browser_batches/6_bacass")
 available_refs <- tibble(dir = list.files(ref_dir, full.names = TRUE)) |>
   mutate(ref = basename(dir)) |>
   filter(dir.exists(dir)) |>
-  mutate(file = map_chr(dir, \(x) head(list.files(x), 1))) |>
+  mutate(file = map_chr(dir, \(x) head(list.files(x, full.names = TRUE), 1))) |>
   select(-dir)
 ref <- ref |>
   inner_join(available_refs, by = join_by(x$`Assembly Accession` == y$ref))
@@ -43,9 +43,28 @@ query2taxid <- tibble(file = list.files(genome_dir, full.names = TRUE)) |>
   inner_join(metadata, by = join_by(BioSample)) |>
   select(file, TaxID)
 
-taxid2ref <- ref |> select(taxid_query, file)
+taxid2ref <- ref |>
+  select(taxid_query, file) |>
+  group_by(taxid_query) |>
+  summarise(file = list(file))
 
-taxid2ref |>
-  write_tsv(here(temp, "ast_subsampled_taxid2ref.tsv"), col_names = FALSE)
+as.list(taxid2ref$file) |>
+  `names<-`(taxid2ref$taxid_query) |>
+  yaml::write_yaml(here(temp, "ast_subsampled_taxid2ref.yaml"))
+
 query2taxid |>
   write_tsv(here(temp, "ast_subsampled_query2taxid.tsv"), col_names = FALSE)
+
+if (file.exists(here(temp, "ast_browser_passed_qc.txt"))) {
+  passed <- read_lines(here(temp, "ast_browser_passed_qc.txt"))
+  tibble(fasta = list.files(genome_dir, full.names = TRUE)) |>
+    mutate(sample = str_remove(basename(fasta), ".fasta")) |>
+    select(sample, fasta) |>
+    filter(sample %in% passed) |>
+    write_csv(here(
+      "config",
+      "nf_runs",
+      "funcscan",
+      "ast_browser_d-6_bacass_2026-01-26.csv"
+    ))
+}
