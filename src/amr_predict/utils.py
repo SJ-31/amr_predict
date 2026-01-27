@@ -1359,7 +1359,7 @@ def with_metadata(
     dset: DSET_TYPES,
     cfg: dict,
     sample_col: str = "sample",
-    meta_options: str | tuple[str, ...] = ("ast", "sample", "sequence"),
+    meta_options: str | tuple[str, ...] = ("ast", "sample", "sequence", "external"),
     align: bool = False,
     dset_name: str | None = None,
 ) -> DSET_TYPES | tuple[DSET_TYPES, pl.DataFrame]:
@@ -1394,9 +1394,14 @@ def with_metadata(
                 else read_tabular(cfg["sample_metadata"]["file"])
             )
             key_col = cfg[f"{m}_metadata"]["id_col"]
+        elif m == "external":
+            df = with_external_amr_predictions(
+                merging, cfg, sample_col=sample_col, min_args=1
+            )
+            key_col = sample_col
         else:
             raise ValueError(
-                f"metadata type `{m}` must be one of 'ast', 'sequence', 'sample'"
+                f"metadata type `{m}` must be one of 'ast', 'sequence', 'sample', `external`"
             )
         merging = merging.join(
             df, left_on=sample_col, right_on=key_col, how="left", maintain_order="left"
@@ -1419,3 +1424,148 @@ def with_metadata(
         to_merge = Dataset.from_polars(merging.drop(sample_col))
         return concatenate_datasets([dset, to_merge], axis=1)
     return dset, merging
+
+
+def read_format_hamr(
+    cfg: dict, known_drugs: Sequence, sample_col: str = "sample"
+) -> pl.DataFrame:
+    hamr = pl.read_csv(
+        cfg["seq_metadata"]["hamronization"],
+        separator="\t",
+        raise_if_empty=False,
+        infer_schema_length=None,
+    ).rename({"input_file_name": sample_col})
+    to_remove = (
+        "\\.mapping.*\\.deeparg",
+        "\\.tsv\\.amrfinderplus",
+        "\\.txt\\.rgi",
+        "_retrieved-genes-.*",
+    )
+    wanted_cols = (sample_col, "analysis_software_name", "drug_class")
+    drug_replacements = {"tobramcyin": "tobramycin", None: None}
+    for pat in to_remove:
+        hamr = hamr.with_columns(pl.col(sample_col).str.replace(pat, value=""))
+    software = hamr["analysis_software_name"].unique()
+    fmt = (
+        hamr.select(wanted_cols)
+        .with_columns(pl.col("drug_class").str.split(";"))
+        .explode("drug_class")
+        .with_columns(
+            pl.col("drug_class")
+            .str.to_lowercase()
+            .str.strip_chars()
+            .replace(drug_replacements)
+        )
+        .with_columns(
+            pl.when(pl.col("drug_class").is_in(known_drugs))
+            .then("drug_class")
+            .when(pl.col("drug_class").is_null())
+            .then(pl.lit(None))
+            .otherwise(pl.lit("other_drug"))
+        )
+        .filter(pl.col("drug_class").is_not_null())
+        .with_columns(pl.lit(1).alias("value"))
+        .pivot(
+            values="value",
+            on=["analysis_software_name", "drug_class"],
+            aggregate_function="sum",
+        )
+        .rename(
+            lambda x: "_".join(
+                x.removeprefix("{").removesuffix("}").replace('"', "").split(",")
+            )
+            if x.startswith("{")
+            else x
+        )
+        .group_by(sample_col)
+        .agg(pl.all().sum())
+        .with_columns(
+            *[
+                pl.sum_horizontal(cs.starts_with(f"{sn}_")).alias(f"{sn}_any")
+                for sn in software
+            ]
+        )
+    )
+    return fmt
+
+
+def with_external_amr_predictions(
+    df: pl.DataFrame, cfg: dict, sample_col: str = "sample", min_args: int = 1
+) -> pl.DataFrame:
+    """Add confusion matrix codes for predictions made by external AMR tools
+    by cross-referencing with observed AST data
+
+    Parameters
+    ----------
+    cfg : dict
+        Dictionary as used in Snakemake pipeline
+    min_args : int
+        The miniumum number of resistance genes in the genome
+        predicted by the tool to consider the tool as calling the genome to have an
+        AMR phenotype
+
+    Returns
+    -------
+    DataFrame where each sample is labeled as TP, TN, FP, FN for each tool in columns
+    When possible, resistance predictions are checked with specific antibiotics e.g.
+    `TOOL_tetracycline` is checked against the observed resistance to tetracycline.
+    `TOOL_any` checks against the observed resistance to any antibiotic
+
+    Notes
+    -----
+    The external tools are assumed to be aggregated by hAMRonization
+    Label key:
+    + False negative: no prediction but are resistant
+    + False positive: predicted AMR genes but not resistant
+    + True positive: predicted AMR genes and resistant
+    + True negative: no prediction, not resistant
+
+    TODO: what's a good value to set for min_args?
+    TODO: you currently ignore the broad antibiotic classes in the hAMRonization tools,
+        placing them all under `other`. Could instead try to classify the antibiotics
+        in the AST data and then check against the tool prediction for that class
+        e.g. `aminoglycoside antibiotic` would include streptomycin, gentamicin
+        and amikacin
+        See `broad_class_mapping` and finish it up
+    WARNING: the cm codes assume that the AST data are ground truth
+    """
+    ast_data = get_ast_meta(cfg)
+    broad_class_mapping = {"aminoglycoside": ("gentamicin", "amikacin", "streptomycin")}
+    known_drugs = [
+        col
+        for col in ast_data.columns
+        if not col.endswith("_class") and col not in {"BioSample", "Run"}
+    ]
+    # known_drugs.extend(broad_class_mapping.keys())
+    df = df.select(sample_col).join(
+        ast_data, how="left", left_on=sample_col, right_on=cfg["ast_metadata"]["id_col"]
+    )
+    hamr = read_format_hamr(cfg, known_drugs, sample_col=sample_col)
+    merged = df.join(hamr, on=sample_col, how="left")
+    res_val = 1 if cfg["ast_metadata"].get("binarize") else "resistant"
+    for col in hamr.columns:
+        drug = col.split("_")[1] if "_" in col else ""
+        pass_thresh = pl.col(col) >= min_args
+
+        def code_cm(df: pl.DataFrame, expr) -> pl.DataFrame:
+            return df.with_columns(
+                pl.when(pass_thresh & expr)
+                .then(pl.lit("TP"))
+                .when(pass_thresh)
+                .then(pl.lit("FP"))
+                .when(expr)
+                .then(pl.lit("FN"))
+                .otherwise(pl.lit("TN"))
+                .alias(f"{col}_cm")
+            )
+
+        if col == sample_col:
+            continue
+        elif col.endswith("_any"):
+            merged = code_cm(merged, pl.col("any_resistant"))
+        elif drug_cols := broad_class_mapping.get(drug):
+            any_expr = pl.any_horizontal(cs.by_name(drug_cols) == res_val)
+            merged = code_cm(merged, any_expr)
+        elif f"{drug}_class" in merged.columns:
+            merged = code_cm(merged, pl.col(f"{drug}_class") == res_val)
+    return merged

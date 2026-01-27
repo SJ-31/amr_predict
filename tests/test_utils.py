@@ -7,11 +7,19 @@ from uuid import uuid4
 
 import numpy as np
 import polars as pl
+import polars.selectors as cs
 import pytest
 import torch
-from amr_predict.utils import EmbeddingCache, LinkedDataset, deduplicate, smoothen_log2
+from amr_predict.utils import (
+    EmbeddingCache,
+    LinkedDataset,
+    deduplicate,
+    smoothen_log2,
+    with_external_amr_predictions,
+)
 from datasets import Dataset
 from loguru import logger
+from pyhere import here
 from torch.utils.data import DataLoader
 
 logger.enable("amr_predict")
@@ -33,6 +41,22 @@ df = pl.DataFrame(
         "n": pl.Null,
     },
 )
+
+
+def test_with_external_amr(env):
+    env["seq_metadata"]["hamronization"] = here(
+        "data",
+        "remote",
+        "output/ast_browser/funcscan/batch1/reports/hamronization_summarize/hamronization_combined_report.tsv",
+    )
+    env["ast_metadata"]["binarize"] = False
+    df = pl.read_csv(here("data", "meta", "ast_subsampled.tsv"), separator="\t").rename(
+        {"BioSample": "sample"}
+    )
+    result = with_external_amr_predictions(df, env)
+    for col in result.columns:
+        if col.endswith("_cm"):
+            print(result[col].value_counts())
 
 
 def dummy_df() -> pl.DataFrame:
