@@ -21,6 +21,12 @@ def env():
 
     with open(here("snakemake", "env.yaml"), "rb") as f:
         env.update(yaml.safe_load(f))
+    td = here("tests", "data")
+    env["ast_metadata"]["file"] = here("data", "meta", "ncbi_all_samples.tsv")
+    env["seq_metadata"]["hamronization"] = td / "hamronization_combined_report.tsv"
+    env["seq_metadata"]["bakta"] = td / "bakta"
+    env["seq_metadata"]["ampcombi"] = td / "combgc"
+    env["seq_metadata"]["combgc"] = td / "Ampcombi_summary_cluster.tsv"
     return env
 
 
