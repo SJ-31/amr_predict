@@ -369,61 +369,61 @@ def make_embedded_dataset():
 
 
 def pool_embeddings():
-    methods: list[dict] = RCONFIG.pop("methods")
     embedding_ds = smk.input[0]
     inpath = Path(embedding_ds).with_suffix("")
     cache = EmbeddingCache(dir=inpath)
     logger.info("Size of cache {}", len(cache))
     ds_name = inpath.stem.removesuffix(f"-{EMBEDDING}_cache")
     texts_path = Path(smk.params["textdir"]).joinpath(ds_name)
-    for spec in methods:
-        method = spec["method"]
-        name = spec.get("name", method)
 
-        spec_kws = RCONFIG.copy()
-        spec_kws.update(spec.get("kws", {}))
-        savepath = Path(smk.params["outdir"]) / f"{ds_name}-{EMBEDDING}-{name}"
-        figpath = smk.params["plotdir"] / f"{ds_name}-{EMBEDDING}-{name}.png"
-        fig_datapath = smk.params["plotdir"] / f"{ds_name}-{EMBEDDING}-{name}.csv"
-        if not savepath.exists():
-            logger.info(f"{inpath.stem} `{method}` pooling: started")
-            sp: StaticPooler = StaticPooler(
-                method=method,
-                # NOTE: we merge with metadata during evals to save space
-                sample_metadata=None,
-                sample_metadata_key=None,
-                **spec_kws,
-            )
-            dset = get_seq_level(texts_path, cache)
-            pooled = sp(dset)
-            if pooled[RCONFIG["key"]][:].isnan().all():
-                raise ValueError("All of the pooled embeddings are nan...")
-            logger.success(f"{inpath.stem} `{method}` pooling: complete")
-            pooled.save_to_disk(dataset_path=savepath)
-            logger.info(f"{inpath.stem} `{method}` pooling: saved to disk")
-        else:
-            pooled = load_as(savepath)
-        original = get_seq_level(texts_path, cache)
-        comparison: pl.DataFrame = compare_pooled(
-            original,
-            pooled,
-            o_key=RCONFIG["embedding_key"],
-            p_key=RCONFIG["key"],
-            sample_key=RCONFIG["sample_key"],
+    pname: str = smk.params["pooling"]
+    spec = RCONFIG["methods"][pname] or {}
+
+    method = spec.pop("method", pname)
+    pooling_kws = {k: v for k, v in RCONFIG.items() if k != "methods"}
+    pooling_kws.update(spec)
+    savepath = Path(smk.params["outdir"]) / f"{ds_name}-{EMBEDDING}-{pname}"
+    figpath = smk.params["plotdir"] / f"{ds_name}-{EMBEDDING}-{pname}.png"
+    fig_datapath = smk.params["plotdir"] / f"{ds_name}-{EMBEDDING}-{pname}.csv"
+    if not savepath.exists():
+        logger.info(f"{inpath.stem} `{method}` pooling: started")
+        sp: StaticPooler = StaticPooler(
+            method=method,
+            # NOTE: we merge with metadata during evals to save space
+            sample_metadata=None,
+            sample_metadata_key=None,
+            **pooling_kws,
         )
-        corr = stats.spearmanr(comparison["d_original"], comparison["d_pooled"])
-        comparison.write_csv(fig_datapath)
-        plot = (
-            gg.ggplot(comparison, gg.aes(x="d_original", y="d_pooled"))
-            + gg.geom_point()
-            + gg.ggtitle(
-                title="Correlation between sequence & genome embedding distances",
-                subtitle=f"Spearman rho = {round(corr.statistic, 2)}, p-value: {round(corr.pvalue, 2)}",
-            )
-            + gg.xlab("Contig distance")
-            + gg.ylab("Genome distance")
+        dset = get_seq_level(texts_path, cache)
+        pooled = sp(dset)
+        if pooled[RCONFIG["key"]][:].isnan().all():
+            raise ValueError("All of the pooled embeddings are nan...")
+        logger.success(f"{inpath.stem} `{method}` pooling: complete")
+        pooled.save_to_disk(dataset_path=savepath)
+        logger.info(f"{inpath.stem} `{method}` pooling: saved to disk")
+    else:
+        pooled = load_as(savepath)
+    original = get_seq_level(texts_path, cache)
+    comparison: pl.DataFrame = compare_pooled(
+        original,
+        pooled,
+        o_key=RCONFIG["embedding_key"],
+        p_key=RCONFIG["key"],
+        sample_key=RCONFIG["sample_key"],
+    )
+    corr = stats.spearmanr(comparison["d_original"], comparison["d_pooled"])
+    comparison.write_csv(fig_datapath)
+    plot = (
+        gg.ggplot(comparison, gg.aes(x="d_original", y="d_pooled"))
+        + gg.geom_point()
+        + gg.ggtitle(
+            title="Correlation between sequence & genome embedding distances",
+            subtitle=f"Spearman rho = {round(corr.statistic, 2)}, p-value: {round(corr.pvalue, 2)}",
         )
-        plot.save(filename=figpath, verbose=False, width=15, height=12)
+        + gg.xlab("Contig distance")
+        + gg.ylab("Genome distance")
+    )
+    plot.save(filename=figpath, verbose=False, width=15, height=12)
 
 
 # * Run

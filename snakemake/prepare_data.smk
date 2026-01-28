@@ -17,9 +17,11 @@ if TEST:
             "bakta": f"{TEST_DATA}/bakta",
         }
     )
-    config["pool_embeddings"]["methods"] = [
-        {"method": m} for m in ("mean", "sum", "similarity")
-    ]
+    config["pool_embeddings"]["methods"] = {
+        "mean": {},
+        "sum": {},
+        "similarity": {},
+    }
     config["sample_metadata"][
         "file"
     ] = f"{config["data"]["meta"]}/combined_sample_meta.tsv"
@@ -40,9 +42,7 @@ OUTDIRS = {
         # 3. Sequences pooled into genome-level representations
     )
 }
-pooling_methods = [
-    d.get("name", d["method"]) for d in config["pool_embeddings"]["methods"]
-]
+pooling_methods = [k for k in config["pool_embeddings"]["methods"].keys()]
 EMBEDDING_RES = GPU40.copy() if not TEST else GPU20.copy()
 if config["embedding"] == "esm":
     tmp = {}
@@ -156,25 +156,18 @@ rule pool_embeddings:
         outdir=OUTDIRS["P"],
         textdir=OUTDIRS["S"],
         plotdir=PLOT_OUT,
+        pooling=lambda wc: wc.get("pooling"),
     resources:
         **BIG_MEM,
     log:
-        log=f"{LOGDIR}/prepare_data/pool_embeddings-{{dataset}}.log",
-        profile=f"{LOGDIR}/prepare_data/pool_embeddings-{{dataset}}_mem.bin",
+        log=f"{LOGDIR}/prepare_data/pool_embeddings-{{dataset}}-{{pooling}}.log",
+        profile=f"{LOGDIR}/prepare_data/pool_embeddings-{{dataset}}-{{pooling}}_mem.bin",
     output:
-        datasets=directory(
-            expand(
-                "{o}/{{dataset}}-{e}-{p}",
-                o=OUTDIRS["P"],
-                e=EMBEDDING,
-                p=pooling_methods,
-            )
-        ),
-        plots=expand(
-            "{o}/{{dataset}}-{e}-{p}.{ext}",
-            o=PLOT_OUT,
+        dataset=directory(f"{OUTDIRS['P']}/{{dataset}}-{EMBEDDING}-{{pooling}}"),
+        plot=expand(
+            "{p}/{{dataset}}-{e}-{{pooling}}.{ext}",
+            p=PLOT_OUT,
             e=EMBEDDING,
-            p=pooling_methods,
             ext=["png", "csv"],
         ),
     script:
