@@ -271,7 +271,7 @@ class StaticPooler(SeqPooler):
             Number of random sequence embeddings to use to represent a sample
         """
         samples = self._encode_samples(dataset)
-        embeddings = dataset[self.embedding_key][:]
+        embeddings = self._get_embeddings(dataset)
         unique_samples = torch.unique(samples, sorted=True)
         gen = torch.Generator()
         if rng:
@@ -353,7 +353,7 @@ class StaticPooler(SeqPooler):
 
         meta = meta.with_row_index()
         samples = self._encode_samples(dataset)
-        embeddings = dataset[self.embedding_key][:]
+        embeddings = self._get_embeddings(dataset)
         unique_samples = torch.unique(samples, sorted=True)
         tmp = []
         # If the current sample is `null` for subset col, take a random element
@@ -385,6 +385,15 @@ class StaticPooler(SeqPooler):
                 tmp.append(embeddings[mask].max(dim=1)[0])
         return torch.stack(tmp)
 
+    def _get_embeddings(self, dataset: Dataset) -> Tensor:
+        embeddings: Tensor = dataset[self.embedding_key][:]
+        if embeddings.isnan().any():
+            logger.warning(
+                "nans detected in embedding tensor. Converting to 0 for stability"
+            )
+            embeddings = embeddings.nan_to_num(nan=0)
+        return embeddings
+
     def _sum(
         self, dataset: Dataset, weigh: bool = True, weight_fn: Callable | None = None
     ) -> Tensor:
@@ -401,14 +410,8 @@ class StaticPooler(SeqPooler):
 
         """
         samples = self._encode_samples(dataset)
-        embeddings: Tensor = dataset[self.embedding_key][:]
-        # debug_tensor_vals(embeddings, "embeddings")
+        embeddings: Tensor = self._get_embeddings(dataset)
         unique_samples = torch.unique(samples, sorted=True)
-        if embeddings.isnan().any():
-            logger.warning(
-                "nans detected in embedding tensor. Converting to 0 for stability"
-            )
-            embeddings = embeddings.nan_to_num(nan=0)
         if weight_fn is None:
             mask = torch.stack([samples == s for s in unique_samples]).to(
                 torch.get_default_dtype()
