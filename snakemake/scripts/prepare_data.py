@@ -18,7 +18,11 @@ from snakemake.script import snakemake as smk
 
 os.environ["HF_HOME"] = smk.config["huggingface"]
 
-from amr_predict.pooling import StaticPooler
+from amr_predict.pooling import (
+    LEARNING_POOLING_METHODS,
+    STATIC_POOLING_METHODS,
+    StaticPooler,
+)
 from amr_predict.preprocessing import EMBEDDING_METHODS, SeqDataset, SeqEmbedder
 
 CONFIG: dict = smk.config
@@ -33,8 +37,13 @@ logger.add(sink=smk.log["log"])
 # * Utilities
 
 
-def get_seq_level(text_dset_path, cache) -> td.Dataset:
-    df = load_as(text_dset_path, "polars", ["sample", TEXT_KEY])
+def get_seq_level(
+    text_dset_path,
+    cache: EmbeddingCache,
+    add_metadata=False,
+) -> td.Dataset:
+    cols = ["sample", TEXT_KEY] if not add_metadata else None
+    df = load_as(text_dset_path, "polars", cols)
     dset: td.Dataset = cache.to_dataset(df=df, key_col=TEXT_KEY, new_col="embedding")
     return dset
 
@@ -379,7 +388,9 @@ def pool_embeddings():
     pname: str = smk.params["pooling"]
     spec = RCONFIG["methods"][pname] or {}
 
-    method = spec.pop("method", pname)
+    method: STATIC_POOLING_METHODS | LEARNING_POOLING_METHODS = spec.pop(
+        "method", pname
+    )
     pooling_kws = {k: v for k, v in RCONFIG.items() if k != "methods"}
     pooling_kws.update(spec)
     savepath = Path(smk.params["outdir"]) / f"{ds_name}-{EMBEDDING}-{pname}"
@@ -394,7 +405,8 @@ def pool_embeddings():
             sample_metadata_key=None,
             **pooling_kws,
         )
-        dset = get_seq_level(texts_path, cache)
+        add_metadata = method == "seq_subset"
+        dset = get_seq_level(texts_path, cache, add_metadata)
         pooled = sp(dset)
         if pooled[RCONFIG["key"]][:].isnan().all():
             raise ValueError("All of the pooled embeddings are nan...")
