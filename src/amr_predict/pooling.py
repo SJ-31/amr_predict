@@ -30,7 +30,7 @@ from torchmetrics.functional.pairwise import (
 logger.disable("amr_predict")
 
 STATIC_POOLING_METHODS: TypeAlias = Literal[
-    "sum", "mean", "similarity", "swe", "concat", "seq_subset", "random"
+    "max", "sum", "mean", "similarity", "swe", "concat", "seq_subset", "random"
 ]
 LEARNING_POOLING_METHODS: TypeAlias = Literal["autoencoder", "swe"]
 
@@ -193,6 +193,8 @@ class StaticPooler(SeqPooler):
             x = self._swe(d, **self.kws)
         elif self.method == "seq_subset":
             x = self._seq_subset(d, **self.kws)
+        elif self.method == "max":
+            x = self._max(d, **self.kws)
         elif self.method == "random":
             x = self._random(d, **self.kws)
         elif self.method == "concat":
@@ -383,7 +385,7 @@ class StaticPooler(SeqPooler):
                 tmp.append(embeddings[mask].sum(dim=1))
             elif agg == "max":
                 tmp.append(embeddings[mask].max(dim=1)[0])
-        return torch.stack(tmp)
+        return torch.vstack(tmp)
 
     def _get_embeddings(self, dataset: Dataset) -> Tensor:
         embeddings: Tensor = dataset[self.embedding_key][:]
@@ -393,6 +395,14 @@ class StaticPooler(SeqPooler):
             )
             embeddings = embeddings.nan_to_num(nan=0)
         return embeddings
+
+    def _max(self, dataset: Dataset) -> Tensor:
+        "Pool contig embeddings by taking the max across all contig embeddings for a sample"
+        samples = self._encode_samples(dataset)
+        embeddings: Tensor = self._get_embeddings(dataset)
+        unique_samples = torch.unique(samples, sorted=True)
+        maxes = [embeddings[samples == s, :].max(dim=0)[0] for s in unique_samples]
+        return torch.vstack(maxes)
 
     def _sum(
         self, dataset: Dataset, weigh: bool = True, weight_fn: Callable | None = None

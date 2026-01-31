@@ -20,6 +20,7 @@ from datasets import Dataset
             "subset_col": "ctrl",
         },
         {"method": "random"},
+        {"method": "max"},
     ],
 )
 def test_alignment(kws, toy_dset):
@@ -30,7 +31,11 @@ def test_alignment(kws, toy_dset):
     )
     metadata = dset.to_polars().unique("sample")
     sp = StaticPooler(obs_keep=["ctrl", "class"], **kws)
-    pooled = sp(dset).to_polars()
+    tmp = sp(dset)
+    embedding_size = dset["embedding"][:].shape[1]
+    assert len(tmp["x"][:].shape) == 2
+    assert tmp["x"][:].shape[1] == embedding_size
+    pooled = tmp.to_polars()
     joined = metadata.join(pooled, how="inner", on="sample")
     assert joined.height == metadata.height
     assert (joined["ctrl"] == joined["ctrl_right"]).all()
