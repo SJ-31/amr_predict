@@ -351,7 +351,7 @@ class StaticPooler(SeqPooler):
         mapping = {p: len(priority) - i for i, p in enumerate(priority)}
 
         def score_list(lst: list) -> int:
-            return max(map(lambda x: mapping.get(x, 0), lst))
+            return max(map(lambda x: mapping.get(x.strip(), 0), lst))
 
         meta = meta.with_row_index()
         samples = self._encode_samples(dataset)
@@ -368,16 +368,20 @@ class StaticPooler(SeqPooler):
             meta = meta.with_columns(
                 pl.col(subset_col)
                 .map_elements(
-                    lambda x: score_list(x) if x is not None else 0,
+                    lambda x: score_list(x)
+                    if (x is not None) or (x.is_not_null().any())
+                    else 0,
                     return_dtype=pl.Int32,
                 )
                 .alias("score")
-            )
+            ).with_columns(pl.col("score").fill_null(0))
 
         for sample in unique_samples:
             mask = (samples == sample).numpy()
             current = meta.filter(mask)
             current = current.filter(pl.col("score") == current["score"].max())
+            if current.height == 0:
+                raise ValueError("this shouldn't happen")
             if agg is None:
                 sampled = current.sample(1, seed=rng)["index"]
                 tmp.append(embeddings[sampled, :])
