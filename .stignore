@@ -1,2 +1,3 @@
 data/remote
-data/temp/cache/*
+data/temp/cache*/*
+data/temp/ncbi-datasets/*

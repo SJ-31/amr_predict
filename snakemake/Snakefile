@@ -12,6 +12,7 @@ os.environ["HF_HOME"] = config["huggingface"]
 TODAY = date.today().isoformat()
 DATE = config.get("date", "no_date")
 IN_DATE = config.get("in_date", DATE)
+config["in_date"] = IN_DATE
 TEST = config["test"]
 PROFILE = "default"
 if "--profile" in sys.argv:

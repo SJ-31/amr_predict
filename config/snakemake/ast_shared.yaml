@@ -1,8 +1,22 @@
 pool_embeddings:
   methods:
-    - method: mean
-    - method: sum
-    - method: similarity
+    mean:
+    sum:
+    max:
+    similarity:
+    random:
+      rng: ?rng
+    amr_mechanisms:
+      method: seq_subset
+      priority:
+        [
+          "antibiotic inactivation",
+          "antibiotic target alteration",
+          "antibiotic efflux",
+        ]
+      subset_col: hamr_resistance_mechanism
+      agg: null
+      split: ";"
 
 tasks:
   # [2025-12-26 Fri] Details on selection in `data_curation.org` and `preprocessing.org`

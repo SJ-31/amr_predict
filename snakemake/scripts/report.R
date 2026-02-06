@@ -201,6 +201,7 @@ evaluation_tables <- function() {
     }
     list()
   })
+  # TODO: see if you can add an overall html header or something to all the tables
 }
 
 ## * Snakemake entry point
