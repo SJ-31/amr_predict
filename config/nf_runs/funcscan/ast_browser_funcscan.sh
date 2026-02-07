@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-
-# NOTE: batch 4 on [2026-01-08 Thu]
 # Change input and outdir for each batch
+
+# NOTE: batch 6 on [2026-01-26 Mon]
 remote=".."
 nextflow run nf-core/funcscan \
-    --input ~/amr_predict/config/nf_runs/funcscan/ast_browser_d-4_2025-12-04.csv \
-    --outdir "${remote}/output/ast_browser/funcscan/batch4" \
+    --input ~/amr_predict/config/nf_runs/funcscan/ast_browser_d-6_bacass_2026-01-26.csv \
+    --outdir "${remote}/output/ast_browser/funcscan/batch6" \
     -profile singularity \
     --run_arg_screening \
     --run_amp_screening \
