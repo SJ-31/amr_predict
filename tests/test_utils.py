@@ -6,6 +6,7 @@ from typing import Callable
 from uuid import uuid4
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import polars.selectors as cs
 import pytest
@@ -14,6 +15,7 @@ from amr_predict.utils import (
     EmbeddingCache,
     LinkedDataset,
     deduplicate,
+    sample_pairs,
     smoothen_log2,
     with_external_amr_predictions,
 )
@@ -237,6 +239,23 @@ def test_smoothen():
     expected = np.array([3.90625e-03, 7.8125e-03, 3.125e-2, 5.12e2, 2])
     smoothened = smoothen_log2(vals)
     assert (smoothened == expected).all()
+
+
+def test_sample_pairs():
+    tmp = {"var": list("A" * 50 + "B" * 50 + "C" * 50 + "D" * 50 + "E" * 10)}
+    df = pd.DataFrame(tmp)
+    n_checks = 10
+    for _ in range(n_checks):
+        related, unrelated = sample_pairs(
+            df, var="var", n_pairs_per=20, id_col=None, replace=False
+        )
+        assert (
+            df.iloc[related[:, 0]]["var"].values == df.iloc[related[:, 1]]["var"].values
+        ).all()
+        assert (
+            df.iloc[unrelated[:, 0]]["var"].values
+            != df.iloc[unrelated[:, 1]]["var"].values
+        ).all()
 
 
 # cache = EmbeddingCache(

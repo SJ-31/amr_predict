@@ -5,6 +5,7 @@ import itertools
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import reduce
+from itertools import batched
 from pathlib import Path
 from shutil import copyfile
 from string import ascii_uppercase
@@ -13,6 +14,7 @@ from typing import Any, Literal, TypeAlias, override
 import anndata as ad
 import duckdb
 import numpy as np
+import pandas as pd
 import polars as pl
 import polars.selectors as cs
 import skbio as sb
@@ -36,6 +38,58 @@ logger.disable("amr_predict")
 # * Utility functions
 
 TASK_TYPES: TypeAlias = Literal["classification", "regression", "reconstruction"]
+
+
+def sample_pairs(
+    df: pd.DataFrame,
+    var: str,
+    n_pairs_per: int = 20,
+    id_col: str | None = None,
+    rng: int | None = None,
+    replace: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Helper function to return randomly-sampled matrices of related and unrelated pairs
+
+    Parameters
+    ----------
+    var : str
+        Variable determining whether samples are related
+    n_pairs_per : int
+        The number of pairs per unique value of df[`var`] to add to the pair lists
+    Returns
+    -------
+    A tuple of (related pairs, unrelated pairs). Each element is a two-column matrix,
+        with nrows ~ len(df[var].unique()) * n_pairs_per
+
+    Notes
+    -----
+    The values of the lists are numeric sample indices, for compatibility
+    """
+    if id_col is None:
+        id_col = "idx"
+        df = df.assign(idx=np.arange(df.shape[0]))
+    related_pairs = []
+    unrelated_pairs = []
+    n_to_sample = n_pairs_per * 2
+    for group, row in df.groupby(var).agg({id_col: lambda x: list(x)}).iterrows():
+        grouped_idx = row[id_col]
+        if len(grouped_idx) <= n_to_sample and not replace:
+            continue
+        # Shuffle ids in the same group, and pair up the first (n_pairs_per * 2) ids
+        # to be the related pairs
+        choices = pd.Series(grouped_idx).sample(frac=1, random_state=rng)
+        c1 = choices.head(n=n_pairs_per * 2)
+        related_pairs.extend([np.array(p) for p in batched(c1, 2)])
+
+        # the bottom half of the shuffled sample become the unrelated pairs
+        c2 = choices.tail(n=n_pairs_per)
+        from_other_group: pd.DataFrame = (
+            df.loc[df[var] != group, :][id_col]
+            .sample(frac=1, random_state=rng)
+            .head(n_pairs_per)
+        )
+        unrelated_pairs.extend([np.array(p) for p in zip(c2, from_other_group)])
+    return np.array(related_pairs), np.array(unrelated_pairs)
 
 
 def deduplicate(dset: Dataset, key: str, num_proc: int = 64) -> Dataset:

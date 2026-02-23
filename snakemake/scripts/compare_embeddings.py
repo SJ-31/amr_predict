@@ -16,7 +16,13 @@ import polars as pl
 import scanpy as sc
 from amr_predict.metrics import nn_proportions
 from amr_predict.plotting import plot_adata
-from amr_predict.utils import EmbeddingCache, LinkedDataset, load_as, with_metadata
+from amr_predict.utils import (
+    EmbeddingCache,
+    LinkedDataset,
+    load_as,
+    sample_pairs,
+    with_metadata,
+)
 from fastcluster import linkage, pdist
 from loguru import logger
 from numpy.random import Generator
@@ -80,57 +86,6 @@ def record_clustering_metrics(
         results.value.append(fn(labels_true=y_true, labels_pred=y_pred))
         for k, v in kwargs.items():
             getattr(results, k).append(v)
-
-
-def sample_pairs(
-    df: pd.DataFrame,
-    var: str,
-    n_pairs_per: int = 20,
-    id_col: str | None = None,
-    rng: int | None = None,
-    replace: bool = False,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Helper function to return randomly-sampled matrices of related and unrelated pairs
-
-    Parameters
-    ----------
-    var : str
-        Variable determining whether samples are related
-    n_pairs_per : int
-        The number of pairs per unique value of df[`var`] to add to the pair lists
-    Returns
-    -------
-    A tuple of (related pairs, unrelated pairs). Each element is a two-column matrix,
-        with nrows ~ len(df[var].unique()) * n_pairs_per
-
-    Notes
-    -----
-    The values of the lists are numeric sample indices, for compatibility
-    """
-    if id_col is None:
-        id_col = "idx"
-        df = df.assign(idx=np.arange(df.shape[0]))
-    related_pairs = []
-    unrelated_pairs = []
-    unrelated: pd.DataFrame = df.groupby(var).sample(
-        n=n_pairs_per, replace=replace, random_state=rng
-    )
-    for group, row in df.groupby(var).agg({id_col: lambda x: list(x)}).iterrows():
-        grouped_idx = row[id_col]
-        choices = pd.Series(grouped_idx).sample(
-            n=n_pairs_per * 2, replace=replace, random_state=rng
-        )
-        c1 = choices.head(n=n_pairs_per * 2)
-        related_pairs.extend([np.array(p) for p in batched(c1, 2)])
-        c2 = choices.tail(n=n_pairs_per)
-
-        unrelated_obs = (
-            unrelated.loc[unrelated[var] != group, :][id_col]
-            .sample(frac=1, random_state=rng)
-            .head(n_pairs_per)
-        )
-        unrelated_pairs.extend([np.array(p) for p in zip(c2, unrelated_obs)])
-    return np.array(related_pairs), np.array(unrelated_pairs)
 
 
 def safe_silhouette_score(**kwargs) -> float:
@@ -321,7 +276,7 @@ def covar_dist(
             metric="covariate_distance_correlation",
             name=col,
         )
-        logger.success(f"Routine for column {col} complete")
+        logger.success(f"Covar dist routine for column {col} complete")
     return pl.DataFrame(asdict(results)), pl.concat(raw_vals)
 
 
