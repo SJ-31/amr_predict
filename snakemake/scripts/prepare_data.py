@@ -76,7 +76,7 @@ def format_combgc(
                 .select(to_rename.values())
                 .with_columns(pl.lit(True).alias("is_bgc"))
             )
-    return pl.concat(dfs)
+    return pl.concat(dfs, how="diagonal_relaxed")
 
 
 def format_ampcombi(
@@ -244,7 +244,7 @@ def format_bakta(
             .with_columns(pl.lit(sample).alias(id_col))
         )
         dfs.append(df)
-    return pl.concat(dfs)
+    return pl.concat(dfs, how="diagonal_relaxed")
 
 
 # * Rules

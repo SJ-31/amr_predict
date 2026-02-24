@@ -444,7 +444,8 @@ def load_as(
     elif format == "adata":
         x_key = x_key if x_key is not None else to_keep[0]
         x = dset[x_key][:]
-        x = x.numpy() if isinstance(x, Tensor) else x
+        x: np.ndarray = x.numpy() if isinstance(x, Tensor) else x
+        x = np.nan_to_num(x, nan=0.0)
         to_keep.remove(x_key)
         obs = dset.remove_columns(x_key).select_columns(to_keep).to_pandas()
         return ad.AnnData(X=x, obs=obs)
@@ -723,7 +724,9 @@ class EmbeddingCache:
         """).pl(lazy=True)
         if not lf.head(1).collect().height == 1:
             raise ValueError("None of the keys are present in the cache")
-        collected = lf.collect() if not as_array else self._make_array(lf).collect()
+        collected: pl.DataFrame = (
+            lf.collect() if not as_array else self._make_array(lf).collect()
+        )
         if collected.shape[0] != key_length:
             raise ValueError(
                 f"Number of keys {key_length} != shape of array {collected}"
@@ -794,7 +797,7 @@ class EmbeddingCache:
 
     def rewrite(self, n_rows: int = 100_000, token_prop: float | None = None) -> None:
         "Read all entries into memory, remove duplicates and re-write cache to contain N parquet files"
-        lf: pl.LazyFrame = self.pl().unique("seq")
+        lf: pl.LazyFrame = self.to_pl().unique("seq")
         if token_prop:
             col = lf.select("token").collect()["token"].is_not_null()
             if col.any():
@@ -829,7 +832,7 @@ class EmbeddingCache:
             raise ValueError("Neither `seq` nor `token` was present")
         return lf.cast(new_schema)
 
-    def pl(self, as_array: bool = False) -> pl.LazyFrame:
+    def to_pl(self, as_array: bool = False) -> pl.LazyFrame:
         try:
             lf = (
                 duckdb.query(f"""

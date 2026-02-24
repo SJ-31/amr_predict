@@ -442,6 +442,7 @@ def _compare(is_embeddings: bool = True):
         cache: EmbeddingCache = EmbeddingCache(cache_path)
         dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), TEXT_KEY)
         adata = ad.AnnData(X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas())
+        adata.X = np.nan_to_num(adata.X, nan=0)
     else:
         adata = load_as(dir, "adata", x_key=X_KEY)
     if adata.X.shape[1] <= 0:
