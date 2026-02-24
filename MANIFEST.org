@@ -1,4 +1,10 @@
 # -*- eval: (jinx-mode -1) -*-
+* bakta_frequent_features_5000.txt
+*Relative Path:* =data/meta/bakta_frequent_features_5000.txt=
+*Date Added:* <2026-02-24 Tue>
+*Source:* Custom
+Top 5000 most frequent bakta features (Product, Gene) across all 5000 batches of the AST browser genomes
+Produced with the =find_common_features.py= script
 * reference_genomes.tsv
 *Relative Path:* =data/meta/reference_genomes.tsv=
 *Date Added:* <2025-12-04 Thu>

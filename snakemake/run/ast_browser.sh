@@ -2,6 +2,7 @@
 
 # Created by argbash-init v2.11.0
 # ARG_OPTIONAL_SINGLE([batch],[b],[batch to run],[1])
+# ARG_OPTIONAL_BOOLEAN([dry_run],[d],[Dry run])
 # ARG_OPTIONAL_REPEATED([config],[c],[Arguments to snakemake config])
 # ARG_POSITIONAL_SINGLE([script],[script to run],[prepare_data.smk])
 # ARG_HELP([<The general help message of my script>])
@@ -19,7 +20,7 @@ die() {
 }
 
 begins_with_short_option() {
-    local first_option all_short_options='bch'
+    local first_option all_short_options='bdch'
     first_option="${1:0:1}"
     test "$all_short_options" = "${all_short_options/$first_option/}" && return 1 || return 0
 }

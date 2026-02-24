@@ -20,6 +20,32 @@ pool_embeddings:
       subset_col: hamr_resistance_mechanism
       agg: null
       split: ";"
+preprocessing: # NOTE: must prefix baseline pooling methods with "baseline-"
+  baseline-kmer10:
+    method: kmer
+    k: 7
+  baseline-feature_presence_bakta:
+    source: "bakta"
+    method: feature_presence
+    feature_whitelist: "../data/meta/bakta_frequent_features_5000.txt"
+    # [2026-02-24 Tue] Top 5000 most frequent features in combiend Bakta output
+  baseline-feature_presence_hamr:
+    source: "hamr"
+    method: feature_presence
+    # id_regexp: "([^.]*)"
+  bin:
+    split_method: bin
+  orf_only:
+    split_method: bakta
+  orf_w_downstream:
+    split_method: bakta
+    utr_amount: [0, 200]
+  orf_w_upstream:
+    split_method: bakta
+    utr_amount: [200, 0]
+  orf_w_both:
+    split_method: bakta
+    utr_amount: [200, 200]
 
 tasks:
   # [2025-12-26 Fri] Details on selection in `data_curation.org` and `preprocessing.org`
