@@ -38,7 +38,7 @@ seq_metadata:
 
 compare_embeddings:
   bootstrap_rounds: 2 # bootstrap with subsampling to make computations faster and also so that there aren't too many
-  n_samples_per: 10 # number of samples randomly chosen in bootstrap rounds
+  n_samples_per: 15 # number of samples randomly chosen in bootstrap rounds
   # [2025-10-01 Wed] Would add more, but 20 samples led to 34,000 sequences
   pair_distance_distribution:
     cols: ["sample", "hamr_gene_symbol"]
@@ -47,7 +47,14 @@ compare_embeddings:
       n_pairs_per: 20
       replace: True
   covariate_distance_correlation:
-    cols: []
+    cols:
+      [
+        "ciprofloxacin",
+        "cefoxitin",
+        "gentamicin",
+        "tetracycline",
+        "trimethoprim-sulfamethoxazole",
+      ]
     distance_metric: cosine
     seq_start_col: "start"
     seq_end_col: "stop"
@@ -77,7 +84,14 @@ compare_pooled: # [2025-10-30 Thu] will choose to compare classes with the most 
     kws:
       n_pairs_per: 20
   covariate_distance_correlation:
-    cols: []
+    cols:
+      [
+        "ciprofloxacin",
+        "cefoxitin",
+        "gentamicin",
+        "tetracycline",
+        "trimethoprim-sulfamethoxazole",
+      ]
     distance_metric: "cosine"
   neighbor_proportion:
     cols: []

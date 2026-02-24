@@ -101,3 +101,11 @@ compare_pooled:
     - "trimethoprim-sulfamethoxazole"
     - "ciprofloxacin"
     - "cefoxitin"
+
+seq_metadata:
+  hamronization: "../data/remote/output/ast_browser/funcscan/all/hamronization_combined_report.tsv"
+  combgc: "../data/remote/output/ast_browser/funcscan/all/combgc"
+  bakta: "../data/remote/output/ast_browser/funcscan/all/bakta"
+  ampcombi: "../data/remote/output/ast_browser/funcscan/all/Ampcombi_summary_cluster.tsv"
+
+genomes: "../data/remote/genomes/ast_browser_batches/all"

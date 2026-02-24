@@ -33,6 +33,11 @@ snakemake -s report.smk --config ${conf} \
 unzip -q -o "${report}" -d ../docs/reports
 '''
 
+[tasks.print]
+run = '''
+srun --qos=cpu24h --mem=5G echo "slurm test"
+'''
+
 [tasks.smk_test]
 dir = "./snakemake"
 # TODO: make note that whatever is in the <> or [] are just to show the help information

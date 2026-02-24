@@ -59,7 +59,6 @@ if config["embedding"] == "esm":
 elif config["embedding"] == "Evo2":
     EMBEDDING_RES = {"qos": "cpu24h", "mem": "30G"}
 
-
 PLOT_OUT = Path(f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation")
 
 POOLED_ALREADY = [
@@ -74,6 +73,8 @@ POOLED_PLOTS = expand(
 
 
 CACHE_CHECKS = [f"{OUTDIRS['E']}/{d}-{EMBEDDING}_cache.complete" for d in TO_POOL]
+
+print(f"INFO: Retrieving genomes from `{config["genomes"]}`")
 
 
 rule all:
@@ -124,6 +125,8 @@ rule make_baseline:
         dataset="baseline-.*",
     input:
         rules.get_seq_metadata.output,
+    resources:
+        **BIG_MEM,
     log:
         log=f"{LOGDIR}/prepare_data/make_baseline-{{dataset}}.log",
         profile=f"{LOGDIR}/prepare_data/make_baseline-{{dataset}}_mem.bin",
