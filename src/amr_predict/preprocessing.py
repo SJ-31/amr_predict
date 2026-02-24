@@ -239,8 +239,8 @@ class SeqEmbedder:
         self,
         fasta_annotations: Path,
         feature_cols: str | list[str],
-        feature_whitelist: tuple | dict = (),
-        feature_blacklist: tuple | dict = (),
+        feature_whitelist: tuple | dict | str | Path = (),
+        feature_blacklist: tuple | dict | str | Path = (),
         id_col: str = "sample",
         id_regexp: str = "",
         metadata: Path | None = None,
@@ -263,10 +263,10 @@ class SeqEmbedder:
                 - If a directory, the file stem must be the sample name
         feature_cols : str | list[str]
             Column(s) in the files naming the feature in the annotation entry
-        feature_blacklist : tuple | dict
+        feature_blacklist : tuple | dict | str | Path
             Tuple of named features to exclude
             Can also be a dictionary mapping the name of a feature column to a tuple of feeatures to exclude
-        feature_whitelist : tuple | dict
+        feature_whitelist : tuple | dict | str | Path
             Named features to include. Effect is mutually exclusive to `feature_blacklist`
         read_kws : dict
             keyword arguments passed to `pl.read_csv`
@@ -287,6 +287,9 @@ class SeqEmbedder:
             for fspec, is_blacklist in zip(
                 (feature_whitelist, feature_blacklist), (False, True)
             ):
+                if isinstance(fspec, str) or isinstance(fspec, Path):
+                    with open(fspec, "r") as f:
+                        fspec = f.read().splitlines()
                 if fspec and isinstance(fspec, dict):
                     expr = [
                         pl.col(k).is_in(v).alias(f"_has_{k}") for k, v in fspec.items()
