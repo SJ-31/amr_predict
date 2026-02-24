@@ -884,6 +884,7 @@ class EmbeddingCache:
         **kws,
     ) -> EmbeddingCache:
         new: EmbeddingCache = EmbeddingCache(dir=new_path, **kws)
+        new._dir.mkdir(exist_ok=True, parents=True)
         acc: int = 0
         for cache in caches:
             cache = EmbeddingCache(cache) if isinstance(cache, Path) else cache
@@ -985,7 +986,10 @@ class EmbeddingCache:
         hf: bool = False,
     ) -> Dataset | td.Dataset:
         if drop_null_columns:
-            df = df[[s.name for s in df if not (s.null_count() == df.height)]]
+            not_nulls = [s.name for s in df if not (s.null_count() == df.height)]
+            nulls = [s for s in df.columns if s not in not_nulls]
+            df = df[not_nulls]
+            logger.warning(f"Dropping {len(nulls)} null columns: {nulls}")
         if hf:
             col = "token" if tokens else "seq"
             join_with = self.retrieve(df[key_col], tokens=tokens).rename({col: new_col})
@@ -1438,8 +1442,8 @@ def with_metadata(
                 "dataset name must be provided if requesting sequence metadata"
             )
         elif m == "sequence":
-            key = "tests" if for_test else "root"
-            path = f"{cfg["out"][key]}/{cfg['in_date']}/datasets/processed_sequences/{dset_name}"
+            start = cfg["out"]["tests"] if for_test else cfg["remote"]
+            path = f"{start}/{cfg['in_date']}/datasets/processed_sequences/{dset_name}"
             df = load_as(path, "polars").with_columns(
                 pl.any_horizontal(cs.contains("gene").is_not_null()).alias("in_gene")
             )
