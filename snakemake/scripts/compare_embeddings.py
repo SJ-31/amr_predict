@@ -309,7 +309,7 @@ def comparison_routine(
                 lambda x: x.replace("column_", prefix)
             )
             raw.write_parquet(plot_dir / f"{round}_{name}.parquet")
-            fig.save(plot_dir / f"{round}_{name}.png", width=15, height=10)
+            fig.save(plot_dir / f"{round}_{name}.pdf")
 
     result_dfs = []
     for metric_group in RCONFIG["methods"]:

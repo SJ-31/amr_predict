@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
 
 from collections.abc import Sequence
+from functools import reduce
 from typing import Literal, overload
 
 import anndata as ad
@@ -22,6 +23,7 @@ def plot_adata(
     elif "distances" not in adata.obsp and plot_mode == "umap":
         sc.pp.neighbors(adata)
         sc.tl.umap(adata)
+    colors = colors if isinstance(colors, list) else [colors]
 
     if plot_mode == "pca":
         obsm_key = "X_pca"
@@ -41,24 +43,25 @@ def plot_adata(
         how="horizontal",
     )
     plot_multiple = len(colors) > 1
-    if plot_multiple:
-        color_key = "value"
-        df = df.unpivot(on=colors, index=[xlab, ylab])
-    else:
-        color_key = colors
-    plot = gg.ggplot(df, gg.aes(x=xlab, y=ylab, color=color_key)) + gg.geom_point()
-    if plot_multiple:
-        plot = plot + gg.facet_wrap("variable")
-    if plot_mode == "umap":
-        plot = plot + gg.theme(
-            axis_text_y=gg.element_blank(),
-            axis_text_x=gg.element_blank(),
-            axis_title_x=gg.element_blank(),
-            axis_title_y=gg.element_blank(),
+    plots = []
+    for i, color_key in enumerate(colors):
+        plot = (
+            gg.ggplot(df, gg.aes(x=xlab, y=ylab, color=color_key))
+            + gg.geom_point()
+            + gg.theme(figure_size=(15, 10))
         )
-    plot = plot + gg.ggtitle(subtitle=subtitle)
-
-    return plot
+        if plot_mode == "umap":
+            plot = plot + gg.theme(
+                axis_text_y=gg.element_blank(),
+                axis_text_x=gg.element_blank(),
+                axis_title_x=gg.element_blank(),
+                axis_title_y=gg.element_blank(),
+            )
+        if i == 0:
+            plot = plot + gg.ggtitle(subtitle=subtitle)
+    if len(plots) == 1:
+        return plots[0]
+    return reduce(lambda x, y: x / y, plots)
 
 
 @overload
