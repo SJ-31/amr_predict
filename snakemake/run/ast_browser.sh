@@ -30,13 +30,15 @@ _positionals=()
 _arg_script="prepare_data.smk"
 # THE DEFAULTS INITIALIZATION - OPTIONALS
 _arg_batch="1"
+_arg_dry_run="off"
 _arg_config=()
 
 print_help() {
     printf '%s\n' "<The general help message of my script>"
-    printf 'Usage: %s [-b|--batch <arg>] [-c|--config <arg>] [-h|--help] [<script>]\n' "$0"
+    printf 'Usage: %s [-b|--batch <arg>] [-d|--(no-)dry_run] [-c|--config <arg>] [-h|--help] [<script>]\n' "$0"
     printf '\t%s\n' "<script>: script to run (default: 'prepare_data.smk')"
     printf '\t%s\n' "-b, --batch: batch to run (default: '1')"
+    printf '\t%s\n' "-d, --dry_run, --no-dry_run: Dry run (off by default)"
     printf '\t%s\n' "-c, --config: Arguments to snakemake config (empty by default)"
     printf '\t%s\n' "-h, --help: Prints help"
 }
@@ -57,6 +59,17 @@ parse_commandline() {
             ;;
         -b*)
             _arg_batch="${_key##-b}"
+            ;;
+        -d | --no-dry_run | --dry_run)
+            _arg_dry_run="on"
+            test "${1:0:5}" = "--no-" && _arg_dry_run="off"
+            ;;
+        -d*)
+            _arg_dry_run="on"
+            _next="${_key##-d}"
+            if test -n "$_next" -a "$_next" != "$_key"; then
+                { begins_with_short_option "$_next" && shift && set -- "-d" "-${_next}" "$@"; } || die "The short option '$_key' can't be decomposed to ${_key:0:2} and -${_key:2}, because ${_key:0:2} doesn't accept value and '-${_key:2:1}' doesn't correspond to a short option."
+            fi
             ;;
         -c | --config)
             test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
@@ -114,9 +127,15 @@ assign_positional_args 1 "${_positionals[@]}"
 
 # vvv  PLACE YOUR CODE HERE  vvv
 
-snakemake -s "${_arg_script}" --configfile ../config/snakemake/ast_shared.yaml \
-    --configfile "../config/snakemake/ast_b${_arg_batch}.yaml" \
-    --config ${_arg_config[@]}
+if [[ "${_arg_dry_run}" == "on" ]]; then
+    dry_run="--dry-run"
+else
+    dry_run=""
+fi
+
+snakemake -s "${_arg_script}" --configfile "../config/snakemake/ast_shared.yaml" \
+    "../config/snakemake/ast_b${_arg_batch}.yaml" \
+    --config ${_arg_config[@]} ${dry_run}
 
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^
 
