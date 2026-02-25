@@ -712,7 +712,7 @@ class EmbeddingCache:
     ]
 
     def retrieve(
-        self, keys: Sequence, tokens: bool = False, as_array: bool = True
+        self, keys: pl.Series, tokens: bool = False, as_array: bool = True
     ) -> pl.DataFrame:
         key_length = len(keys)
         col = "token" if tokens else "seq"
@@ -728,9 +728,18 @@ class EmbeddingCache:
             lf.collect() if not as_array else self._make_array(lf).collect()
         )
         if collected.shape[0] != key_length:
-            raise ValueError(
-                f"Number of keys {key_length} != shape of array {collected}"
-            )
+            logger.warning(f"""
+            Number of keys {key_length} != shape of array {collected}
+            Attempting to recover with lookups...
+            """)
+            in_collected = keys.is_in(collected["key"])
+            if not in_collected.all():
+                not_in = keys.filter(~in_collected).to_list()
+                raise ValueError(
+                    f"{len(not_in)} of the requested keys are missing from the cache\n{not_in}"
+                )
+            lookup: dict = dict(zip(collected["key"], collected[col]))
+            return pl.DataFrame({"key": keys, col: [lookup[k] for k in keys]})
         return collected
 
     def _mask_in_df(
@@ -1063,6 +1072,12 @@ class LinkedDataset(td.Dataset):
 
     def __len__(self):
         return self.meta.height
+
+    def remove_missing(self):
+        "Remove keys that are missing from the cache"
+        logger.info("Size before removing missing keys: {}", self.meta.height)
+        self.meta = self.meta.filter(pl.col(self.text_key).is_in(self.cache.keys()))
+        logger.info("Size after: ", self.meta.height)
 
     def to_polars(self) -> pl.DataFrame:
         embeddings: pl.DataFrame = self.cache.retrieve(

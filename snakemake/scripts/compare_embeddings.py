@@ -1,5 +1,4 @@
 #!/usr/bin/env ipython
-
 import os
 import warnings
 from collections import defaultdict
@@ -97,6 +96,7 @@ def safe_silhouette_score(**kwargs) -> float:
 
 
 def clustering_helper(adata: ad.AnnData, precomputed_dist) -> pl.DataFrame:
+    precomputed_dist = np.nan_to_num(precomputed_dist, nan=np.inf)
     hclust = linkage(precomputed_dist)
     df = adata.obs.copy()
     results: LongResults = LongResults()
@@ -441,10 +441,15 @@ def _compare(is_embeddings: bool = True):
         cache_path = smk.params["caches"] / f"{dir.stem}-{EMBEDDING}_cache"
         cache: EmbeddingCache = EmbeddingCache(cache_path)
         dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), TEXT_KEY)
-        adata = ad.AnnData(X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas())
+        dset.remove_missing()
+        adata: ad.AnnData = ad.AnnData(
+            X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas()
+        )
         adata.X = np.nan_to_num(adata.X, nan=0)
     else:
         adata = load_as(dir, "adata", x_key=X_KEY)
+    assert isinstance(adata, ad.AnnData)
+    assert isinstance(adata.X, np.ndarray)
     if adata.X.shape[1] <= 0:
         raise ValueError(f"embeddings for {dir.stem} have size 0")
     adata = with_metadata(adata, smk.config, "sample", ("sample", "ast"))
