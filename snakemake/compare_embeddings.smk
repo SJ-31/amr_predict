@@ -41,6 +41,8 @@ rule all:
 
 for key, rname in DIRS2RULE.items():
 
+    res = BIG_MEM if key == "sequences" else {}
+
     rule:
         name:
             rname
@@ -50,6 +52,8 @@ for key, rname in DIRS2RULE.items():
             metrics=f"{OUTDIRS[key]}/{{dataset}}_metrics.csv",
             plots_c=directory(f"{OUTDIRS[key]}/plots-c/{{dataset}}"),
             plots_d=directory(f"{OUTDIRS[key]}/plots-d/{{dataset}}"),
+        resources:
+            **res,
         log:
             f"{LOGDIR}/compare_embeddings/{rname}_{{dataset}}.log",
         params:
