@@ -1070,13 +1070,17 @@ class LinkedDataset(td.Dataset):
         )
         return n_row, n_col
 
+    def sample(self, **kws) -> None:
+        self.meta = self.meta.sample(**kws)
+
     def __len__(self):
         return self.meta.height
 
     def remove_missing(self):
         "Remove keys that are missing from the cache"
         logger.info("Size before removing missing keys: {}", self.meta.height)
-        self.meta = self.meta.filter(pl.col(self.text_key).is_in(self.cache.keys()))
+        keys = set(self.cache.keys())
+        self.meta = self.meta.filter(pl.col(self.text_key).is_in(keys))
         logger.info("Size after: ", self.meta.height)
 
     def to_polars(self) -> pl.DataFrame:

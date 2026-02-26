@@ -441,18 +441,28 @@ def _compare(is_embeddings: bool = True):
         cache_path = smk.params["caches"] / f"{dir.stem}-{EMBEDDING}_cache"
         cache: EmbeddingCache = EmbeddingCache(cache_path)
         dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), TEXT_KEY)
+        dset.sample(
+            fraction=0.1, seed=RNG
+        )  # [2026-02-26 Thu] it keeps dying, will this help?
         dset.remove_missing()
         adata: ad.AnnData = ad.AnnData(
             X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas()
         )
         adata.X = np.nan_to_num(adata.X, nan=0)
+        adata = with_metadata(
+            adata,
+            smk.config,
+            "sample",
+            ("sequence", "sample", "ast"),
+            dset_name=dir.stem,
+        )
     else:
         adata = load_as(dir, "adata", x_key=X_KEY)
+        adata = with_metadata(adata, smk.config, "sample", ("sample", "ast"))
     assert isinstance(adata, ad.AnnData)
     assert isinstance(adata.X, np.ndarray)
     if adata.X.shape[1] <= 0:
         raise ValueError(f"embeddings for {dir.stem} have size 0")
-    adata = with_metadata(adata, smk.config, "sample", ("sample", "ast"))
     adata.obs = adata.obs.replace(
         to_replace={c: np.nan for c in RCONFIG["cluster_on"]}, value="unknown"
     )
