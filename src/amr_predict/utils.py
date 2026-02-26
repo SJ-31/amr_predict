@@ -1070,8 +1070,19 @@ class LinkedDataset(td.Dataset):
         )
         return n_row, n_col
 
-    def sample(self, **kws) -> None:
-        self.meta = self.meta.sample(**kws)
+    def sample(self, by: str | None = None, **kws) -> None:
+        """Reduce the number of keys in the dataset"""
+        if by is None:
+            self.meta = self.meta.sample(**kws)
+        else:
+            idx = (
+                self.meta.with_row_index()
+                .group_by(by)
+                .agg(pl.col("index"))
+                .with_columns(pl.col("index").list.sample(**kws))
+                .explode("index")["index"]
+            )
+            self.meta = self.meta[idx, :]
 
     def __len__(self):
         return self.meta.height

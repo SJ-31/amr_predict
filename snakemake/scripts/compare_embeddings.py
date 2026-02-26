@@ -441,9 +441,8 @@ def _compare(is_embeddings: bool = True):
         cache_path = smk.params["caches"] / f"{dir.stem}-{EMBEDDING}_cache"
         cache: EmbeddingCache = EmbeddingCache(cache_path)
         dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), TEXT_KEY)
-        dset.sample(
-            fraction=0.1, seed=RNG
-        )  # [2026-02-26 Thu] it keeps dying, will this help?
+        dset.sample(by="sample", fraction=0.2, seed=RNG)
+        # [2026-02-26 Thu] Required to prevent OOM errors
         dset.remove_missing()
         adata: ad.AnnData = ad.AnnData(
             X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas()
