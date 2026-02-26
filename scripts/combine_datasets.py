@@ -54,6 +54,9 @@ if __name__ == "__main__":
             for dset, to_combine in name2dset_list.items():
                 logger.info("Creating combined `{}` from paths {}", dset, to_combine)
                 combined_path = cur_out / dset
+                if combined_path.exists():
+                    print(f"Target path {combined_path} exists already, ignoring...")
+                    continue
                 if dir == "embedded":
                     new_cache = EmbeddingCache.combine(
                         to_combine, new_path=combined_path
@@ -62,7 +65,7 @@ if __name__ == "__main__":
                     new_dset: Dataset = concatenate_datasets(
                         [Dataset.load_from_disk(d) for d in to_combine]
                     )
-                    logger.info("Size before deuplication: {}", len(new_dset))
+                    logger.info("Size before deduplication: {}", len(new_dset))
                     key = "sample" if dir == "pooled" else "uid"
                     new_dset = deduplicate(new_dset, key=key)
                     logger.info("Size after: {}", len(new_dset))
