@@ -295,6 +295,7 @@ def make_baseline():
         if (source := kws.pop("source", "bakta")) == "bakta":
             anno = Path(CONFIG["seq_metadata"]["bakta"])
             feature_cols = ["Gene", "Product"]
+            kws["id_regexp"] = "(.*)_bakta"
         elif source == "hamr":
             anno = Path(smk.input[0])
             feature_cols = ["hamr_gene_symbol", "hamr_drug_class"]
