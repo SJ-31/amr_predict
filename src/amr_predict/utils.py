@@ -9,6 +9,7 @@ from itertools import batched
 from pathlib import Path
 from shutil import copyfile
 from string import ascii_uppercase
+from tempfile import NamedTemporaryFile
 from typing import Any, Literal, TypeAlias, override
 
 import anndata as ad
@@ -331,19 +332,20 @@ def add_intergenic(
 
 def split_features(
     df: pl.DataFrame,
-    max_length: int,
+    max_length: int | None,
     start_col: str = "Start",
     end_col: str = "Stop",
     indicate_ends: bool = True,
     prefix: str = "chunk",
+    drop_cols: bool = True,
 ) -> pl.DataFrame:
     """Split features into chunks if they exceed `max_length`
 
     Parameters
     ----------
-    max_length : int
+    max_length : int | None
         Maximum feature length, and the length of the resulting chunks if features
-        exceed this
+        exceed this. If None, just the actual feature length
     indicate_ends : bool
         If true, add two boolean columns `is_5prime` and `is_3prime`
         indicating whether a feature chunk is at its 5' and/or 3' end respectively
@@ -357,27 +359,32 @@ def split_features(
     An exploded dataframe with multiple rows per feature
     """
     to_remove = ("length", "n_chunks", "remaining")
-    df = df.with_columns(length=pl.col(end_col) - pl.col(start_col)).with_columns(
-        n_chunks=pl.col("length") // max_length,
-        remaining=pl.col("length") % max_length,
-    )
+    df = df.with_columns(length=pl.col(end_col) - pl.col(start_col))
+    if max_length is not None:
+        df = df.with_columns(
+            n_chunks=pl.col("length") // max_length,
+            remaining=pl.col("length") % max_length,
+        )
+    else:
+        df = df.with_columns(n_chunks=0, remaining=0)
 
     def map_helper(x, col: Literal["start", "stop"] = "start"):
         nc = x["n_chunks"]
         start, stop = x[start_col], x[end_col]
         remaining = x["remaining"]
         has_remaining = remaining != 0 or remaining != x["length"]
+        extend_to = max_length or x["length"]
         if col == "start":
             if not nc:
                 return [start]
-            val = [start + max_length * i for i in range(nc)]
+            val = [start + extend_to * i for i in range(nc)]
             if has_remaining:
-                val.append(start + max_length * nc)
+                val.append(start + extend_to * nc)
             return val
         elif col == "stop":
             if not nc:
                 return [stop]
-            val = [start + max_length * (i + 1) for i in range(nc)]
+            val = [start + extend_to * (i + 1) for i in range(nc)]
             if has_remaining:
                 val.append(stop)
             return val
@@ -405,7 +412,9 @@ def split_features(
             .otherwise(False)
             .alias("is_3prime"),
         )
-    return df.drop(to_remove)
+    if drop_cols:
+        return df.drop(to_remove)
+    return df
 
 
 def read_tabular(file: Path | str, infer_schema_length=None, **kwargs) -> pl.DataFrame:

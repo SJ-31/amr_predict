@@ -193,7 +193,7 @@ class SeqEmbedder:
                         has_header=False,
                     )
                     .with_columns(pl.lit(fasta.stem).alias(id_col))
-                    .pivot("kmer", values="count")
+                    .pivot("kmer", values="count", aggregate_function="sum")
                 )
                 with open(stat_file, "r") as st:
                     stats = json.load(st)
