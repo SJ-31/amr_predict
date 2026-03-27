@@ -13,6 +13,7 @@ from tempfile import TemporaryDirectory
 from typing import Callable, Literal, TypeAlias
 
 import numpy as np
+import pandera.polars as pa
 import polars as pl
 import polars.selectors as cs
 import skbio
@@ -241,6 +242,8 @@ class SeqEmbedder:
         feature_cols: str | list[str],
         feature_whitelist: tuple | dict | str | Path = (),
         feature_blacklist: tuple | dict | str | Path = (),
+        recode_file: Path | str | None = None,
+        recoding_join_cols: Sequence | None = None,
         id_col: str = "sample",
         id_regexp: str = "",
         metadata: Path | None = None,
@@ -273,10 +276,35 @@ class SeqEmbedder:
         id_regexp : str
             A regex pattern containing a single capture group to extract sample names from
             `id_col`. Only used when `fasta_annotations` is a single file
+        recode_file : Path | str | None
+            A tabular file defining how to map from old feature labels to new ones. Requires
+            a single column "new" that contains the new features. All other columns are
+            used to join the dataset on `recoding_join_cols`
+        recoding_join_cols : Sequence | None
+            Columns in the dataset with which to join the recodings by
         """
         read_kws = read_kws or {}
         is_annotations_dir: bool = fasta_annotations.is_dir()
         feature_whitelist = feature_whitelist or kws.pop("features", ())
+
+        if (recode_file and not recoding_join_cols) or (
+            recoding_join_cols and not recode_file
+        ):
+            raise ValueError(
+                "Both `recode_file` and `recoding_join_cols` must be given"
+            )
+        if recode_file:
+            recode: pl.DataFrame | None = read_tabular(recode_file)
+            join_cols = [c for c in recode.columns if c != "new"]
+            schema_dict = {c: pa.Column() for c in join_cols}
+            schema_dict.update({"new": pa.Column("string", unique=True)})
+            schema: pa.DataFrameSchema = pa.DataFrameSchema(
+                schema_dict, unique=join_cols + ["new"]
+            )
+            schema.validate(recode)
+        else:
+            recode = None
+            join_cols = None
 
         def helper(file: Path) -> pl.DataFrame:
             try:
@@ -303,10 +331,16 @@ class SeqEmbedder:
                     )
                 elif fspec:
                     df = df.filter(pl.any_horizontal(pl.col(feature_cols).is_in(fspec)))
+
+            if recode is not None:
+                df = df.join(recode, left_on=recoding_join_cols, right_on=join_cols)
+                feature_cols = "new"
+
             if is_annotations_dir:
                 df = df.select(feature_cols).with_columns(
                     pl.lit(file.stem).alias(id_col)
                 )
+
             else:
                 to_select = (
                     [id_col] + feature_cols
@@ -318,6 +352,7 @@ class SeqEmbedder:
                 df = df.with_columns(
                     pl.col(id_col).str.extract(id_regexp, group_index=1)
                 )
+
             df = (
                 df.unpivot(index=id_col)
                 .filter(pl.col("value").is_not_null())

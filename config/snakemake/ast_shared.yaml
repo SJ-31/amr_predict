@@ -1,6 +1,7 @@
 __use_yte__: true
 __variables__:
   rng: 49274
+  remote: "../data/remote"
 
 trainer:
   max_epochs: 2000
@@ -99,12 +100,12 @@ compare_pooled:
 # * Metadata
 
 seq_metadata:
-  hamronization: "../data/remote/output/ast_browser/funcscan/all/hamronization_combined_report.tsv"
-  combgc: "../data/remote/output/ast_browser/funcscan/all/combgc"
-  bakta: "../data/remote/output/ast_browser/funcscan/all/bakta"
-  ampcombi: "../data/remote/output/ast_browser/funcscan/all/Ampcombi_summary_cluster.tsv"
+  hamronization: ?"{remote}/output/ast_browser/funcscan/all/hamronization_combined_report.tsv"
+  combgc: ?"{remote}/output/ast_browser/funcscan/all/combgc"
+  bakta: ?"{remote}/output/ast_browser/funcscan/all/bakta"
+  ampcombi: ?"{remote}/output/ast_browser/funcscan/all/Ampcombi_summary_cluster.tsv"
 
-genomes: "../data/remote/genomes/ast_browser_batches/all"
+genomes: "remote/genomes/ast_browser_batches/all"
 
 # * Evaluation
 
@@ -155,9 +156,9 @@ holdout:
         joint/orthopedic: EXACT
     interest_group_none:
       interest_group:
-        WHO_critical: NOT
-        WHO_high: NOT
-        WHO_medium: NOT
+        WHO_critical: EXACT
+        WHO_high: EXACT
+        WHO_medium: EXACT
     year_before_2019:
       collection_year:
         ?for i in range(2019, 2025):
@@ -211,10 +212,13 @@ preprocessing: # NOTE: must prefix baseline pooling methods with "baseline-"
   # baseline-kmer10:
   #   method: kmer
   #   k: 7
-  # baseline-feature_presence_bakta:
-  #   source: "bakta"
-  #   method: feature_presence
-  #   feature_whitelist: "../data/meta/bakta_frequent_features_5000.txt"
+  baseline-feature_presence_bakta:
+    source: "bakta"
+    method: feature_presence
+    feature_whitelist: "../data/meta/bakta_frequent_features_5000.txt"
+    recoding_join_cols: [gene, product]
+    recode_file: ?"{remote}/bakta_mmseqs_2026-03-25/cluster_recode.csv"
+
   #   # [2026-02-24 Tue] Top 5000 most frequent features in combined Bakta output
   # baseline-feature_presence_hamr:
   #   source: "hamr"
