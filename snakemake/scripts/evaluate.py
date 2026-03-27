@@ -25,7 +25,7 @@ from amr_predict.utils import (
     train_test_from_dict,
     with_metadata,
 )
-from datasets import Dataset, DatasetDict, concatenate_datasets
+from datasets import Dataset, DatasetDict, Sequence, Value, concatenate_datasets
 from lightning.pytorch.loggers import WandbLogger
 from loguru import logger
 from sklearn.ensemble import RandomForestClassifier
@@ -52,6 +52,7 @@ CONFIG = smk.config
 MODEL_ENV: dict = smk.config["models"]
 os.environ["HF_HOME"] = smk.config["huggingface"]
 torch.set_default_dtype(torch.float32)
+ARROW_DEFAULT_DTYPE: str = "float32"
 
 X_KEY, SAMPLE_KEY = (
     smk.config["pool_embeddings"]["key"],
@@ -119,7 +120,7 @@ def make_eval_kws(
     loader_kws = (MODEL_ENV[model_name] or {}).get("dataloader", DEFAULT_LOADER)
     val_kws = RCONFIG.get("validation_kws", {})
     model_fn = None
-    if model_name == "baseline":
+    if model_name.startswith("baseline"):
         model = Baseline(
             x_key=X_KEY,
             device=smk.params["device"],
@@ -129,13 +130,15 @@ def make_eval_kws(
         )
         trainer: L.Trainer | None = None
         val_kws = {}
-    elif model_name == "mlp":
+    elif model_name.startswith("mlp"):
         model = MLP(in_features=in_features, x_key=X_KEY, cfg=module_cfg, **model_kws)
         trainer = L.Trainer(**trainer_kws)
         if preprocessor is not None:
             model_fn = partial(MLP, x_key=X_KEY, cfg=module_cfg, **model_kws)
     else:
-        raise ValueError(f"model name {model_name} not recognized")
+        raise ValueError(f"""model name {model_name} not recognized.
+        It should refer to a prefix of a model defined in config["models"]
+        """)
     return dict(
         model=model,
         trainer=trainer,
@@ -155,6 +158,7 @@ def make_holdout_splits(dataset: Dataset) -> tuple[dict, dict]:
     holdout_splits = {}
     split_methods = {}
     obs: pl.DataFrame | None = dataset.remove_columns(X_KEY).to_polars()
+    obs = obs.fill_null(np.nan)
     for split_name, spec in RCONFIG["splits"].items():
         train_mask, test_mask = train_test_from_dict(df=obs, spec=spec)
         hsplit_lst = []
@@ -308,10 +312,22 @@ def main():
     dname = Path(dpath).stem
     dataset = with_metadata(
         dataset, smk.config, "sample", meta_options=("ast", "sample")
-    ).with_format("torch", dtype=torch.get_default_dtype())
+    )
+    class_tasks = [t for t in smk.config["tasks"].get("classification", [])]
+    reg_tasks = [t for t in smk.config["tasks"].get("regression", [])]
+    for col in dataset.column_names:
+        if col == X_KEY:
+            dataset = dataset.cast_column(col, Sequence(Value(ARROW_DEFAULT_DTYPE)))
+        elif col in reg_tasks:
+            dataset = dataset.cast_column(col, Value(ARROW_DEFAULT_DTYPE))
+        elif col in class_tasks:
+            dataset = dataset.cast_column(col, Value("int64"))
+    dataset = dataset.with_format("torch")
+    # Ensure classification targets have correct dtype
+    for c in [X_KEY] + class_tasks + reg_tasks:
+        logger.info("Dtype of {}: {}", c, dataset[c][:].dtype)
     if smk.config.get("test"):
         dataset = modify_for_test(dataset, X_KEY)
-
     kws = {}
     if smk.rule.startswith("holdout-"):
         hs, sm, include = make_holdout_splits(dataset)
