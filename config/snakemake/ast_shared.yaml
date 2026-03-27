@@ -21,18 +21,26 @@ pool_embeddings:
       agg: null
       split: ";"
 preprocessing: # NOTE: must prefix baseline pooling methods with "baseline-"
-  baseline-kmer10:
+  baseline-kmer5:
     method: kmer
-    k: 7
-  baseline-feature_presence_bakta:
-    source: "bakta"
-    method: feature_presence
-    feature_whitelist: "../data/meta/bakta_frequent_features_5000.txt"
-    # [2026-02-24 Tue] Top 5000 most frequent features in combiend Bakta output
-  baseline-feature_presence_hamr:
-    source: "hamr"
-    method: feature_presence
-    # id_regexp: "([^.]*)"
+    k: 5
+  baseline-kmer9:
+    method: kmer
+    k: 9
+  # [2026-02-28 Sat] Generated the below already
+  # TODO: [2026-02-28 Sat] rename your previous run of kmer10 to kmer7...
+  # baseline-kmer10:
+  #   method: kmer
+  #   k: 7
+  # baseline-feature_presence_bakta:
+  #   source: "bakta"
+  #   method: feature_presence
+  #   feature_whitelist: "../data/meta/bakta_frequent_features_5000.txt"
+  #   # [2026-02-24 Tue] Top 5000 most frequent features in combined Bakta output
+  # baseline-feature_presence_hamr:
+  #   source: "hamr"
+  #   method: feature_presence
+  #   # id_regexp: "([^.]*)"
   bin:
     split_method: bin
   orf_only:
@@ -68,24 +76,26 @@ tasks:
 
 compare_embeddings:
   bootstrap_rounds: 5
-  n_samples_per: 150
+  seq_count: 25 # [2026-03-26 Thu] this actually completes
+  # seq_prop: 0.01
+  n_samples_per: null
   methods:
     - neighbor_proportion
     - pair_distance_distribution
     - clustering
   pair_distance_distribution:
-    cols: ["sample", "bakta_gene", "hamr_drug_class"]
+    cols: ["sample", "gene", "hamr_drug_class"]
     distance_metric: cosine
     kws:
       n_pairs_per: 25
   neighbor_proportion:
-    cols: ["sample", "bakta_gene", "hamr_drug_class"]
+    cols: ["sample", "gene", "hamr_drug_class"]
     kws:
       metric: "cosine"
       n_neighbors: 8
   cluster_on:
     - "sample" # do the sequence embeddings recover their original genomes when clustered?
-    - "bakta_gene" # do sequence embeddings cluster by genes?
+    - "gene" # do sequence embeddings cluster by genes?
     - "hamr_drug_class"
 
 compare_pooled:
@@ -135,3 +145,52 @@ seq_metadata:
   ampcombi: "../data/remote/output/ast_browser/funcscan/all/Ampcombi_summary_cluster.tsv"
 
 genomes: "../data/remote/genomes/ast_browser_batches/all"
+
+holdout:
+  __variables__:
+    name2size: { very_few_shot: 0.15, mid: 0.5, few_shot: 0.3, standard: 0.8 }
+  bootstrap_splits:
+    ?for name, train_size in name2size.items():
+      ?name:
+        repeat: 5
+        kws:
+          train_size: ?train_size
+          shuffle: true
+  splits:
+    # Naming conventions:
+    # - "no" indicates absence from training set e.g. no_esch means no Escherichia in the training set
+    # - "only" indicates only that group in the training set
+    taxonomy_no_esch:
+      genus:
+        Escherichia: EXACT
+    taxonomy_no_rare:
+      species_representation:
+        intermediate: EXACT
+        minority: EXACT
+    taxonomy_no_salmonella:
+      genus:
+        Salmonella: EXACT
+    project_no_narms:
+      umbrella_project:
+        NARMS: EXACT
+    project_only_narms:
+      umrella_project:
+        NARMS: NOT
+    environment_no_animals:
+      isolation_source_broad:
+        animal: EXACT
+        animal_product: EXACT
+    environment_no_tissue:
+      isolation_source_broad:
+        tissue/organ: EXACT
+        skin/soft_tissue: EXACT
+        urogenital: EXACT
+        joint/orthopedic: EXACT
+    interest_group_none:
+      interest_group:
+        WHO_critical: NOT
+        WHO_high: NOT
+        WHO_medium: NOT
+    year_before_2019:
+      ?for i in range(2019, 2025):
+        ?i: NOT
