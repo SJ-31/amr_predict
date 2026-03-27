@@ -141,7 +141,7 @@ holdout:
       umbrella_project:
         NARMS: EXACT
     project_only_narms:
-      umrella_project:
+      umbrella_project:
         NARMS: NOT
     environment_no_animals:
       isolation_source_broad:
@@ -159,8 +159,9 @@ holdout:
         WHO_high: NOT
         WHO_medium: NOT
     year_before_2019:
-      ?for i in range(2019, 2025):
-        ?i: NOT
+      collection_year:
+        ?for i in range(2019, 2025):
+          ?i: NOT
 # ** CV
 
 cross_validate:
@@ -174,7 +175,8 @@ cross_validate:
     n_repeats: 2
     n_splits: 5
   control_tasks: # Mappings of target tasks to random control tasks
-    gentamicin_class: genus # Example
+    ?for cls in this['tasks']["classification"]:
+      ?cls: genus
 
 # * Data prep
 
