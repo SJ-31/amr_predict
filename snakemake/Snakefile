@@ -38,6 +38,11 @@ BIN = config["bin"]
 SRC = config["src"]
 LOGDIR = f"{OUT}/{DATE}/logs"
 
+max_seq_len = config["embedding_method2max_length"][config["embedding"]]
+config["preprocessing"] = {
+    f"{k}-{max_seq_len}" if not k.startswith("baseline") else k: v
+    for k, v in config["preprocessing"].items()
+}
 
 if TEST:
     GPU20 = {
@@ -53,6 +58,7 @@ if TEST:
         "slurm_partition": "gpu",
     }
     BIG_MEM = {}
+    MED_MEM = {}
 else:
     GPU20 = {
         "mem": "30G",
@@ -60,7 +66,8 @@ else:
         "gres": "gpu:3g.20gb:1",
         "slurm_partition": "gpu",
     }
-    BIG_MEM = {"mem": "100G"}
+    MED_MEM = {"mem": "70G"}
+    BIG_MEM = {"mem": "120G"}
     GPU40 = {
         "mem": "64G",
         "qos": "gpu40g",
