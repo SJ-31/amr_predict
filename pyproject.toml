@@ -11,6 +11,7 @@ dependencies = [
   "wandb",
   "xgboost",
   "ipython",
+  "pandera",
   "polars",
   "lightning",
   "pyhere",

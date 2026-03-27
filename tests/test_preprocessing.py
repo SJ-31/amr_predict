@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import polars as pl
+import polars.selectors as cs
 import pytest
 import tomllib
 from amr_predict.preprocessing import SeqDataset, SeqEmbedder, SeqPreprocessor
@@ -94,6 +95,20 @@ def test_split_features():
     )
     split = split_features(sample_bakta, 120, "Start", "Stop")
     assert all((split["chunk_Stop"] - split["chunk_Start"]) <= 120)
+
+
+def test_no_split():
+    sample_bakta = pl.read_csv(
+        next(Path(ENV["bakta"]).iterdir()),
+        separator="\t",
+        skip_rows=5,
+        infer_schema_length=None,
+    )
+    split = split_features(sample_bakta, None, "Start", "Stop", drop_cols=False)
+    print(split.select(cs.contains("Stop"), cs.contains("Start"), "length"))
+    print(split.shape)
+    print(split.filter(split["length"] != split["chunk_Stop"] - split["chunk_Start"]))
+    assert (split["length"] == split["chunk_Stop"] - split["chunk_Start"]).all()
 
 
 @pytest.mark.parametrize("k,fail", [(3, True), (6, False)])
