@@ -13,4 +13,5 @@ srun --qos=cpu24h --mem=80G mmseqs cluster \
     --cov-mode 0 \
     mmdb/db clustdb/db tmp
 
+# [2026-03-27 Fri] completed
 mmseqs createtsv mmdb/db mmdb/db clustdb/db clusters.tsv

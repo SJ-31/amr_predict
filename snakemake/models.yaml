@@ -1,15 +1,24 @@
+__use_yte__: true
 pretrained:
   seqlens: "omicseye/seqLens_4096_512_46M-Mp"
   evo2: ""
-models:
+models: # Model parameters
   baseline:
-  mlp:
+  mlp_deep:
+    kws:
+      hidden_dim: 128
+      num_layers: 4
+    dataloader:
+      batch_size: 5
+      drop_last: True
+
+  mlp_basic:
     kws:
       hidden_dim: 128
       num_layers: 2
     dataloader:
       batch_size: 5
       drop_last: True # Can help avoid BatchNorm issue if last batch only has one sample
-    # trainer: # TODO: specify model-specific trainer
+      # trainer:
   BatchTopK:
     kws:

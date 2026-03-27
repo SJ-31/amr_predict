@@ -1,59 +1,15 @@
 __use_yte__: true
 __variables__:
   rng: 49274
-pool_embeddings:
-  methods:
-    mean:
-    sum:
-    max:
-    similarity:
-    random:
-      rng: ?rng
-    amr_mechanisms:
-      method: seq_subset
-      priority:
-        [
-          "antibiotic inactivation",
-          "antibiotic target alteration",
-          "antibiotic efflux",
-        ]
-      subset_col: hamr_resistance_mechanism
-      agg: null
-      split: ";"
-preprocessing: # NOTE: must prefix baseline pooling methods with "baseline-"
-  baseline-kmer5:
-    method: kmer
-    k: 5
-  baseline-kmer9:
-    method: kmer
-    k: 9
-  # [2026-02-28 Sat] Generated the below already
-  # TODO: [2026-02-28 Sat] rename your previous run of kmer10 to kmer7...
-  # baseline-kmer10:
-  #   method: kmer
-  #   k: 7
-  # baseline-feature_presence_bakta:
-  #   source: "bakta"
-  #   method: feature_presence
-  #   feature_whitelist: "../data/meta/bakta_frequent_features_5000.txt"
-  #   # [2026-02-24 Tue] Top 5000 most frequent features in combined Bakta output
-  # baseline-feature_presence_hamr:
-  #   source: "hamr"
-  #   method: feature_presence
-  #   # id_regexp: "([^.]*)"
-  bin:
-    split_method: bin
-  orf_only:
-    split_method: bakta
-  orf_w_downstream:
-    split_method: bakta
-    utr_amount: [0, 200]
-  orf_w_upstream:
-    split_method: bakta
-    utr_amount: [200, 0]
-  orf_w_both:
-    split_method: bakta
-    utr_amount: [200, 200]
+
+trainer:
+  max_epochs: 2000
+  log_every_n_steps: 5
+  enable_progress_bar: false
+dataloader:
+  batch_size: 5
+
+log_wandb: true
 
 tasks:
   # [2025-12-26 Fri] Details on selection in `data_curation.org` and `preprocessing.org`
@@ -73,6 +29,8 @@ tasks:
       "ciprofloxacin",
       "cefoxitin",
     ]
+
+# * Embedding comparison
 
 compare_embeddings:
   bootstrap_rounds: 5
@@ -138,6 +96,8 @@ compare_pooled:
     - "ciprofloxacin"
     - "cefoxitin"
 
+# * Metadata
+
 seq_metadata:
   hamronization: "../data/remote/output/ast_browser/funcscan/all/hamronization_combined_report.tsv"
   combgc: "../data/remote/output/ast_browser/funcscan/all/combgc"
@@ -146,9 +106,14 @@ seq_metadata:
 
 genomes: "../data/remote/genomes/ast_browser_batches/all"
 
+# * Evaluation
+
+# ** Holdout
+
 holdout:
   __variables__:
     name2size: { very_few_shot: 0.15, mid: 0.5, few_shot: 0.3, standard: 0.8 }
+  models: [baseline, mlp_basic, mlp_deep]
   bootstrap_splits:
     ?for name, train_size in name2size.items():
       ?name:
@@ -156,6 +121,8 @@ holdout:
         kws:
           train_size: ?train_size
           shuffle: true
+  validation_kws:
+    test_size: 0.2
   splits:
     # Naming conventions:
     # - "no" indicates absence from training set e.g. no_esch means no Escherichia in the training set
@@ -194,3 +161,73 @@ holdout:
     year_before_2019:
       ?for i in range(2019, 2025):
         ?i: NOT
+# ** CV
+
+cross_validate:
+  models:
+    - baseline
+    - mlp_basic
+    - mlp_deep
+  validation_kws:
+    test_size: 0.2
+  k_fold:
+    n_repeats: 2
+    n_splits: 5
+  control_tasks: # Mappings of target tasks to random control tasks
+    gentamicin_class: genus # Example
+
+# * Data prep
+
+pool_embeddings:
+  methods:
+    mean:
+    sum:
+    max:
+    similarity:
+    random:
+      rng: ?rng
+    amr_mechanisms:
+      method: seq_subset
+      priority:
+        [
+          "antibiotic inactivation",
+          "antibiotic target alteration",
+          "antibiotic efflux",
+        ]
+      subset_col: hamr_resistance_mechanism
+      agg: null
+      split: ";"
+preprocessing: # NOTE: must prefix baseline pooling methods with "baseline-"
+  baseline-kmer5:
+    method: kmer
+    k: 5
+  baseline-kmer9:
+    method: kmer
+    k: 9
+  # [2026-02-28 Sat] Generated the below already
+  # TODO: [2026-02-28 Sat] rename your previous run of kmer10 to kmer7...
+  # baseline-kmer10:
+  #   method: kmer
+  #   k: 7
+  # baseline-feature_presence_bakta:
+  #   source: "bakta"
+  #   method: feature_presence
+  #   feature_whitelist: "../data/meta/bakta_frequent_features_5000.txt"
+  #   # [2026-02-24 Tue] Top 5000 most frequent features in combined Bakta output
+  # baseline-feature_presence_hamr:
+  #   source: "hamr"
+  #   method: feature_presence
+  #   # id_regexp: "([^.]*)"
+  bin:
+    split_method: bin
+  orf_only:
+    split_method: bakta
+  orf_w_downstream:
+    split_method: bakta
+    utr_amount: [0, 200]
+  orf_w_upstream:
+    split_method: bakta
+    utr_amount: [200, 0]
+  orf_w_both:
+    split_method: bakta
+    utr_amount: [200, 200]
