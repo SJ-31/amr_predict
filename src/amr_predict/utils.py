@@ -9,7 +9,6 @@ from itertools import batched
 from pathlib import Path
 from shutil import copyfile
 from string import ascii_uppercase
-from tempfile import NamedTemporaryFile
 from typing import Any, Literal, TypeAlias, override
 
 import anndata as ad
@@ -542,7 +541,9 @@ def train_test_from_dict(df: pl.DataFrame, spec: dict) -> tuple[np.ndarray, np.n
                 test_masks.append(df[obs].str.contains_any(value))
             else:
                 raise ValueError(f"`{match_type}` is an invalid match type!")
-    test_mask: np.ndarray = reduce(lambda x, y: x | y, test_masks).to_numpy()
+    test_mask: np.ndarray = (
+        reduce(lambda x, y: x | y, test_masks).to_numpy().astype(np.bool)
+    )
     return ~test_mask, test_mask
 
 
