@@ -1,22 +1,36 @@
 #!/usr/bin/env ipython
 
-import subprocess as sp
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 
 import polars as pl
-from amr_predict.preprocessing import SeqPreprocessor
+from amr_predict.preprocessing import SeqDataset
 from amr_predict.utils import load_as
 from pyhere import here
 
 REQUIRED: tuple = ("gene", "product", "type")
 
 
-# TODO: you need to do this again, but ensure that the genes aren't truncated...
+remote = here("data", "remote")
+
+mm_out = here(
+    "data",
+    "remote",
+    "bakta_mmseqs_2026-03-25",
+)
+dset_path = mm_out / "sequence_dataset"
 
 
 def preprocess_full_len():
-    spp = SeqPreprocessor(split_method="bakta", max_length=None)
+    SeqDataset.save_from_fastas(
+        split_method="bakta",
+        savepath=dset_path,
+        max_length=None,
+        fastas=remote / "genomes/ast_browser_batches/all",
+        annotations=remote / "output/ast_browser/funcscan/all/bakta",
+        utr_amount=None,
+        upstream_context=0,
+        downstream_context=0,
+    )
 
 
 def bakta_into_fasta(
@@ -42,20 +56,6 @@ def bakta_into_fasta(
         f.write("\n".join(fasta_rep))
 
 
-dset_path = here(
-    "data",
-    "remote",
-    "2026-02-23_ast_all",
-    "datasets",
-    "processed_sequences",
-    "orf_only",
-)
-mm_out = here(
-    "data",
-    "remote",
-    "bakta_mmseqs_2026-03-25",
-)
-
 tax_map = (
     pl.read_csv(
         here("data", "meta", "biosample_mapping_2025-11-21.csv"),
@@ -72,10 +72,7 @@ def write_fasta():
     print(dset)
     for req in REQUIRED:
         print(dset[req].value_counts())
-    bakta_into_fasta(dset, prefix="2026-03-25_", tax_map=tax_map, workdir=mm_out.parent)
-
-
-# write_fasta() [2026-03-26 Thu] called already
+    bakta_into_fasta(dset, prefix="2026-03-25_", tax_map=tax_map, workdir=mm_out)
 
 
 def collect_clusters():
@@ -113,5 +110,9 @@ def collect_clusters():
     )
     cluster_genes.write_csv(mm_out / "clusters_meta.csv")
 
+
+# preprocess_full_len()  # NOTE: completed [2026-03-27 Fri]
+
+# write_fasta()  # NOTE: completed [2026-03-27 Fri]
 
 # collect_clusters() # TODO: run this after re-creating the db with full-length seqs
