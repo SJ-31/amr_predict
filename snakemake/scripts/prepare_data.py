@@ -316,13 +316,7 @@ def make_baseline():
 
 def make_text_dataset():
     embedding_method: EMBEDDING_METHODS = CONFIG["embedding"]
-    max_length = 1000
-    if embedding_method == "seqLens":
-        max_length = 512
-    elif embedding_method == "Evo2":
-        max_length = 1800
-    elif embedding_method == "esm":
-        max_length = 2048 * 3  # context length * 3 for codons
+    max_length = CONFIG["embedding_method2max_length"][embedding_method]
     savepath: Path = Path(smk.output[0])
     name = savepath.stem
     kws = smk.params["preprocessing"][name]

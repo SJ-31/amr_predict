@@ -31,6 +31,7 @@ if TEST:
 PREPROCESSING = config["preprocessing"]
 EMBEDDING = config["embedding"]
 
+
 OUTDIRS = {
     k: f"{REMOTE}/{DATE}/datasets/{s}"
     for k, s in zip(
@@ -58,6 +59,7 @@ if config["embedding"] == "esm":
     PREPROCESSING = tmp
 elif config["embedding"] == "Evo2":
     EMBEDDING_RES = {"qos": "cpu24h", "mem": "30G"}
+EMBEDDING_RES["time"] = config.get("slurm_time_limit", "15-0:0:0")
 
 PLOT_OUT = Path(f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation")
 
@@ -112,6 +114,8 @@ rule make_text_dataset:
     log:
         log=f"{LOGDIR}/prepare_data/make_text_dataset-{{dataset}}.log",
         profile=f"{LOGDIR}/prepare_data/make_text_dataset-{{dataset}}_mem.bin",
+    resources:
+        **BIG_MEM,
     params:
         preprocessing=PREPROCESSING,
     script:
