@@ -230,6 +230,7 @@ def cv_wrapper(
     if evaluator_kws["model"].cfg.task_type == "regression" and add_control_tasks:
         return None
     elif add_control_tasks and (ctask_spec := RCONFIG["control_tasks"]):
+        ctask_spec: dict
         # Control tasks are only valid for classification
         for target, control in ctask_spec.items():
             dataset = ae.make_control_task(
@@ -240,6 +241,8 @@ def cv_wrapper(
                 add=True,
                 added_name=target,  # Replace the target column with the randomized control
             )
+        # Remove all control columns
+        dataset = dataset.remove_columns(set(ctask_spec.values()))
     eva = ae.Evaluator(**evaluator_kws)
     result: pl.DataFrame = eva.cv(
         dataset,
@@ -352,16 +355,21 @@ def main():
     ttype: TASK_TYPES
 
     fn: Callable | None = None
+    is_ctrl_task: bool = False
     for prefix, sym in zip(
         ("cv-", "cv_control_task-", "holdout-"),
         (cross_validate, cv_control_tasks, holdout),
     ):
         if smk.rule.startswith(prefix):
             fn = sym
+        if smk.rule.startswith("cv_control_task-"):
+            is_ctrl_task = True
     if fn is None:
         raise ValueError("prefix and function not defined")
 
     all_tasks = {t for tasks in smk.config["tasks"].values() for t in tasks}
+    if is_ctrl_task:
+        all_tasks |= set(RCONFIG.get("control_tasks", set()).values())
     cols_remove = [
         col
         for col in dataset.column_names
