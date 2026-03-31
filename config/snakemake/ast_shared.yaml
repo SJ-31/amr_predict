@@ -215,10 +215,15 @@ preprocessing: # NOTE: must prefix baseline pooling methods with "baseline-"
     source: "bakta"
     method: feature_presence
     feature_whitelist: "../data/meta/bakta_frequent_features_5000.txt"
+    #   # [2026-02-24 Tue] Top 5000 most frequent features in combined Bakta output
+    # TODO: check if recoding the features works
+  baseline-feature_presence_bakta_clusters:
+    source: "bakta"
+    method: feature_presence
+    feature_whitelist: "../data/meta/frequent_clusters_5000.txt"
     recoding_join_cols: [gene, product]
-    recode_file: ?"{remote}/bakta_mmseqs_2026-03-25/cluster_recode.csv"
-
-  #   # [2026-02-24 Tue] Top 5000 most frequent features in combined Bakta output
+    recode_file: ?"{remote}/bakta_mmseqs_2026-03-25/cluster_recode_aa.csv"
+    # TODO: check if recoding the features works
   # baseline-feature_presence_hamr:
   #   source: "hamr"
   #   method: feature_presence

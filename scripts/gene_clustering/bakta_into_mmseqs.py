@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import polars as pl
+import polars.selectors as cs
 from amr_predict.preprocessing import SeqDataset
 from amr_predict.utils import load_as
 from pyhere import here
@@ -76,8 +77,10 @@ def write_fasta():
 
 
 def collect_clusters():
+
+def collect_clusters(suffix=""):
     clustering = pl.read_csv(
-        mm_out / "clusters.tsv", new_columns=["rep", "member"], separator="\t"
+        mm_out / f"clusters{suffix}.tsv", new_columns=["rep", "member"], separator="\t"
     ).with_columns(
         pl.len().over("rep").alias("cluster_size"),
         cluster="c"
@@ -93,26 +96,40 @@ def collect_clusters():
         gene=pl.col("gene").replace("", None),
         product=pl.col("product").replace("", None),
     )
-    meta.write_csv(mm_out / "metadata.csv")
+    meta.write_csv(mm_out / f"metadata_with_clusters{suffix}.csv")
+
+    meta.unique(["gene", "product", "cluster"]).select(
+        ["gene", "product", "cluster"]
+    ).rename({"cluster": "new"}).write_csv(mm_out / f"cluster_recode{suffix}.csv")
+
+    to_report = list(REQUIRED) + ["taxid", "sample"]
 
     exprs: dict = {
-        "group_unique": [pl.col(c).unique() for c in REQUIRED],
-        "drop_nulls": [pl.col(c).list.drop_nulls() for c in REQUIRED],
-        "count": [pl.col(c).list.len().alias(f"n_{c}") for c in REQUIRED],
-        "join": [pl.col(c).list.join("@") for c in REQUIRED],
+        "group_unique": [pl.col(c).unique() for c in to_report],
+        "drop_nulls": [pl.col(c).list.drop_nulls() for c in to_report],
+        "count": [pl.col(c).list.len().alias(f"n_{c}") for c in to_report],
+        "join": [pl.col(c).list.join("@") for c in to_report],
     }
-    cluster_genes = (
-        meta.group_by("cluster")
-        .agg(*exprs["group_unique"])
+    grouped = (
+        meta.cast({"taxid": pl.String})
+        .group_by("cluster")
+        .agg(pl.len().alias("cluster_size"), *exprs["group_unique"])
         .with_columns(*exprs["drop_nulls"])
         .with_columns(*exprs["count"])
         .with_columns(*exprs["join"])
     )
-    cluster_genes.write_csv(mm_out / "clusters_meta.csv")
+    stats = (
+        grouped.select(cs.starts_with("n_"))
+        .describe()
+        .filter(~pl.col("statistic").str.ends_with("count"))
+    )
+    stats.write_csv(mm_out / f"clusters_stats{suffix}.csv")
+    grouped.drop("sample").write_csv(mm_out / f"clusters_meta{suffix}.csv")
 
 
-# preprocess_full_len()  # NOTE: completed [2026-03-27 Fri]
+# preprocess_full_len()  # completed [2026-03-27 Fri]
 
-# write_fasta()  # NOTE: completed [2026-03-27 Fri]
+# write_fasta()  # completed [2026-03-27 Fri]
 
-# collect_clusters() # TODO: run this after re-creating the db with full-length seqs
+# collect_clusters()  # [2026-03-27 Fri] completed
+collect_clusters(suffix="_aa")  # [2026-03-27 Fri] completed
