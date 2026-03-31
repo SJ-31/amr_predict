@@ -530,9 +530,15 @@ def train_test_from_dict(df: pl.DataFrame, spec: dict) -> tuple[np.ndarray, np.n
     test_masks = []
     for obs, val_dct in spec.items():
         for value, match_type in val_dct.items():
-            match_type: Literal["EXACT", "NOT", "CONTAINS", "CONTAINS_ANY"]
+            match_type: Literal["EXACT", "NOT", "CONTAINS", "CONTAINS_ANY", "LT", "GT"]
             if match_type == "EXACT":
                 test_masks.append(df[obs] == value)
+            elif match_type == "LT":
+                value = float(value) if isinstance(value, str) else value
+                test_masks.append(df[obs] < value)
+            elif match_type == "GT":
+                value = float(value) if isinstance(value, str) else value
+                test_masks.append(df[obs] > value)
             elif match_type == "CONTAINS":
                 test_masks.append(df[obs].str.contains(value))
             elif match_type == "NOT":

@@ -125,7 +125,7 @@ holdout:
   validation_kws:
     test_size: 0.2
   splits:
-    # Naming conventions:
+    # Naming convention is to describe the training set:
     # - "no" indicates absence from training set e.g. no_esch means no Escherichia in the training set
     # - "only" indicates only that group in the training set
     taxonomy_no_esch:
@@ -161,8 +161,7 @@ holdout:
         WHO_medium: EXACT
     year_before_2019:
       collection_year:
-        ?for i in range(2019, 2025):
-          ?i: NOT
+        "2019": GT
 # ** CV
 
 cross_validate:
