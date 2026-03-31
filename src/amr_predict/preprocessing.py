@@ -306,12 +306,17 @@ class SeqEmbedder:
             recode = None
             join_cols = None
 
-        def helper(file: Path) -> pl.DataFrame:
+        def helper(file: Path, fcols: str | list[str]) -> pl.DataFrame:
             try:
                 df: pl.DataFrame = read_tabular(file, **read_kws)
             except ComputeError as e:
                 logger.exception(f"Failed to read file {file}")
                 raise e
+
+            if recode is not None:
+                df = df.join(recode, left_on=recoding_join_cols, right_on=join_cols)
+                fcols = ["new"]
+
             for fspec, is_blacklist in zip(
                 (feature_whitelist, feature_blacklist), (False, True)
             ):
@@ -330,22 +335,14 @@ class SeqEmbedder:
                         .drop(cs.starts_with("_has"))
                     )
                 elif fspec:
-                    df = df.filter(pl.any_horizontal(pl.col(feature_cols).is_in(fspec)))
-
-            if recode is not None:
-                df = df.join(recode, left_on=recoding_join_cols, right_on=join_cols)
-                feature_cols = "new"
+                    df = df.filter(pl.any_horizontal(pl.col(fcols).is_in(fspec)))
 
             if is_annotations_dir:
-                df = df.select(feature_cols).with_columns(
-                    pl.lit(file.stem).alias(id_col)
-                )
+                df = df.select(fcols).with_columns(pl.lit(file.stem).alias(id_col))
 
             else:
                 to_select = (
-                    [id_col] + feature_cols
-                    if isinstance(feature_cols, list)
-                    else [id_col, feature_cols]
+                    [id_col] + fcols if isinstance(fcols, list) else [id_col, fcols]
                 )
                 df = df.select(to_select)
             if id_regexp:
@@ -369,7 +366,7 @@ class SeqEmbedder:
             metadata=metadata,
             accepted_suffixes=(".tsv", ".csv"),
             key=key,
-            embed_fn=helper,
+            embed_fn=lambda x: helper(x, feature_cols),
             pattern=metadata_pattern,
             **kws,
         )
