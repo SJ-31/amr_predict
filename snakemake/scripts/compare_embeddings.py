@@ -42,7 +42,7 @@ except ImportError:
     smk = type("snakemake", (), {"rule": None, "config": defaultdict(lambda: "")})
 
 
-RCONFIG = smk.config[smk.rule]
+RCONFIG: dict = smk.config[smk.rule]
 RNG: int = smk.config["rng"]
 GEN: Generator = np.random.default_rng(seed=RNG)
 EMBEDDING = smk.config["embedding"]
@@ -96,8 +96,11 @@ def safe_silhouette_score(**kwargs) -> float:
 
 
 def clustering_helper(adata: ad.AnnData, precomputed_dist) -> pl.DataFrame:
+    logger.info("Shape of dist: {}", precomputed_dist.shape)
     precomputed_dist = np.nan_to_num(precomputed_dist, nan=np.inf)
+    logger.info("Clustering: linkage calculation")
     hclust = linkage(precomputed_dist)
+    logger.success("Clustering: linkage complete")
     df = adata.obs.copy()
     results: LongResults = LongResults()
     scoring_metrics = {
@@ -167,6 +170,10 @@ def compare_pair_distribution(
         logger.info(f"Comparing pair distribution for column {col}")
         logger.info(f"n = {related.shape[0]} related pairs")
         logger.info(f"n = {unrelated.shape[0]} unrelated pairs")
+
+        if related.shape[0] == 0 or unrelated.shape[0] == 0:
+            logger.warning("No pairs available for col {}, skipping...", col)
+            continue
 
         results.add(metric, "n_related_pairs", related.shape[0], col, np.nan)
         results.add(metric, "n_unrelated_pairs", unrelated.shape[0], col, np.nan)
@@ -319,8 +326,15 @@ def comparison_routine(
             for col in cols:
                 adata.obs[col].fillna("unknown", inplace=True)
         if metric_group == "clustering":
+            logger.info(
+                "Clustering: begin precomputed distance calculation for adata of shape {}",
+                adata.X.shape,
+            )
             precomputed = pdist(adata.X, metric="cosine")
+            logger.success("Clustering: precomputed distance calculation complete")
+            logger.info("Begin clustering routine")
             cur_df = clustering_helper(adata=adata, precomputed_dist=precomputed)
+            logger.success("Clustering routine completed")
         elif metric_group == "neighbor_proportion":
             nn_tmp = nn_proportions(adata, columns=cols, **cur_config["kws"])
             to_concat = []
@@ -441,8 +455,18 @@ def _compare(is_embeddings: bool = True):
         cache_path = smk.params["caches"] / f"{dir.stem}-{EMBEDDING}_cache"
         cache: EmbeddingCache = EmbeddingCache(cache_path)
         dset: LinkedDataset = cache.to_dataset(load_as(dir, "polars"), TEXT_KEY)
-        dset.sample(by="sample", fraction=0.2, seed=RNG)
-        # [2026-02-26 Thu] Required to prevent OOM errors
+        # Sampling for embeddings is required to prevent OOM errors
+        if n_seqs_per := RCONFIG.get("seq_count"):
+            logger.info(
+                "Size of dataset before seq_count filtering: {}", dset.meta.shape
+            )
+            dset = dset.filter(
+                lambda x: x.with_columns(n=pl.len().over("sample"))["n"] >= n_seqs_per
+            )
+            logger.info("Size of dataset after: {}", dset.meta.shape)
+            dset.sample(by="sample", n=n_seqs_per, seed=RNG)
+        else:
+            dset.sample(by="sample", fraction=RCONFIG.get("seq_prop", 0.05), seed=RNG)
         dset.remove_missing()
         adata: ad.AnnData = ad.AnnData(
             X=dset[dset.x_key][:].numpy(), obs=dset.meta.to_pandas()
