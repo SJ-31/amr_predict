@@ -100,12 +100,12 @@ compare_pooled:
 # * Metadata
 
 seq_metadata:
-  hamronization: ?"{remote}/output/ast_browser/funcscan/all/hamronization_combined_report.tsv"
-  combgc: ?"{remote}/output/ast_browser/funcscan/all/combgc"
-  bakta: ?"{remote}/output/ast_browser/funcscan/all/bakta"
-  ampcombi: ?"{remote}/output/ast_browser/funcscan/all/Ampcombi_summary_cluster.tsv"
+  hamronization: ?f"{remote}/output/ast_browser/funcscan/all/hamronization_combined_report.tsv"
+  combgc: ?f"{remote}/output/ast_browser/funcscan/all/combgc"
+  bakta: ?f"{remote}/output/ast_browser/funcscan/all/bakta"
+  ampcombi: ?f"{remote}/output/ast_browser/funcscan/all/Ampcombi_summary_cluster.tsv"
 
-genomes: "remote/genomes/ast_browser_batches/all"
+genomes: ?f"{remote}/genomes/ast_browser_batches/all"
 
 # * Evaluation
 
@@ -222,7 +222,7 @@ preprocessing: # NOTE: must prefix baseline pooling methods with "baseline-"
     method: feature_presence
     feature_whitelist: "../data/meta/frequent_clusters_5000.txt"
     recoding_join_cols: [gene, product]
-    recode_file: ?"{remote}/bakta_mmseqs_2026-03-25/cluster_recode_aa.csv"
+    recode_file: ?f"{remote}/bakta_mmseqs_2026-03-25/cluster_recode_aa.csv"
     # TODO: check if recoding the features works
   # baseline-feature_presence_hamr:
   #   source: "hamr"
