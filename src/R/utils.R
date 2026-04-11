@@ -213,3 +213,64 @@ levels2tb <- function(
     summarise(name = unique_fn(name))
   with(tb, setNames(name, value))
 }
+
+read_goa <- function(file) {
+  read_tsv(
+    file,
+    col_names = c(
+      "DB", # Database from which annotated entity has been taken
+      "DB_Object_ID", # unique identifier in the database for the item being annotated
+      "DB_Object_Symbol", # A unique and valid symbol (gene name) that corresponds to the DB_Object_ID
+      # Official gene name is used if available
+      "Qualifier", #  used for flags that modify the interpretation of an annotation
+      # Possible options: NOT, colocalizes_with, contributes_to, NOT|contributes_to, NOT|colocalizes_with
+      "GO_ID",
+      "DB_Reference", # Reference cited to support an annotation, either citation
+      # or GO_REF identifier
+      "Evidence_Code", # one of the evidence codes supplied by the GO
+      "With_or_From", # Additional identifier(s) to support annotations using
+      # certain evidence codes (including IEA, IPI, IGI, IMP, IC and ISS evidences)
+      "Aspect", # GO ontology code: P (biological process), F (molecular function) or C (cellular component)
+      "DB_Object_Name", # full UniProt protein name will be present here, if available from UniProtKB
+      "DB_Object_Synonym", # Alternative gene symbol(s) or
+      # UniProtKB identifiers are provided pipe-separated, if available
+      "DB_Object_Type", # The kind of entity being annotated, which for these files is 'protein'.
+      "Taxon", # Identifier for the species being annotated or the gene product being defined.
+      # An interacting taxon ID may be included in this column using a pipe to separate it from the primary taxon ID.
+      "Date", # The date of last annotation update in the format 'YYYYMMDD'
+      "Assigned_By", # Attribution for the source of the annotation
+      "Annotation_Extension", # Contains cross references to other ontologies/databases
+      # that can be used to qualify or enhance the GO term applied in the annotation.
+      "Gene_Product_FormID" # The unique identifier of a specific spliceform of the DB_Object_ID.
+    ),
+    comment = "!"
+  )
+}
+
+download_uniprot_fasta <- function(ids, outfile) {
+  fastas <- lapply(ids, \(x) {
+    system2(
+      "curl",
+      stdout = TRUE,
+      args = glue("https://rest.uniprot.org/uniprotkb/{x}?format=fasta")
+    )
+  }) |>
+    unlist()
+  write_lines(fastas, outfile)
+}
+
+get_uniprot_confidence <- function(ids) {
+  get_one <- function(id) {
+    lst <- jsonlite::fromJSON(system2(
+      "curl",
+      stdout = TRUE,
+      args = glue("https://rest.uniprot.org/uniprotkb/G8B4P6?format=json")
+    ))
+    tibble(
+      acc = id,
+      annotation_score = lst$annotationScore,
+      protein_existence = lst$proteinExistence
+    )
+  }
+  lapply(ids, get_one) |> bind_rows()
+}
