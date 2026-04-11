@@ -50,7 +50,7 @@ rule make_seq_dataset:
     params:
         seqtype=lambda wc: wc.get("seqtype"),
     output:
-        f"{DATASETS}/sequence_{{seqtype}}",
+        directory(f"{DATASETS}/sequence_{{seqtype}}"),
     script:
         "main.py"
 
@@ -77,7 +77,7 @@ rule train_sae:
         sae=lambda wc: wc.get("sae"),
         embedding_method=lambda wc: wc.get("embedding_method"),
     output:
-        f"{OUTDIR}/saes_{{seqtype}}/{{embedding_method}}-{{sae}}",
+        f"{OUTDIR}/saes_{{seqtype}}/{{embedding_method}}-{{sae}}.pt",
 
 
 rule get_activations:
@@ -95,7 +95,7 @@ rule get_activations:
         sae=lambda wc: wc.get("sae"),
         embedding_method=lambda wc: wc.get("embedding_method"),
     output:
-        f"{DATASETS}/activations_{{seqtype}}/{{sae}}-{{embedding_method}}",
+        directory(f"{DATASETS}/activations_{{seqtype}}/{{sae}}-{{embedding_method}}"),
 
 
 # rule neighbor_metrics:

@@ -38,11 +38,8 @@ def read_fasta(file: str, header_style: Literal["uniprot"]) -> pl.DataFrame:
                 raise ValueError(
                     f"FASTA entry {record} does not have a UniProt-style header"
                 )
-        else:
-            raise ValueError("Header style not recognized")
-
         tmp["id"].append(id)
-        tmp["sequence"].append(record.seq)
+        tmp["sequence"].append(str(record.seq))
     df: pl.DataFrame = pl.DataFrame(tmp)
     if not df.select("id").is_duplicated().any():
         logger.warning(f"Fasta file {file} has duplicate ids")
@@ -70,10 +67,14 @@ def make_seq_dataset():
 
 
 def get_embeddings():
-    dset: Dataset = load_from_disk(smk.input[0])
+    df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
     seqtype = smk.params["seqtype"]
     spec: dict = CONFIG[seqtype][smk.params["embedding_method"]]
     method: EMBEDDING_METHODS = spec.get("method", smk.params["embedding_method"])
+    max_length = CONFIG["embedding_max_lengths"][method]
+    df = df.filter(
+        pl.col("sequence").str.len_chars() <= max_length
+    )  # TODO: [2026-04-11 Sat] Replace this
     kws: dict = spec.get("kws")
     out = Path(smk.output)
     cache_path = out.with_suffix("")
@@ -86,7 +87,7 @@ def get_embeddings():
     embedder = SeqEmbedder(
         workdir=cache_path, only_cache=True, with_tokens=False, **kws
     )
-    embedder(dset)
+    embedder(Dataset.from_polars(df))
     out.write_text("completed")
 
 
