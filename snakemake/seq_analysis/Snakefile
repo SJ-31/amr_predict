@@ -8,7 +8,7 @@ OUTDIR = Path(config["outdir"])
 DATASETS = OUTDIR / "datasets"
 
 
-EMBEDDING_RES = config["gpu40"]
+EMBEDDING_RES = config["resources"]["gpu40"]
 EMBEDDING_RES["time"] = config.get("slurm_time_limit", "25-0:0:0")
 
 embedding_methods = config["embedding_methods"]
@@ -16,9 +16,9 @@ embedding_methods = config["embedding_methods"]
 embedded_datasets, activation_datasets, sae_dirs = [], [], []
 for st in ("aa", "nuc"):
     if embedding_methods.get(st) and config["fastas"].get(st):
-        cur_methods = embedding_methods[st].names()
+        cur_methods = embedding_methods[st].keys()
         embedded_datasets.extend(
-            expand(f"{DATASETS}/embedded_{st}/{{method}}", method=cur_methods)
+            expand(f"{DATASETS}/embedded_{st}/{{method}}.completed", method=cur_methods)
         )
         for sae, spec in config["saes"].items():
             if spec["source"] != "custom":
@@ -34,14 +34,6 @@ for st in ("aa", "nuc"):
                 )
 
 
-def get_sae_spec(wc):
-    return {
-        "seqtype": wc.get("seqtype"),
-        "sae": wc.get("sae"),
-        "embedding_method": wc.get("embedding_method"),
-    }
-
-
 rule all:
     input:
         *[
@@ -49,11 +41,9 @@ rule all:
             for st in ("aa", "nuc")
             if (files := config["fastas"].get(st)) is not None and len(files) > 1
         ],
-        DATASETS / "sequence_aa",
-        DATASETS / "sequence_nuc",
-        **embedded_datasets,
-        **activation_datasets,
-        **sae_dirs,
+        *embedded_datasets,
+        # *activation_datasets, # [2026-04-11 Sat] TODO: set the SAEs up
+        # *sae_dirs,
 
 
 rule make_seq_dataset:
@@ -67,7 +57,7 @@ rule make_seq_dataset:
 
 rule get_embeddings:  # NOTE: this saves them as an embedding cache
     input:
-        rule.make_seq_dataset.output,
+        rules.make_seq_dataset.output,
     params:
         seqtype=lambda wc: wc.get("seqtype"),
         embedding_method=lambda wc: wc.get("embedding_method"),
@@ -79,33 +69,31 @@ rule get_embeddings:  # NOTE: this saves them as an embedding cache
         "main.py"
 
 
-rule get_activations_pretrained:
-    input:
-        rule.get_embeddings.output,
-    params:
-        unpack(get_sae_spec),
-    output:
-        f"{DATASETS}/activations_{{seqtype}}/{{sae}}-{{embedding_method}}-pretrained",
-
-
 rule train_sae:
     input:
-        rule.get_embeddings.output,
+        rules.get_embeddings.output,
     params:
-        unpack(get_sae_spec),
+        seqtype=lambda wc: wc.get("seqtype"),
+        sae=lambda wc: wc.get("sae"),
+        embedding_method=lambda wc: wc.get("embedding_method"),
     output:
         f"{OUTDIR}/saes_{{seqtype}}/{{embedding_method}}-{{sae}}",
 
 
 rule get_activations:
     input:
-        rule.make_seq_dataset.output,
-        sae=lambda wc: OUTDIR
-        / "saes"
-        / wc.get("seqtype")
-        / f"{wc.get('embedding_method')}-{wc.get('sae')}",
+        embeddings=rules.get_embeddings.output,
+        sae=branch(
+            lambda wc: wc.get("embedding_method").endswith("-pretrained"),
+            then=None,
+            otherwise=lambda wc: OUTDIR
+            / f"saes_{wc.get('seqtype')}"
+            / f"{wc.get('embedding_method')}-{wc.get('sae')}",
+        ),
     params:
-        unpack(get_sae_spec),
+        seqtype=lambda wc: wc.get("seqtype"),
+        sae=lambda wc: wc.get("sae"),
+        embedding_method=lambda wc: wc.get("embedding_method"),
     output:
         f"{DATASETS}/activations_{{seqtype}}/{{sae}}-{{embedding_method}}",
 
