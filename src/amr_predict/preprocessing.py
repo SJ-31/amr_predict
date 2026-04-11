@@ -377,11 +377,12 @@ class SeqEmbedder:
         huggingface: str,
         text_key: str = "sequence",
         model: Literal["esm3-open", "esmc_600m", "esmc_300m"] = "esmc_600m",
-        pooling: Literal["cls", "mean"] = "mean",
+        pooling: Literal["cls", "mean", "max", "sum"] = "mean",
         hidden_layer: int | None = None,
         batch_size=5,
         degenerate_handling: Literal["ignore", "random", "error"] = "random",
         save_dset: Path | None = None,
+        from_nucleotide: bool = True,
     ) -> Dataset | None:
         """Embed nucleotide sequences with an esm model after translating into protein
 
@@ -405,13 +406,15 @@ class SeqEmbedder:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         tkey = f"{text_key}_aa"
         df: pl.DataFrame = dset.to_polars()
-        if tkey not in df.columns:
+        if tkey not in df.columns and from_nucleotide:
             df = translate_df(
                 df, text_key, new_col=None, degenerate_handling=degenerate_handling
             )
             if save_dset is not None:
                 logger.info("Saving dataset with translated aa column")
                 Dataset.from_polars(df).save_to_disk(save_dset)
+        else:
+            tkey = text_key
 
         torch.set_default_dtype(torch.float32)
         os.environ["HF_HOME"] = huggingface
@@ -457,6 +460,14 @@ class SeqEmbedder:
                         embedding = target[hidden_layer, 0, 1:-1, :].mean(dim=0)
                     elif pooling == "mean":
                         embedding = target[0, 1:-1, :].mean(dim=0)
+                    elif pooling == "max" and get_hidden:
+                        embedding = target[hidden_layer, 0, 1:-1, :].max(dim=0).values
+                    elif pooling == "max":
+                        embedding = target[0, 1:-1, :].max(dim=0).values
+                    elif pooling == "sum" and get_hidden:
+                        embedding = target[hidden_layer, 0, 1:-1, :].sum(dim=0)
+                    elif pooling == "sum":
+                        embedding = target[0, 1:-1, :].sum(dim=0)
                     yield prot, embedding, tokens
                 return edict
 
@@ -507,6 +518,10 @@ class SeqEmbedder:
                                 yield prot, hidden[hidden_layer][0, 0, :].cpu(), tokens
                             elif pooling == "mean":
                                 yield prot, tokens.mean(dim=0).cpu(), tokens
+                            elif pooling == "max":
+                                yield prot, tokens.max(dim=0).values.cpu(), tokens
+                            elif pooling == "sum":
+                                yield prot, tokens.sum(dim=0).cpu(), tokens
 
             cache.save(
                 df[tkey],
