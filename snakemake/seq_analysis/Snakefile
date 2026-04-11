@@ -1,0 +1,100 @@
+from pathlib import Path
+
+
+configfile: "env.yaml"
+
+
+OUTDIR = Path(config["outdir"])
+DATASETS = OUTDIR / "datasets"
+
+
+EMBEDDING_METHODS = config["embedding_methods"]
+
+embedded_datasets, activation_datasets, sae_dirs = [], [], []
+for st in ("aa", "nuc"):
+    if EMBEDDING_METHODS[st]:
+        cur_methods = EMBEDDING_METHODS[st].names()
+        embedded_datasets.extend(
+            expand(f"{DATASETS}/embedded_{st}/{{method}}", method=cur_methods)
+        )
+        for sae, load_name in config["saes"].items():
+            if load_name is not None and isinstance(load_name, dict):
+                activation_datasets.append(
+                    f"{DATASETS}/activations_{st}/{load_name['embedding']}-{sae}-pretrained"
+                )
+            else:  # Custom SAEs to train up
+                sae_dirs.extend(
+                    expand(f"{OUTDIR}/saes_{st}/{{m}}-{sae}", m=cur_methods)
+                )
+                activation_datasets.extend(
+                    expand(f"{DATASETS}/activations_{st}/{{m}}-{sae}", m=cur_methods)
+                )
+
+
+def get_sae_spec(wc):
+    return {
+        "seqtype": wc.get("seqtype"),
+        "sae": wc.get("sae"),
+        "embedding_method": wc.get("embedding_method"),
+    }
+
+
+rule all:
+    input:
+        DATASETS / "sequence_aa",
+        DATASETS / "sequence_nuc",
+        **embedded_datasets,
+        **activation_datasets,
+        **sae_dirs,
+
+
+rule make_seq_dataset:
+    params:
+        fastas=lambda wc: config["fastas"][wc.get("seqtype")],
+    output:
+        f"{DATASETS}/sequence_{{seqtype}}",
+
+
+rule get_embeddings:
+    input:
+        rule.make_seq_dataset.output,
+    params:
+        seqtype=lambda wc: wc.get("seqtype"),
+        embedding_method=lambda wc: wc.get("embedding_method"),
+    output:
+        f"{DATASETS}/embedded_{{seqtype}}/{{embedding_method}}",
+
+
+rule get_activations_pretrained:
+    input:
+        rule.get_embeddings.output,
+    params:
+        unpack(get_sae_spec),
+    output:
+        f"{DATASETS}/activations_{{seqtype}}/{{sae}}-{{embedding_method}}-pretrained",
+
+
+rule train_sae:
+    input:
+        rule.get_embeddings.output,
+    params:
+        unpack(get_sae_spec),
+    output:
+        f"{OUTDIR}/saes_{{seqtype}}/{{embedding_method}}-{{sae}}",
+
+
+rule get_activations:
+    input:
+        rule.make_seq_dataset.output,
+        sae=lambda wc: OUTDIR
+        / "saes"
+        / wc.get("seqtype")
+        / f"{wc.get('embedding_method')}-{wc.get('sae')}",
+    params:
+        unpack(get_sae_spec),
+    output:
+        f"{DATASETS}/activations_{{seqtype}}/{{sae}}-{{embedding_method}}",
+
+
+# rule neighbor_metrics:
+# rule sae_metrics:
