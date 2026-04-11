@@ -8,19 +8,22 @@ OUTDIR = Path(config["outdir"])
 DATASETS = OUTDIR / "datasets"
 
 
-EMBEDDING_METHODS = config["embedding_methods"]
+EMBEDDING_RES = config["gpu40"]
+EMBEDDING_RES["time"] = config.get("slurm_time_limit", "25-0:0:0")
+
+embedding_methods = config["embedding_methods"]
 
 embedded_datasets, activation_datasets, sae_dirs = [], [], []
 for st in ("aa", "nuc"):
-    if EMBEDDING_METHODS[st]:
-        cur_methods = EMBEDDING_METHODS[st].names()
+    if embedding_methods.get(st) and config["fastas"].get(st):
+        cur_methods = embedding_methods[st].names()
         embedded_datasets.extend(
             expand(f"{DATASETS}/embedded_{st}/{{method}}", method=cur_methods)
         )
-        for sae, load_name in config["saes"].items():
-            if load_name is not None and isinstance(load_name, dict):
+        for sae, spec in config["saes"].items():
+            if spec["source"] != "custom":
                 activation_datasets.append(
-                    f"{DATASETS}/activations_{st}/{load_name['embedding']}-{sae}-pretrained"
+                    f"{DATASETS}/activations_{st}/{spec['embedding']}-{sae}-pretrained"
                 )
             else:  # Custom SAEs to train up
                 sae_dirs.extend(
@@ -41,6 +44,11 @@ def get_sae_spec(wc):
 
 rule all:
     input:
+        *[
+            DATASETS / f"sequence_{st}"
+            for st in ("aa", "nuc")
+            if (files := config["fastas"].get(st)) is not None and len(files) > 1
+        ],
         DATASETS / "sequence_aa",
         DATASETS / "sequence_nuc",
         **embedded_datasets,
@@ -50,19 +58,25 @@ rule all:
 
 rule make_seq_dataset:
     params:
-        fastas=lambda wc: config["fastas"][wc.get("seqtype")],
+        seqtype=lambda wc: wc.get("seqtype"),
     output:
         f"{DATASETS}/sequence_{{seqtype}}",
+    script:
+        "main.py"
 
 
-rule get_embeddings:
+rule get_embeddings:  # NOTE: this saves them as an embedding cache
     input:
         rule.make_seq_dataset.output,
     params:
         seqtype=lambda wc: wc.get("seqtype"),
         embedding_method=lambda wc: wc.get("embedding_method"),
+    resources:
+        **EMBEDDING_RES,
     output:
-        f"{DATASETS}/embedded_{{seqtype}}/{{embedding_method}}",
+        f"{DATASETS}/embedded_{{seqtype}}/{{embedding_method}}.completed",
+    script:
+        "main.py"
 
 
 rule get_activations_pretrained:
