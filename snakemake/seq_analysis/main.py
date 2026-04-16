@@ -5,6 +5,7 @@ from typing import Literal
 
 import polars as pl
 from amr_predict.preprocessing import EMBEDDING_METHODS, SeqEmbedder
+from amr_predict.utils import EmbeddingCache
 from beartype import beartype
 from Bio import SeqIO
 from datasets import load_from_disk
@@ -47,6 +48,62 @@ def read_fasta(file: str, header_style: Literal["uniprot"]) -> pl.DataFrame:
     return df
 
 
+def account_for_max_length(
+    dset: pl.DataFrame,
+    max_len: int,
+    seq_col: str = "sequence",
+    embedding_col: str = "x",
+    id_col: str = "id",
+    cache: EmbeddingCache | None = None,
+    agg: Literal["max", "mean", "sum"] = "mean",
+) -> pl.DataFrame:
+    """
+    Split sequences in `dset` into subsequences of length `max_len` so that
+    they can be processed by the GLM
+
+    Parameters
+    ----------
+    cache : EmbeddingCache | None
+        When provided, aggregate split subsequences back into their original sequence by
+        the specified method in `agg`
+    """
+    subseq_id_col = f"{id_col}_subseq"
+
+    expanded: pl.DataFrame = (
+        dset.with_columns(pl.col(seq_col).str.len_chars().alias("length"))
+        .with_columns(
+            pl.int_ranges(end="length", step=max_len).alias("slice_start"),
+        )
+        .with_columns(
+            pl.int_ranges(end=pl.col("slice_start").list.len()).alias(subseq_id_col),
+        )
+        .explode("slice_start", subseq_id_col)
+        .with_columns(
+            pl.concat_str(id_col, "id_subseq", separator=".").alias(subseq_id_col),
+            pl.col(seq_col).str.slice("slice_start", length=max_len).alias(seq_col),
+        )
+    )
+    if cache is None:
+        return expanded.select(subseq_id_col, seq_col)
+    retrieved: pl.DataFrame = cache.retrieve(expanded[seq_col])
+    expanded = (
+        expanded.join(
+            retrieved, left_on=seq_col, right_on="key", how="inner", validate="m:1"
+        )
+        .group_by(id_col)
+        .agg(
+            pl.when(agg == "max")
+            .then(pl.col("seq").max())
+            .when(agg == "mean")
+            .then(pl.col("seq").mean())
+            .otherwise(pl.col("seq").sum())
+        )
+        .rename({"seq": embedding_col})
+        .select(id_col, embedding_col)
+    )
+    return expanded
+
+
 # * Rules
 
 
@@ -69,12 +126,10 @@ def make_seq_dataset():
 def get_embeddings():
     df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
     seqtype = smk.params["seqtype"]
-    spec: dict = CONFIG[seqtype][smk.params["embedding_method"]]
+    spec: dict = CONFIG["embedding_methods"][seqtype][smk.params["embedding_method"]]
     method: EMBEDDING_METHODS = spec.get("method", smk.params["embedding_method"])
     max_length = CONFIG["embedding_max_lengths"][method]
-    df = df.filter(
-        pl.col("sequence").str.len_chars() <= max_length
-    )  # TODO: [2026-04-11 Sat] Replace this
+    df = account_for_max_length(df, max_len=max_length, seq_col="sequence", id_col="id")
     kws: dict = spec.get("kws")
     out = Path(smk.output)
     cache_path = out.with_suffix("")
