@@ -8,6 +8,7 @@ import lightning as L
 import numpy as np
 import plotnine as gg
 import polars as pl
+import polars.selectors as cs
 import sklearn.model_selection as ms
 import torch
 import torch.nn as nn
@@ -20,6 +21,7 @@ from amr_predict.metrics import (
 )
 from amr_predict.models import Baseline
 from amr_predict.utils import TASK_TYPES, Preprocessor, load_as
+from attrs import Factory, define, field
 from datasets import Dataset, DatasetDict
 from loguru import logger
 from matplotlib.axes import Axes
@@ -335,16 +337,38 @@ def make_control_task(
 
 
 # * SAE metrics
+
+
+@define
+class SaeMetrics:
+    sensitivity: Tensor
+    specificity: Tensor
+    precision: Tensor
+    negative_predictive_value: Tensor
+    accuracy: Tensor
+    activation_prop: Tensor
+
+
+@define
 class EvalSAE:
-    def __init__(self, activations: Tensor, labels: Sequence | None = None) -> None:
-        # self.acts: Tensor = activations
-        self.acts: pl.DataFrame = pl.DataFrame(
-            activations, schema=[str(i) for i in range(activations.shape[1])]
-        )
-        self.labels: Sequence | None = labels
-        self.acts_grouped: pl.DataFrame | None = None
-        self.U: umap.UMAP | None = None
-        self.categories: dict = {}
+    acts: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
+    threshold: float
+    # Activations of shape n_samples x d_sae
+    U: umap.UMAP = field(init=False)
+    acts_grouped: pl.DataFrame = field(init=False)
+    categories: dict = field(factory=dict, init=False)
+    lidx: list = field(
+        init=False,
+        default=Factory(
+            lambda self: [f"l{i}" for i in range(self.acts.shape[1])], takes_self=True
+        ),
+    )
+    acts_dtype: torch.dtype = field(
+        init=False, default=Factory(lambda self: self.acts.dtype, takes_self=True)
+    )
+    n: int = field(
+        init=False, default=Factory(lambda self: self.acts.shape[0], takes_self=True)
+    )
 
     def drop_latents(
         self,
@@ -412,8 +436,6 @@ class EvalSAE:
 
         Parameters
         ----------
-        activations : Tensor
-            Tensor of shape n_samples x d_sae containing SAE activations
         obs : DataFrame
             DataFrame aligned to activations, containing annotations about samples
         label_cols : Sequence
@@ -520,7 +542,7 @@ class EvalSAE:
         self,
         from_grouped: bool,
         cluster_obj: Callable = KMeans,
-        label_n_clusters: bool = False,
+        labels: Sequence | None = None,
         silhouette: bool = True,
         ch_index: bool = True,
         **kws,
@@ -551,8 +573,8 @@ class EvalSAE:
             acts = self.acts.to_numpy().transpose()
             lnames = self.acts.columns
         # `acts` has shape feature_size x n_samples
-        if label_n_clusters and self.labels is not None:
-            kws["n_clusters"] = len(set(self.labels))
+        if labels:
+            kws["n_clusters"] = len(set(labels))
         clst = cluster_obj(**kws)
         assignments = clst.fit_predict(acts)
         n_samples = acts.shape[0]
@@ -566,26 +588,123 @@ class EvalSAE:
 
     def group_by_labels(
         self,
-        labels: Sequence | None = None,
+        labels: Sequence,
         agg: Literal["mean", "max", "sum"] = "mean",
     ) -> None:
-        labels = self.labels if labels is None else labels
         if agg == "max":
             self.acts_grouped = max_by_label(self.acts, labels).with_columns(
                 pl.Series(self.acts.columns).alias("latent_idx")
             )
             return
         ones, _, unique_labels = encode_labels(labels)
-        grouped = np.matmul(self.acts.transpose(), ones)
+        ones = torch.tensor(ones).to(self.acts_dtype)
+        grouped = torch.matmul(self.acts.transpose(0, 1), ones)
         if agg == "mean":
-            grouped = grouped / ones.sum(axis=0)
+            grouped = grouped / ones.sum(dim=0)
         self.acts_grouped = pl.DataFrame(
             grouped, schema=list(unique_labels)
-        ).with_columns(pl.Series(self.acts.columns).alias("latent_idx"))
+        ).with_columns(pl.Series(self.lidx).alias("latent_idx"))
 
-    def score_latents(
-        self, labels: Sequence, active_threshold: float = 0.0
-    ) -> pl.DataFrame:
+    def score_latents(self, labels: pl.DataFrame | Sequence, **kws):
+        if isinstance(labels, pl.DataFrame):
+            return self._score_with_multiple(labels=labels, **kws)
+        return self._score_mutually_exclusive(labels)
+
+    def _compute_multi_metrics(
+        self,
+        anno_occurence: Tensor,
+        latent_type: Literal["firing", "dead"],
+    ) -> dict:
+        """
+        Calculate standard classification metrics for each latent's activation on the
+        a series of concepts.
+
+        Parameters
+        ----------
+        anno_occurence : Tensor
+            Binary matrix of shape n_concepts x n_samples, where the i,j entry is
+            1 if sammple j has concept i
+        """
+        result = {}
+        if latent_type == "firing":
+            preds = self.acts >= self.threshold
+        else:
+            preds = self.acts < self.threshold
+            anno_occurence = torch.where(anno_occurence == 1, 0, 1).to(self.acts_dtype)
+        preds = preds.to(self.acts_dtype)
+        correct_preds = torch.matmul(anno_occurence, preds)  # G x dim_size
+        # When latent_type == "firing", correct_preds is the sum of true positives
+        # otherwise it is the sum of true negatives
+        pred_sum = preds.sum(dim=0).reshape((1, -1))
+        truth = anno_occurence.sum(dim=1).reshape((-1, 1))
+        # `truth` is true positives when "firing", else true negatives
+        if latent_type == "firing":
+            result["sensitivity"] = correct_preds / truth
+            result["precision"] = correct_preds / pred_sum
+            result["true_positives"] = correct_preds
+        else:
+            result["specificity"] = correct_preds / truth
+            result["negative_predictive_value"] = correct_preds / pred_sum
+            result["true_negatives"] = correct_preds / truth
+        return result
+
+    def _score_with_multiple(
+        self,
+        labels: pl.DataFrame,
+        label_col: str,
+        sample_col: str,
+        label_sep: str = ";",
+    ) -> SaeMetrics:
+        """Score SAE latents for samples annotated with multiple labels
+        i.e. labels that aren't mutually exclusive
+
+        Parameters
+        ----------
+        labels : pl.DataFrame
+            DataFrame with samples as rows
+        label_col : str
+            String column in `labels` containing 0 or more labels for the sample,
+            delimited by `label_sep`
+        """
+        occurrences: pl.LazyFrame = (
+            labels.with_columns(pl.col(label_col).str.split(label_sep))
+            .explode(label_col)
+            .with_columns(pl.lit(1).alias("val"))
+            .pivot(
+                label_col,
+                index=sample_col,
+                values="val",
+                aggregate_function="first",
+            )
+            .fill_null(0)
+        ).lazy()
+        occur_vals: Tensor = (
+            occurrences.collect()
+            .drop(sample_col)
+            .transpose()
+            .to_torch()
+            .to(self.acts_dtype)
+        )
+        multiplied: pl.LazyFrame = (
+            pl.DataFrame(torch.matmul(occur_vals, self.acts))
+            .lazy()
+            .with_columns(annotation=occurrences.drop(sample_col).columns)
+        )
+        tmp_results: dict = {}
+        tmp_results["activation_prop"] = multiplied.with_columns(
+            cs.exclude("anno") / cs.exclude("anno").sum()
+        )
+        for lt in ("firing", "dead"):
+            tmp_results.update(
+                self._compute_multi_metrics(anno_occurence=occur_vals, latent_type=lt)
+            )
+        tmp_results["accuracy"] = (
+            tmp_results.pop("true_positives")
+            + tmp_results.pop("true_negatives") / self.n
+        )
+        return SaeMetrics(**tmp_results)
+
+    def _score_mutually_exclusive(self, labels: Sequence) -> pl.DataFrame:
         """Identify the best (most interpretable and monosemantic) latents in `activations`
 
         Parameters
@@ -598,9 +717,9 @@ class EvalSAE:
         Dataframe with the following columns:
 
         latent_idx: latent index
-        label_max: label that the latent has the highest average activation for
-        max_activation_avg: average of highest activation for `label_max`
-        max_activation: the highest activation observed for `label_max`
+        label_max: label that the latent has the highest *average* activation for
+        max_activation_avg: average of highest activation for `label_max` across samples
+        max_activation: the highest activation observed for `label_max` across samples
         max_activation_prop: the proportion of `label_max`'s activations
             across the samples, out of the total average activation of the latent on all samples.
             A perfectly monosemantic latent should only fire for one label so
@@ -624,13 +743,14 @@ class EvalSAE:
             nonzero activations, true negatives are the sum of zero activations for all other
             labels and so on.
         """
-        lidx = self.acts.columns
-        tmp: dict = {"latent_idx": lidx}
-        ones: np.ndarray
+        tmp: dict = {"latent_idx": self.lidx}
         ones, _, unique_labels = encode_labels(labels)
-        avg_acts: np.ndarray = np.matmul(self.acts.transpose(), ones) / ones.sum(axis=0)
-        maxes = avg_acts.max(axis=1)
-        idx = avg_acts.argmax(axis=1)
+        ones = torch.tensor(ones).to(self.acts_dtype)
+        avg_acts: Tensor = torch.matmul(self.acts.transpose(0, 1), ones) / ones.sum(
+            dim=0
+        )
+        maxes, _idx = avg_acts.max(dim=1)
+        idx = avg_acts.argmax(dim=1)
         tmp["max_activation_avg"] = maxes
         tmp["max_activation_prop"] = maxes / avg_acts.sum(axis=1)
         tmp["label_max"] = unique_labels[idx]
@@ -639,14 +759,18 @@ class EvalSAE:
         # ones  has shape n x k
         # expands to d_sae x n x 1
         # and       1 x n x k
-        tmp["max_activation"] = max_by_label(self.acts, labels).max_horizontal()
+        tmp["max_activation"], _ = max_by_label(self.acts, labels).max(dim=1)
 
         # Classifier scoring
-        active_counts = np.matmul((self.acts > active_threshold).transpose(), ones)
-        inactive_counts = np.matmul((self.acts <= active_threshold).transpose(), ones)
+        active_counts = torch.matmul(
+            (self.acts > self.threshold).to(self.acts_dtype).transpose(0, 1), ones
+        )
+        inactive_counts = torch.matmul(
+            (self.acts <= self.threshold).to(self.acts_dtype).transpose(0, 1), ones
+        )
 
-        tp = np.take_along_axis(active_counts, idx.reshape(-1, 1), axis=1).flatten()
-        fn = np.take_along_axis(inactive_counts, idx.reshape(-1, 1), axis=1).flatten()
+        tp = torch.take_along_dim(active_counts, idx.reshape(-1, 1), dim=1).flatten()
+        fn = torch.take_along_dim(inactive_counts, idx.reshape(-1, 1), dim=1).flatten()
         tn = inactive_counts.sum(axis=1) - fn
         fp = active_counts.sum(axis=1) - tp
         tmp["f1"] = (2 * tp) / (2 * tp + fp + fn)
