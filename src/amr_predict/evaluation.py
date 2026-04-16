@@ -380,9 +380,9 @@ class EvalSAE:
     ) -> dict[str, list | pl.Series]:
         """Helper function to flag dead and dense latents by their activation values"""
         result = {}
-        frac_active = ((self.acts > 0).sum() / self.acts.height).unpivot(
-            variable_name="latent_idx", value_name="frac_active"
-        )
+        frac_active = (
+            (self.acts >= active_threshold).sum() / self.acts.height
+        ).unpivot(variable_name="latent_idx", value_name="frac_active")
         result["dead"] = frac_active.filter(pl.col("frac_active") <= active_threshold)
         result["dense"] = frac_active.filter(pl.col("frac_active") > dense_threshold)
         rest = frac_active.filter(
@@ -530,11 +530,8 @@ class EvalSAE:
 
         Parameters
         ----------
-        labels : Sequence
-            Optional sequence of concept labels to aggregate latent activations by before
-            clustering
-        agg : str
-            Per-label aggregation method used when labels are supplied
+        from_grouped : bool
+            Whether to use previously grouped latents
         cluster_obj : Callable
             Sklearn-style clustering class. Needs `fit_predict` method that produces clusters
         label_n_clusters : bool
@@ -702,6 +699,6 @@ def max_by_label(
             .agg(pl.all().max())
             .sort("label")
             .drop("label")
-            .transpose(column_names=unique_labels)
+            .transpose()
             .rename(lambda x: x.removeprefix("column_"))
         )
