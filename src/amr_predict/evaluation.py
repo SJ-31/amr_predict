@@ -2,10 +2,12 @@
 
 from collections.abc import Sequence
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any, Callable, Literal, TypeAlias
 
 import lightning as L
 import numpy as np
+import PAMI.extras.dbStats.TransactionalDatabase as pstats
 import plotnine as gg
 import polars as pl
 import polars.selectors as cs
@@ -347,7 +349,6 @@ class SaeMetrics:
     labels: pl.Series = field(
         converter=lambda val: val if isinstance(val, pl.Series) else pl.Series(val)
     )
-    mutually_exclusive: bool
     sensitivity: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
     fpr: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
     fnr: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
@@ -809,3 +810,43 @@ def max_by_label(
             .transpose()
             .rename(lambda x: x.removeprefix("column_"))
         )
+
+
+def pami_wrapper(
+    df: pl.DataFrame,
+    obj,
+    sample_col: str = "sample",
+    sep: str = ";",
+    tmp_file: str | None = None,
+    with_stats: bool = True,
+) -> tuple[pl.DataFrame, dict | None]:
+    write_to = tmp_file or NamedTemporaryFile("w").name
+    df.drop(sample_col).write_csv(write_to, include_header=False)
+    stats = None
+    if with_stats:
+        stats = {}
+        tdb = pstats.TransactionalDatabase(write_to, sep=sep)
+        tdb.run()
+        for attr in [
+            "getAverageTransactionLength",
+            "getDatabaseSize",
+            "getDensity",
+            "getFrequenciesInRange",
+            "getMaximumTransactionLength",
+            "getMinimumTransactionLength",
+            "getNumberOfItems",
+            "getSortedListOfItemFrequencies",
+            "getSparsity",
+            "getStandardDeviationTransactionLength",
+            "getTotalNumberOfItems",
+            "getTransanctionalLengthDistribution",
+            "getVarianceTransactionLength",
+        ]:
+            key = attr.replace("get", "")
+            stats[key] = getattr(tdb, attr)()
+    alg = obj(write_to, minSup=3, sep=";")
+    alg.mine()
+    return pl.from_pandas(alg.getPatternsAsDataFrame()).with_columns(
+        pl.col("Patterns").str.split(sep),
+        (pl.col("Support") / df.height).alias("Proportion"),
+    ), stats
