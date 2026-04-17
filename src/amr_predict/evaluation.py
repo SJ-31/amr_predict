@@ -387,9 +387,13 @@ class SaeMetrics:
                 cur = getattr(self, metric).numpy()
                 tmp[metric] = [cur[topk_idx[:, i], i] for i in range(len(self.lidx))]
         tmp["label"] = [self.labels[topk_idx[:, i]] for i in range(len(self.lidx))]
+        tmp["frac_active"] = (self.activation_prop > 0).sum(
+            dim=0
+        ) / self.activation_prop.shape[0]
+        if n != 1:
+            return pl.DataFrame(tmp)
         return pl.DataFrame(tmp).with_columns(
-            pl.when(n == 1).then(cs.array().arr.first()),
-            pl.when(n == 1).then(cs.list().list.first()),
+            cs.array().arr.first(), cs.list().list.first()
         )
 
 
@@ -734,11 +738,12 @@ class EvalSAE:
             .to_torch()
             .to(self.acts_dtype)
         )
+        sum_acts = torch.matmul(occur_vals, self.acts)
         return self._compute_metrics(
             mutually_exclusive=mutually_exclusive,
             anno_occurence=occur_vals,
             labels=occurrences.drop(sample_col).collect_schema().names(),
-            activation_prop=torch.matmul(occur_vals, self.acts / self.acts.sum(dim=0)),
+            activation_prop=sum_acts / sum_acts.sum(dim=0),
         )
 
     def _score_mutually_exclusive(self, labels: Sequence) -> pl.DataFrame:
