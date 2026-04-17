@@ -677,7 +677,7 @@ class EvalSAE:
             1 if sammple j has concept i
         """
         pred_active = (self.acts >= self.threshold).to(self.acts_dtype)
-        pred_dead = (self.acts < self.threshold).to(self.acts_dtype)
+        pred_dead = torch.where(pred_active == 1, 0, 1).to(self.acts_dtype)
         anno_inverted = torch.where(anno_occurence == 1, 0, 1).to(self.acts_dtype)
 
         # All matrices below of shape G x dim_size

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import lightning as L
 import numpy as np
+import polars as pl
 import pytest
 import torch
 from amr_predict.evaluation import EvalSAE, Evaluator, make_control_task, max_by_label
@@ -168,11 +169,16 @@ def test_score_latents():
             [0.3, 0.3, 0.7, 0.1, 0.3],
         ]
     )
-    labels = ["A", "A", "A", "B", "B", "B"]
-    eval = EvalSAE(acts)
-    scores = eval.score_latents(labels, active_threshold=0.2)
-    assert scores["label_max"].to_list() == ["B", "A", "A", "B", "B"]
-    assert scores["sensitivity"].to_list() == [2 / 3, 2 / 3, 2 / 3, 1 / 3, 2 / 3]
+    labels = pl.DataFrame(
+        {"labels": ["A", "A", "A", "B", "B", "B"], "sample": range(6)}
+    )
+    eval = EvalSAE(acts, threshold=0.3)
+    scores = eval.score_latents(labels, label_col="labels")
+    report = scores.report(n=1)
+    assert report["label"].to_list() == ["B", "A", "A", "B", "B"]
+    assert report["sensitivity"].to_list() == pytest.approx(
+        [2 / 3, 2 / 3, 2 / 3, 1 / 3, 2 / 3]
+    )
 
 
 @pytest.mark.parametrize(
