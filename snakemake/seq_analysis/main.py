@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 
+import os
 from pathlib import Path
 from typing import Literal
 
 import polars as pl
+import torch
+import yaml
+from amr_predict.evaluation import pami_wrapper
 from amr_predict.preprocessing import EMBEDDING_METHODS, SeqEmbedder
 from amr_predict.utils import EmbeddingCache
 from beartype import beartype
@@ -20,10 +24,14 @@ except ImportError:
 CONFIG = smk.config
 RCONFIG = smk.config.get(smk.rule)
 RNG: int = smk.config.get("rng", 20021031)
-
+SCOL = smk.config.get("metadata", {}).get("sample_col")
+LABEL_SEP = smk.config.get("metadata", {}).get("label_sep")
+LCOL = smk.config.get("metadata", {}).get("label_col")
 logger.enable("")
 if len(smk.log) == 1:
     logger.add(smk.log[0])
+
+os.environ["HF_HOME"] = smk.config["huggingface"]
 
 # * Utility functions
 
@@ -96,7 +104,8 @@ def account_for_max_length(
             .then(pl.col("seq").max())
             .when(agg == "mean")
             .then(pl.col("seq").mean())
-            .otherwise(pl.col("seq").sum())
+            .otherwise(pl.col("seq").sum()),
+            pl.len().alias("n_subseq"),
         )
         .rename({"seq": embedding_col})
         .select(id_col, embedding_col)
@@ -123,6 +132,37 @@ def make_seq_dataset():
     dset.save_to_disk(dataset_path=smk.output[0])
 
 
+def label_cooccurrence():
+    from PAMI.frequentPattern.basic.FPGrowth import FPGrowth
+
+    cuda_apriori_available = False
+    cudaAprioriTID = None
+    try:
+        from PAMI.frequentPattern.cuda import cudaAprioriTID
+
+        cuda_apriori_available: bool = True
+    except (ModuleNotFoundError, ImportError):
+        pass
+    if torch.cuda.is_available() and cuda_apriori_available:
+        alg = cudaAprioriTID
+    else:
+        alg = FPGrowth
+    labels = pl.read_csv(smk.input[0])
+    frequent_patterns, pattern_stats = pami_wrapper(
+        labels,
+        alg,
+        label_col=LCOL,
+        sep=LABEL_SEP,
+        min_sup=smk.config.get("co_occurence_min_support", 0.3),
+        tmp_file=smk.params["tmp_file"],
+    )
+    frequent_patterns.with_columns(pl.col("Patterns").str.join(";")).write_csv(
+        smk.output[0]
+    )
+    with open(smk.output[1], "w") as f:
+        yaml.safe_dump(f, pattern_stats)
+
+
 def get_embeddings():
     df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
     seqtype = smk.params["seqtype"]
@@ -130,8 +170,9 @@ def get_embeddings():
     method: EMBEDDING_METHODS = spec.get("method", smk.params["embedding_method"])
     max_length = CONFIG["embedding_max_lengths"][method]
     df = account_for_max_length(df, max_len=max_length, seq_col="sequence", id_col="id")
-    kws: dict = spec.get("kws")
-    out = Path(smk.output)
+    kws: dict = spec.get("kws", {})
+    kws["method"] = method
+    out = Path(smk.output[0])
     cache_path = out.with_suffix("")
     if not cache_path.exists():
         cache_path.mkdir()

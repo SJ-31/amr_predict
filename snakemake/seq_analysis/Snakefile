@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 
 configfile: "env.yaml"
@@ -7,6 +8,7 @@ configfile: "env.yaml"
 OUTDIR = Path(config["outdir"])
 DATASETS = OUTDIR / "datasets"
 
+os.environ["HF_HOME"] = config["huggingface"]
 
 EMBEDDING_RES = config["resources"]["gpu40"]
 EMBEDDING_RES["time"] = config.get("slurm_time_limit", "25-0:0:0")
@@ -78,6 +80,18 @@ rule train_sae:
         embedding_method=lambda wc: wc.get("embedding_method"),
     output:
         f"{OUTDIR}/saes_{{seqtype}}/{{embedding_method}}-{{sae}}.pt",
+
+
+rule label_coccurrence:
+    input:
+        config["metadata"]["file"],
+    params:
+        tmp_file=f"{OUTDIR}/label_cooccur_tmp.csv",
+    output:
+        f"{OUTDIR}/label_cooccurrence.csv",
+        f"{OUTDIR}/cooccurence_stats.yaml",
+    script:
+        "main.py"
 
 
 rule get_activations:
