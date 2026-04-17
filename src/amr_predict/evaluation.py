@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Callable, Literal, TypeAlias
 
+import jaxtyping
 import lightning as L
 import numpy as np
 import PAMI.extras.dbStats.TransactionalDatabase as pstats
@@ -24,7 +25,7 @@ from amr_predict.metrics import (
 )
 from amr_predict.models import Baseline
 from amr_predict.utils import TASK_TYPES, Preprocessor, load_as, read_tabular
-from attrs import Factory, define, field, fields_dict
+from attrs import Factory, define, field, fields_dict, validators
 from beartype import beartype
 from datasets import Dataset, DatasetDict
 from loguru import logger
@@ -42,6 +43,9 @@ from torch.utils.data import DataLoader
 MODEL_CLASSES: TypeAlias = L.LightningModule | Baseline | nn.Module
 
 logger.disable("amr_predict")
+
+
+TENSOR2D_FLOAT = jaxtyping.Float[Tensor, "a b"]
 
 
 class Evaluator:
@@ -351,18 +355,16 @@ class SaeMetrics:
     labels: pl.Series = field(
         converter=lambda val: val if isinstance(val, pl.Series) else pl.Series(val)
     )
-    sensitivity: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
-    fpr: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
-    fnr: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
-    specificity: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
-    precision: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
+    sensitivity: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
+    fpr: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
+    fnr: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
+    specificity: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
+    precision: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
     negative_predictive_value: Tensor = field(
-        validator=lambda _, __, value: len(value.shape) == 2
+        validator=validators.instance_of(TENSOR2D_FLOAT)
     )
-    accuracy: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
-    activation_prop: Tensor = field(
-        validator=lambda _, __, value: len(value.shape) == 2
-    )
+    accuracy: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
+    activation_prop: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
 
     def report(self, k: int = 1, by: str = "activation_prop") -> pl.DataFrame:
         """Produce a dataframe which for each latent, reports the top n labels for each
@@ -759,7 +761,8 @@ def to_binary_form(
     df: pl.DataFrame, sample_col: str, label_col: str, sep: str = ";"
 ) -> pl.DataFrame:
     result = (
-        df.with_columns(pl.col(label_col).str.split(sep))
+        df.select(sample_col, label_col)
+        .with_columns(pl.col(label_col).str.split(sep))
         .explode(label_col)
         .with_columns(pl.lit(1).alias("val"))
         .pivot(
@@ -862,18 +865,30 @@ def pami_wrapper(
 
 @define
 class LabelCooccur:
-    labels: pl.DataFrame = field(
-        validator=lambda instance, _, val: pa.DataFrameSchema(
+    label_df: pl.DataFrame = field()
+
+    @label_df.validator
+    def _validate_ldf(self, _, value):
+        schema = pa.DataFrameSchema(
             {
-                instance.label_col: pa.Column(pl.String),
-                instance.sample_col: pa.Column(pl.String, unique=True),
+                self.label_col: pa.Column(pl.String),
+                self.sample_col: pa.Column(unique=True),
             }
-        ).validate(val)
-    )
+        )
+        schema.validate(value)
+        return (
+            value.with_columns(pl.col(self.label_col).str.split(self.sep))
+            .explode(self.label_col)
+            .unique(self.label_col)[self.label_col]
+            .is_in(set(self.sae_metrics.labels))
+            .all()
+        )
+
     sae_metrics: SaeMetrics
     label_col: str
     sample_col: str = "sample"
     sep: str = ";"
+    max_fpr: float = 0.2
 
     @beartype
     def higher_order(
@@ -882,7 +897,6 @@ class LabelCooccur:
         min_sup: int | float = 0.4,
         by: str = "activation_prop",
         tmp_file: str | None = None,
-        max_fpr: float = 0.2,
         p_overlap: float = 0.8,
         pami_previous: str | Path | None = None,
     ) -> tuple[pl.DataFrame, pl.DataFrame, dict | None]:
@@ -932,7 +946,7 @@ class LabelCooccur:
             else:
                 alg = FPGrowth
             frequent_patterns, pattern_stats = pami_wrapper(
-                self.labels,
+                self.label_df,
                 alg,
                 label_col=self.label_col,
                 sep=self.sep,
@@ -953,7 +967,7 @@ class LabelCooccur:
         top_latents = (
             self.sae_metrics.report(k=k, by=by)
             .with_columns(pl.col("label").list.sort())
-            .filter(pl.col("fpr").arr.min() <= max_fpr)
+            .filter(pl.col("fpr").arr.min() <= self.max_fpr)
             .lazy()
         )
         to_join = (
