@@ -174,7 +174,7 @@ def test_score_latents():
     )
     eval = EvalSAE(acts, threshold=0.3)
     scores = eval.score_latents(labels, label_col="labels")
-    report = scores.report(n=1)
+    report = scores.report(k=1)
     assert report["label"].to_list() == ["B", "A", "A", "B", "B"]
     assert report["sensitivity"].to_list() == pytest.approx(
         [2 / 3, 2 / 3, 2 / 3, 1 / 3, 2 / 3]

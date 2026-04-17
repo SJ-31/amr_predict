@@ -361,7 +361,7 @@ class SaeMetrics:
         validator=lambda _, __, value: len(value.shape) == 2
     )
 
-    def report(self, n: int = 1, by: str = "activation_prop") -> pl.DataFrame:
+    def report(self, k: int = 1, by: str = "activation_prop") -> pl.DataFrame:
         """Produce a dataframe which for each latent, reports the top n labels for each
         metric
 
@@ -371,6 +371,34 @@ class SaeMetrics:
             Number of labels to report
         by : str
             The metric by which to rank label scores for the latent
+
+        Returns
+        -------
+        Dataframe with the following columns:
+
+        latent_idx: latent index
+        activation_prop: the proportion of `label`'s activations
+            across the samples, out of the total average activation of the latent on all samples.
+            A perfectly monosemantic latent should only fire for one label so
+            the proportion should be one
+            Averaging should alleviate issues of label imbalance
+
+        Classification metrics, with respect to label, computed
+            with one-vs-rest.
+
+        Notes
+        -----
+        The top latents defined by `activation_prop`
+        are equivalent to those found with a contrastive approach
+        that involves subtracting average activation values for each latent
+
+        In each row, classification metrics for the given latent are defined with respect to
+        the current `label` against all other labels.
+            so true positives are the count of samples with `label` where the latent had
+            nonzero activations, true negatives are the sum of zero activations for all other
+            labels and so on.
+
+        If k > 1, the results for the top k labels are returned in lists
         """
         metric_fields = [
             f
@@ -379,7 +407,7 @@ class SaeMetrics:
         ]
         assert by in metric_fields, f"`by` must be one of {metric_fields} "
         data: Tensor = getattr(self, by)
-        topk_vals, topk_idx = data.topk(k=n, dim=0)
+        topk_vals, topk_idx = data.topk(k=k, dim=0)
         tmp = {"latent_idx": self.lidx, by: topk_vals.transpose(0, 1)}
         topk_idx = topk_idx.numpy()
         for metric in metric_fields:
@@ -390,7 +418,7 @@ class SaeMetrics:
         tmp["frac_active"] = (self.activation_prop > 0).sum(
             dim=0
         ) / self.activation_prop.shape[0]
-        if n != 1:
+        if k != 1:
             return pl.DataFrame(tmp)
         return pl.DataFrame(tmp).with_columns(
             cs.array().arr.first(), cs.list().list.first()
@@ -636,6 +664,7 @@ class EvalSAE:
         return pl.DataFrame(tmp)
 
     def group_by_labels(
+        # TODO: [2026-04-17 Fri] probably don't need this now
         self,
         labels: Sequence,
         agg: Literal["mean", "max", "sum"] = "mean",
@@ -653,11 +682,6 @@ class EvalSAE:
         self.acts_grouped = pl.DataFrame(
             grouped, schema=list(unique_labels)
         ).with_columns(pl.Series(self.lidx).alias("latent_idx"))
-
-    # def score_latents(self, labels: pl.DataFrame | Sequence, **kws):
-    #     if isinstance(labels, pl.DataFrame):
-    #         return self._score_with_multiple(labels=labels, **kws)
-    #     return self._score_mutually_exclusive(labels)
 
     def _compute_metrics(
         self,
@@ -745,89 +769,6 @@ class EvalSAE:
             labels=occurrences.drop(sample_col).collect_schema().names(),
             activation_prop=sum_acts / sum_acts.sum(dim=0),
         )
-
-    def _score_mutually_exclusive(self, labels: Sequence) -> pl.DataFrame:
-        """Identify the best (most interpretable and monosemantic) latents in `activations`
-
-        Parameters
-        ----------
-        labels : Sequence
-            Labels for each sample in `activations`
-
-        Returns
-        -------
-        Dataframe with the following columns:
-
-        latent_idx: latent index
-        label_max: label that the latent has the highest *average* activation for
-        max_activation_avg: average of highest activation for `label_max` across samples
-        max_activation: the highest activation observed for `label_max` across samples
-        max_activation_prop: the proportion of `label_max`'s activations
-            across the samples, out of the total average activation of the latent on all samples.
-            A perfectly monosemantic latent should only fire for one label so
-            the proportion should be one
-            Averaging should alleviate issues of label imbalance
-
-            The main metric for scoring latents, as it takes into account latents' activations
-            on other labels
-
-        Classification metrics, with respect to label_max, computed
-            with one-vs-rest.
-
-        Notes
-        -----
-        The resulting top latents are equivalent to those found with a contrastive approach
-        that involves subtracting average activation values for each latent
-
-        In each row, classification metrics for the given latent are defined with respect to
-        the current `label_max` and against all other labels.
-            so true positives are the count of samples with `label_max` where the latent had
-            nonzero activations, true negatives are the sum of zero activations for all other
-            labels and so on.
-        """
-        tmp: dict = {"latent_idx": self.lidx}
-        ones, _, unique_labels = encode_labels(labels)
-        ones = torch.tensor(ones).to(self.acts_dtype)
-        avg_acts: Tensor = torch.matmul(self.acts.transpose(0, 1), ones) / ones.sum(
-            dim=0
-        )
-        maxes, _idx = avg_acts.max(dim=1)
-        idx = avg_acts.argmax(dim=1)
-        tmp["max_activation_avg"] = maxes
-        tmp["max_activation_prop"] = maxes / avg_acts.sum(axis=1)
-        tmp["label_max"] = unique_labels[idx]
-
-        # t(activations) has shape d_sae x n
-        # ones  has shape n x k
-        # expands to d_sae x n x 1
-        # and       1 x n x k
-        tmp["max_activation"], _ = max_by_label(self.acts, labels).max(dim=1)
-
-        # Classifier scoring
-        active_counts = torch.matmul(
-            (self.acts > self.threshold).to(self.acts_dtype).transpose(0, 1), ones
-        )
-        inactive_counts = torch.matmul(
-            (self.acts <= self.threshold).to(self.acts_dtype).transpose(0, 1), ones
-        )
-
-        tp = torch.take_along_dim(active_counts, idx.reshape(-1, 1), dim=1).flatten()
-        fn = torch.take_along_dim(inactive_counts, idx.reshape(-1, 1), dim=1).flatten()
-        tn = inactive_counts.sum(axis=1) - fn
-        fp = active_counts.sum(axis=1) - tp
-        tmp["f1"] = (2 * tp) / (2 * tp + fp + fn)
-        tmp["precision"] = tp / (tp + fp)
-        tmp["fpr"] = fp / (fp + tn)
-        tmp["fnr"] = fn / (fn + tp)
-        tmp["sensitivity"] = tp / (tp + fn)
-        tmp["specificity"] = tn / (tn + fp)
-
-        schema = {
-            k: pl.Float64 for k in tmp.keys() if k not in {"label_max", "latent_idx"}
-        }
-        schema["latent_idx"] = pl.String
-        schema["label_max"] = pl.Categorical
-        return pl.DataFrame(tmp, schema=schema)
 
 
 def encode_labels(labels) -> tuple[np.ndarray, LabelBinarizer | OneHotEncoder, list]:
