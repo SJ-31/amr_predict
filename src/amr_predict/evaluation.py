@@ -8,6 +8,7 @@ from typing import Any, Callable, Literal, TypeAlias
 import lightning as L
 import numpy as np
 import PAMI.extras.dbStats.TransactionalDatabase as pstats
+import pandera.polars as pa
 import plotnine as gg
 import polars as pl
 import polars.selectors as cs
@@ -22,8 +23,9 @@ from amr_predict.metrics import (
     multitask_metrics2df,
 )
 from amr_predict.models import Baseline
-from amr_predict.utils import TASK_TYPES, Preprocessor, load_as
+from amr_predict.utils import TASK_TYPES, Preprocessor, load_as, read_tabular
 from attrs import Factory, define, field, fields_dict
+from beartype import beartype
 from datasets import Dataset, DatasetDict
 from loguru import logger
 from matplotlib.axes import Axes
@@ -402,9 +404,7 @@ class SaeMetrics:
         If k > 1, the results for the top k labels are returned in lists
         """
         metric_fields = [
-            f
-            for f in fields_dict(SaeMetrics).keys()
-            if f not in {"labels", "lidx", "mutually_exclusive"}
+            f for f in fields_dict(SaeMetrics).keys() if f not in {"labels", "lidx"}
         ]
         assert by in metric_fields, f"`by` must be one of {metric_fields} "
         data: Tensor = getattr(self, by)
@@ -689,7 +689,6 @@ class EvalSAE:
         anno_occurence: Tensor,
         activation_prop: Tensor,
         labels: pl.Series,
-        mutually_exclusive: bool,
     ) -> SaeMetrics:
         """
         Calculate standard classification metrics for each latent's activation on the
@@ -714,7 +713,6 @@ class EvalSAE:
         return SaeMetrics(
             lidx=self.lidx,
             labels=labels,
-            mutually_exclusive=mutually_exclusive,
             sensitivity=true_pos / (true_pos + false_neg),
             specificity=true_neg / (true_neg + false_pos),
             fnr=false_neg / (false_neg + true_pos),
@@ -730,7 +728,6 @@ class EvalSAE:
         labels: pl.DataFrame,
         label_col: str,
         sample_col: str = "sample",
-        mutually_exclusive: bool = False,
         label_sep: str = ";",
     ) -> SaeMetrics:
         """Score SAE latents for samples annotated with multiple labels
@@ -744,32 +741,40 @@ class EvalSAE:
             String column in `labels` containing 0 or more labels for the sample,
             delimited by `label_sep`
         """
-        occurrences: pl.LazyFrame = (
-            labels.with_columns(pl.col(label_col).str.split(label_sep))
-            .explode(label_col)
-            .with_columns(pl.lit(1).alias("val"))
-            .pivot(
-                label_col,
-                index=sample_col,
-                values="val",
-                aggregate_function="first",
-            )
-            .fill_null(0)
+        occurrences: pl.LazyFrame = to_binary_form(
+            labels, label_col=label_col, sample_col=sample_col, sep=label_sep
         ).lazy()
         occur_vals: Tensor = (
-            occurrences.collect()
-            .drop(sample_col)
-            .transpose()
-            .to_torch()
-            .to(self.acts_dtype)
+            occurrences.collect().transpose().to_torch().to(self.acts_dtype)
         )
         sum_acts = torch.matmul(occur_vals, self.acts)
         return self._compute_metrics(
-            mutually_exclusive=mutually_exclusive,
             anno_occurence=occur_vals,
-            labels=occurrences.drop(sample_col).collect_schema().names(),
+            labels=occurrences.collect_schema().names(),
             activation_prop=sum_acts / sum_acts.sum(dim=0),
         )
+
+
+def to_binary_form(
+    df: pl.DataFrame, sample_col: str, label_col: str, sep: str = ";"
+) -> pl.DataFrame:
+    result = (
+        df.with_columns(pl.col(label_col).str.split(sep))
+        .explode(label_col)
+        .with_columns(pl.lit(1).alias("val"))
+        .pivot(
+            label_col,
+            index=sample_col,
+            values="val",
+            aggregate_function="first",
+        )
+        .fill_null(0)
+        .drop(sample_col)
+    )
+    return result
+
+
+# * Utility functions
 
 
 def encode_labels(labels) -> tuple[np.ndarray, LabelBinarizer | OneHotEncoder, list]:
@@ -815,13 +820,14 @@ def max_by_label(
 def pami_wrapper(
     df: pl.DataFrame,
     obj,
-    sample_col: str = "sample",
+    label_col: str = "labels",
     sep: str = ";",
     tmp_file: str | None = None,
+    min_sup: int | float = 0.4,
     with_stats: bool = True,
 ) -> tuple[pl.DataFrame, dict | None]:
     write_to = tmp_file or NamedTemporaryFile("w").name
-    df.drop(sample_col).write_csv(write_to, include_header=False)
+    df.select(label_col).write_csv(write_to, include_header=False)
     stats = None
     if with_stats:
         stats = {}
@@ -844,9 +850,126 @@ def pami_wrapper(
         ]:
             key = attr.replace("get", "")
             stats[key] = getattr(tdb, attr)()
-    alg = obj(write_to, minSup=3, sep=";")
+    alg = obj(write_to, minSup=min_sup, sep=";")
     alg.mine()
+    if tmp_file is not None:
+        Path(write_to).unlink()
     return pl.from_pandas(alg.getPatternsAsDataFrame()).with_columns(
         pl.col("Patterns").str.split(sep),
-        (pl.col("Support") / df.height).alias("Proportion"),
+        (pl.col("Support").cast(pl.Int64) / df.height).alias("Proportion"),
     ), stats
+
+
+@define
+class LabelCooccur:
+    labels: pl.DataFrame = field(
+        validator=lambda instance, _, val: pa.DataFrameSchema(
+            {
+                instance.label_col: pa.Column(pl.String),
+                instance.sample_col: pa.Column(pl.String, unique=True),
+            }
+        ).validate(val)
+    )
+    sae_metrics: SaeMetrics
+    label_col: str
+    sample_col: str = "sample"
+    sep: str = ";"
+
+    @beartype
+    def higher_order(
+        self,
+        k: int = 4,
+        min_sup: int | float = 0.4,
+        by: str = "activation_prop",
+        tmp_file: str | None = None,
+        max_fpr: float = 0.2,
+        p_overlap: float = 0.8,
+        pami_previous: str | Path | None = None,
+    ) -> tuple[pl.DataFrame, pl.DataFrame, dict | None]:
+        """Use FPGrowth from the PAMI
+        library to identify co-occuring labels, and compare with top latent
+        activations
+
+        Parameters
+        ----------
+        min_sup : int | float
+            Minimum proportion or number of times a label set needs to occur in the data
+            to be included
+        k : int
+            Number of top labels to include
+        max_fpr : float
+            Filter out latents with a FPR higher than this value on its top labels
+        p_overlap : float
+            The minimum percentage of overlap (intersection) between a
+            latents' top labels and
+            the frequent label set for it to be considered. Calculated with respect to
+            the size of the label set
+        pami_previous : str | None
+            Path to a file containing the results from a previous run of PAMI. The "Patterns"
+            column in this file are assumed to have the same separator as self.sep
+
+        Returns
+        -------
+        Tuple of two dataframes and a dictionary of the FPGrowth statistics
+
+        The first df is the result of joining top latents with frequent candidates
+        """
+        if k <= 2:
+            raise ValueError("Use the `pairs` method for k == 2")
+        if pami_previous is None:
+            from PAMI.frequentPattern.basic.FPGrowth import FPGrowth
+
+            cuda_apriori_available = False
+            cudaAprioriTID = None
+            try:
+                from PAMI.frequentPattern.cuda import cudaAprioriTID
+
+                cuda_apriori_available: bool = True
+            except (ModuleNotFoundError, ImportError):
+                pass
+            if torch.cuda.is_available() and cuda_apriori_available:
+                alg = cudaAprioriTID
+            else:
+                alg = FPGrowth
+            frequent_patterns, pattern_stats = pami_wrapper(
+                self.labels,
+                alg,
+                label_col=self.label_col,
+                sep=self.sep,
+                min_sup=min_sup,
+                tmp_file=tmp_file,
+            )
+        else:
+            frequent_patterns = read_tabular(pami_previous)
+            schema = pa.DataFrameSchema(
+                {"Patterns": pa.Column(pl.String), "Support": pa.Column(pl.Int64)}
+            )
+            schema.validate(frequent_patterns)
+            frequent_patterns = frequent_patterns.with_columns(
+                pl.col("Patterns").str.split(self.sep)
+            )
+            pattern_stats = None
+
+        top_latents = (
+            self.sae_metrics.report(k=k, by=by)
+            .with_columns(pl.col("label").list.sort())
+            .filter(pl.col("fpr").arr.min() <= max_fpr)
+            .lazy()
+        )
+        to_join = (
+            frequent_patterns.lazy()
+            .with_columns(
+                pl.col("Patterns").list.sort(),
+                pl.col("Patterns").list.len().alias("Size"),
+            )
+            .filter(pl.col("Size") >= 2)
+        )
+        joined = top_latents.join_where(
+            to_join,
+            (
+                pl.col("label").list.set_intersection(pl.col("Patterns")).list.len()
+                / pl.col("Size")
+            )
+            >= p_overlap,
+        ).collect()
+        return joined, frequent_patterns, pattern_stats
