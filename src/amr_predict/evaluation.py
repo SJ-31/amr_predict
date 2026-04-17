@@ -987,3 +987,33 @@ class LabelCooccur:
             >= p_overlap,
         ).collect()
         return joined, frequent_patterns, pattern_stats
+
+    def pairs(self, by: str = "activation_prop") -> pl.DataFrame:
+        report = self.sae_metrics.report(k=2, by=by).filter(
+            pl.col("fpr").arr.min() <= self.max_fpr
+        )
+        binary = to_binary_form(
+            self.label_df,
+            sample_col=self.sample_col,
+            label_col=self.label_col,
+            sep=self.sep,
+        )
+        labels = pl.Series(binary.columns)
+        mat = torch.matmul(binary.to_torch().transpose(0, 1), binary.to_torch())
+        report = (
+            report.with_columns(
+                pl.col("label")
+                .map_elements(
+                    lambda x: mat[labels.index_of(x[0]), labels.index_of(x[1])],
+                    return_dtype=pl.Int64,
+                )
+                .alias("pair_coocurrence")
+            )
+            .with_columns(
+                (pl.col("pair_coocurrence") / binary.height).alias(
+                    "pair_cooccurrence_prop"
+                )
+            )
+            .sort("pair_cooccurrence_prop", descending=True)
+        )
+        return report
