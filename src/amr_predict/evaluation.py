@@ -21,7 +21,7 @@ from amr_predict.metrics import (
 )
 from amr_predict.models import Baseline
 from amr_predict.utils import TASK_TYPES, Preprocessor, load_as
-from attrs import Factory, define, field
+from attrs import Factory, define, field, fields_dict
 from datasets import Dataset, DatasetDict
 from loguru import logger
 from matplotlib.axes import Axes
@@ -341,12 +341,56 @@ def make_control_task(
 
 @define
 class SaeMetrics:
-    sensitivity: Tensor
-    specificity: Tensor
-    precision: Tensor
-    negative_predictive_value: Tensor
-    accuracy: Tensor
-    activation_prop: Tensor
+    lidx: pl.Series = field(
+        converter=lambda val: val if isinstance(val, pl.Series) else pl.Series(val)
+    )
+    labels: pl.Series = field(
+        converter=lambda val: val if isinstance(val, pl.Series) else pl.Series(val)
+    )
+    mutually_exclusive: bool
+    sensitivity: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
+    fpr: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
+    fnr: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
+    specificity: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
+    precision: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
+    negative_predictive_value: Tensor = field(
+        validator=lambda _, __, value: len(value.shape) == 2
+    )
+    accuracy: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
+    activation_prop: Tensor = field(
+        validator=lambda _, __, value: len(value.shape) == 2
+    )
+
+    def report(self, n: int = 1, by: str = "activation_prop") -> pl.DataFrame:
+        """Produce a dataframe which for each latent, reports the top n labels for each
+        metric
+
+        Parameters
+        ----------
+        n : int
+            Number of labels to report
+        by : str
+            The metric by which to rank label scores for the latent
+        """
+        metric_fields = [
+            f
+            for f in fields_dict(SaeMetrics).keys()
+            if f not in {"labels", "lidx", "mutually_exclusive"}
+        ]
+        assert by in metric_fields, f"`by` must be one of {metric_fields} "
+        data: Tensor = getattr(self, by)
+        topk_vals, topk_idx = data.topk(k=n, dim=0)
+        tmp = {"latent_idx": self.lidx, by: topk_vals.transpose(0, 1)}
+        topk_idx = topk_idx.numpy()
+        for metric in metric_fields:
+            if metric != by:
+                cur = getattr(self, metric).numpy()
+                tmp[metric] = [cur[topk_idx[:, i], i] for i in range(len(self.lidx))]
+        tmp["label"] = [self.labels[topk_idx[:, i]] for i in range(len(self.lidx))]
+        return pl.DataFrame(tmp).with_columns(
+            pl.when(n == 1).then(cs.array().arr.first()),
+            pl.when(n == 1).then(cs.list().list.first()),
+        )
 
 
 @define
