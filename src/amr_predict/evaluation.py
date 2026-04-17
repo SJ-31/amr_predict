@@ -401,10 +401,11 @@ class EvalSAE:
     U: umap.UMAP = field(init=False)
     acts_grouped: pl.DataFrame = field(init=False)
     categories: dict = field(factory=dict, init=False)
-    lidx: list = field(
+    lidx: pl.Series = field(
         init=False,
         default=Factory(
-            lambda self: [f"l{i}" for i in range(self.acts.shape[1])], takes_self=True
+            lambda self: pl.Series([f"l{i}" for i in range(self.acts.shape[1])]),
+            takes_self=True,
         ),
     )
     acts_dtype: torch.dtype = field(
@@ -426,7 +427,7 @@ class EvalSAE:
         Optionally, drop dead samples as well i.e. zero rows
         """
         cats: dict = self.categories or self.categorize_latents(**kws)
-        dropped = self.acts
+        dropped = pl.DataFrame(self.acts, schema=self.lidx.to_list())
         if drop_dead:
             dropped = dropped.drop(cats["dead"]["latent_idx"].to_list())
         if drop_dense:
@@ -437,8 +438,8 @@ class EvalSAE:
             )
         dropped = dropped.select(dropped.columns)
         if not inplace:
-            return dropped
-        self.acts = dropped
+            return dropped.to_torch().to(self.acts_dtype)
+        self.acts = dropped.to_torch().to(self.acts_dtype)
 
     def categorize_latents(
         self,
@@ -448,8 +449,9 @@ class EvalSAE:
     ) -> dict[str, list | pl.Series]:
         """Helper function to flag dead and dense latents by their activation values"""
         result = {}
-        frac_active = (
-            (self.acts >= active_threshold).sum() / self.acts.height
+        frac_active = pl.DataFrame(
+            (self.acts >= active_threshold).sum(dim=0).reshape((1, -1)) / self.n,
+            schema=self.lidx.to_list(),
         ).unpivot(variable_name="latent_idx", value_name="frac_active")
         result["dead"] = frac_active.filter(pl.col("frac_active") <= active_threshold)
         result["dense"] = frac_active.filter(pl.col("frac_active") > dense_threshold)
@@ -458,7 +460,6 @@ class EvalSAE:
             & (pl.col("frac_active") <= dense_threshold)
         )
         result["sparse"] = rest
-        result["sparse_df"] = self.acts.select(rest["latent_idx"].to_list())
         if save:
             self.categories.update(result)
         return result
@@ -649,16 +650,18 @@ class EvalSAE:
             grouped, schema=list(unique_labels)
         ).with_columns(pl.Series(self.lidx).alias("latent_idx"))
 
-    def score_latents(self, labels: pl.DataFrame | Sequence, **kws):
-        if isinstance(labels, pl.DataFrame):
-            return self._score_with_multiple(labels=labels, **kws)
-        return self._score_mutually_exclusive(labels)
+    # def score_latents(self, labels: pl.DataFrame | Sequence, **kws):
+    #     if isinstance(labels, pl.DataFrame):
+    #         return self._score_with_multiple(labels=labels, **kws)
+    #     return self._score_mutually_exclusive(labels)
 
-    def _compute_multi_metrics(
+    def _compute_metrics(
         self,
         anno_occurence: Tensor,
-        latent_type: Literal["firing", "dead"],
-    ) -> dict:
+        activation_prop: Tensor,
+        labels: pl.Series,
+        mutually_exclusive: bool,
+    ) -> SaeMetrics:
         """
         Calculate standard classification metrics for each latent's activation on the
         a series of concepts.
@@ -669,34 +672,36 @@ class EvalSAE:
             Binary matrix of shape n_concepts x n_samples, where the i,j entry is
             1 if sammple j has concept i
         """
-        result = {}
-        if latent_type == "firing":
-            preds = self.acts >= self.threshold
-        else:
-            preds = self.acts < self.threshold
-            anno_occurence = torch.where(anno_occurence == 1, 0, 1).to(self.acts_dtype)
-        preds = preds.to(self.acts_dtype)
-        correct_preds = torch.matmul(anno_occurence, preds)  # G x dim_size
-        # When latent_type == "firing", correct_preds is the sum of true positives
-        # otherwise it is the sum of true negatives
-        pred_sum = preds.sum(dim=0).reshape((1, -1))
-        truth = anno_occurence.sum(dim=1).reshape((-1, 1))
-        # `truth` is true positives when "firing", else true negatives
-        if latent_type == "firing":
-            result["sensitivity"] = correct_preds / truth
-            result["precision"] = correct_preds / pred_sum
-            result["true_positives"] = correct_preds
-        else:
-            result["specificity"] = correct_preds / truth
-            result["negative_predictive_value"] = correct_preds / pred_sum
-            result["true_negatives"] = correct_preds / truth
-        return result
+        pred_active = (self.acts >= self.threshold).to(self.acts_dtype)
+        pred_dead = (self.acts < self.threshold).to(self.acts_dtype)
+        anno_inverted = torch.where(anno_occurence == 1, 0, 1).to(self.acts_dtype)
 
-    def _score_with_multiple(
+        # All matrices below of shape G x dim_size
+        true_pos = torch.matmul(anno_occurence, pred_active)
+        false_pos = torch.matmul(anno_inverted, pred_active)
+        false_neg = torch.matmul(anno_occurence, pred_dead)
+        true_neg = torch.matmul(anno_inverted, pred_dead)
+
+        return SaeMetrics(
+            lidx=self.lidx,
+            labels=labels,
+            mutually_exclusive=mutually_exclusive,
+            sensitivity=true_pos / (true_pos + false_neg),
+            specificity=true_neg / (true_neg + false_pos),
+            fnr=false_neg / (false_neg + true_pos),
+            fpr=false_pos / (false_pos + true_neg),
+            precision=true_pos / (true_pos + false_pos),
+            accuracy=(true_pos + true_neg) / self.n,
+            negative_predictive_value=true_neg / (true_neg + false_neg),
+            activation_prop=activation_prop,
+        )
+
+    def score_latents(
         self,
         labels: pl.DataFrame,
         label_col: str,
-        sample_col: str,
+        sample_col: str = "sample",
+        mutually_exclusive: bool = False,
         label_sep: str = ";",
     ) -> SaeMetrics:
         """Score SAE latents for samples annotated with multiple labels
@@ -729,24 +734,12 @@ class EvalSAE:
             .to_torch()
             .to(self.acts_dtype)
         )
-        multiplied: pl.LazyFrame = (
-            pl.DataFrame(torch.matmul(occur_vals, self.acts))
-            .lazy()
-            .with_columns(annotation=occurrences.drop(sample_col).columns)
+        return self._compute_metrics(
+            mutually_exclusive=mutually_exclusive,
+            anno_occurence=occur_vals,
+            labels=occurrences.drop(sample_col).collect_schema().names(),
+            activation_prop=torch.matmul(occur_vals, self.acts / self.acts.sum(dim=0)),
         )
-        tmp_results: dict = {}
-        tmp_results["activation_prop"] = multiplied.with_columns(
-            cs.exclude("anno") / cs.exclude("anno").sum()
-        )
-        for lt in ("firing", "dead"):
-            tmp_results.update(
-                self._compute_multi_metrics(anno_occurence=occur_vals, latent_type=lt)
-            )
-        tmp_results["accuracy"] = (
-            tmp_results.pop("true_positives")
-            + tmp_results.pop("true_negatives") / self.n
-        )
-        return SaeMetrics(**tmp_results)
 
     def _score_mutually_exclusive(self, labels: Sequence) -> pl.DataFrame:
         """Identify the best (most interpretable and monosemantic) latents in `activations`
