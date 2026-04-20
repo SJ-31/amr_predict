@@ -296,7 +296,7 @@ class SeqEmbedder:
         if recode_file:
             recode: pl.DataFrame | None = read_tabular(recode_file)
             join_cols = [c for c in recode.columns if c != "new"]
-            schema_dict = {c: pa.Column() for c in join_cols}
+            schema_dict = {c: pa.Column(nullable=True) for c in join_cols}
             schema_dict.update({"new": pa.Column("string", unique=True)})
             schema: pa.DataFrameSchema = pa.DataFrameSchema(
                 schema_dict, unique=join_cols + ["new"]
@@ -376,7 +376,13 @@ class SeqEmbedder:
         dset: Dataset,
         huggingface: str,
         text_key: str = "sequence",
-        model: Literal["esm3-open", "esmc_600m", "esmc_300m"] = "esmc_600m",
+        model: Literal[
+            "esm3-open",
+            "esmc_600m",
+            "esmc_300m",
+            "esmc_600m_synthyra",
+            "esmc_300m_synthyra",
+        ] = "esmc_600m",
         pooling: Literal["cls", "mean", "max", "sum"] = "mean",
         hidden_layer: int | None = None,
         batch_size=5,
@@ -425,21 +431,26 @@ class SeqEmbedder:
             save_interval=self.save_interval,
             token_prop=self.token_prop,
         )
-
-        if model == "esm3-open":
-            from esm.models.esm3 import ESM3
-            from esm.sdk.api import ESM3InferenceClient, LogitsConfig
+        if not model.endswith("synthyra"):
+            from esm.sdk.api import ESMProtein, LogitsConfig
 
             lconf = LogitsConfig(
                 return_embeddings=not get_hidden, return_hidden_states=get_hidden
             )
-            client: ESM3InferenceClient = ESM3.from_pretrained(model, device=device)
+            if model == "esm3-open":
+                from esm.models.esm3 import ESM3
+
+                client = ESM3.from_pretrained(model, device=device)
+            else:
+                from esm.models.esmc import ESMC
+
+                client = ESMC.from_pretrained(model)
             to_get = "hidden_states" if hidden_layer is not None else "embeddings"
 
-            def esm3(proteins):
+            def esm_official(proteins):
                 edict = {}
                 for prot in proteins:
-                    encoded = client.encode(prot)
+                    encoded = client.encode(ESMProtein(sequence=prot))
                     logits = client.logits(encoded, lconf)
                     target: Tensor = getattr(logits, to_get)
                     # If `get_hidden`, target has shape
@@ -471,11 +482,11 @@ class SeqEmbedder:
                     yield prot, embedding, tokens
                 return edict
 
-            cache.save(df[tkey], fn=esm3, batch_size=batch_size)
-        elif model in {"esmc_600m", "esmc_300m"}:
+            cache.save(df[tkey], fn=esm_official, batch_size=batch_size)
+        elif model.endswith("synthyra"):
             key = {
-                "esmc_600m": "Synthyra/ESMplusplus_large",
-                "esmc_300m": "Synthyra/ESMplusplus_small",
+                "esmc_600m_synthyra": "Synthyra/ESMplusplus_large",
+                "esmc_300m_synthyra": "Synthyra/ESMplusplus_small",
             }[model]
             m: AutoModelForMaskedLM = AutoModelForMaskedLM.from_pretrained(
                 key, trust_remote_code=True
