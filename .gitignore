@@ -5,6 +5,8 @@
 /data/temp
 /data/processed
 /tests/data/*
+/tests/*out
+/tests/*log
 /tests/tmp*
 /tests/*pth
 snakemake/lightning_logs
