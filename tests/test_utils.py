@@ -217,12 +217,13 @@ def test_dataset(make_default_cache):
     loader = DataLoader(ds, batch_size=3)
     assert ds[:2]["x"].shape[0] == 2
     assert next(iter(loader))["x"].shape[0] == 3
-    print(cache.pl(as_array=True).collect())
+    print(cache.to_pl(as_array=True).collect())
     d2 = LinkedDataset(
         meta=df, cache=cache, text_key="key", x_key="x", token_level=True
     )
-    print(d2[:2])
+    print(d2[:])
     print(d2.shape)
+    assert len(d2) == d2[:]["x"].shape[0]
     assert ds.meta.shape[0] == ds["x"].shape[0]
     assert ds.meta.shape[0] == ds[:]["x"].shape[0]
 

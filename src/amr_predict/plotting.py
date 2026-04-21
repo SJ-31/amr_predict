@@ -59,6 +59,7 @@ def plot_adata(
             )
         if i == 0:
             plot = plot + gg.ggtitle(subtitle=subtitle)
+        plots.append(plot)
     if len(plots) == 1:
         return plots[0]
     return reduce(lambda x, y: x / y, plots)

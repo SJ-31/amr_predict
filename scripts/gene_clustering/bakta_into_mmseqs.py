@@ -98,9 +98,11 @@ def collect_clusters(suffix=""):
     )
     meta.write_csv(mm_out / f"metadata_with_clusters{suffix}.csv")
 
-    meta.unique(["gene", "product", "cluster"]).select(
-        ["gene", "product", "cluster"]
-    ).rename({"cluster": "new"}).write_csv(mm_out / f"cluster_recode{suffix}.csv")
+    meta.group_by(["gene", "product"]).agg(pl.col("cluster").first()).rename(
+        {"cluster": "new", "gene": "Gene", "product": "Product"}
+    ).filter(pl.col("new").is_not_null()).unique("new").write_csv(
+        mm_out / f"cluster_recode{suffix}.csv"
+    )
 
     to_report = list(REQUIRED) + ["taxid", "sample"]
 
@@ -133,3 +135,4 @@ def collect_clusters(suffix=""):
 
 # collect_clusters()  # [2026-03-27 Fri] completed
 collect_clusters(suffix="_aa")  # [2026-03-27 Fri] completed
+# [2026-04-21 Tue] rerun again to remove null clusters and ensure that groupings are unique

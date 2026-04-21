@@ -134,12 +134,55 @@ def nn_plot(
     return result
 
 
+def plotly_covar_dist(df: pl.DataFrame, title, subtitle, log_x):
+    # Create faceted scatter plot
+    fig = px.scatter(
+        df,
+        x="embedding_distance",
+        y="covariate_distance",
+        facet_row="name",
+        facet_col="dataset",
+        labels={
+            "embedding_distance": "Embedding distance",
+            "covariate_distance": "Covariate distance",
+        },
+    )
+    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+    # # Add annotations (one per facet)
+    # # Get unique combinations of name and dataset
+    facet_combos = df[["name", "dataset", "annotation"]].unique()
+
+    # TODO: [2026-01-16 Fri] this is broken, claude is dumb
+    for row in facet_combos.iter_rows(named=True):
+        #     # Find which subplot this annotation belongs to
+        name_val = row["name"]
+        dataset_val = row["dataset"]
+
+        fig.add_annotation(
+            text=row["annotation"],
+            x=0,
+            y=0,
+            xref="x",
+            yref="y",
+            showarrow=False,
+            xanchor="left",
+            opacity=0.7,
+            # You'll need to specify which subplot based on your facet grid
+            # This depends on the order of your facets
+        )
+    # Apply log scale if needed
+    if log_x:
+        fig.update_xaxes(type="log")
+    return fig
+
+
 def covar_dist_plot(
     metrics: pl.DataFrame,
     raw: pl.DataFrame,
     log_x: bool = True,
     batch_value: Literal["mean", "median"] = "mean",
-) -> gg.ggplot:
+    plotly: bool = False,
+) -> gg.ggplot | Figure:
     y_col = batch_value if "mean" in metrics.columns else "value"
     df = raw.join(
         metrics.filter(pl.col("metric") == "covariate_distance_correlation"),
@@ -156,6 +199,8 @@ def covar_dist_plot(
     dm: str = df["method"].first()
     title = "Relationship between embedding and covariate distance"
     subtitle = f"Spearman correlation, with {dm} distance"
+    if plotly:
+        return plotly_covar_dist(df, title, subtitle, log_x=log_x)
     corr_plot = (
         gg.ggplot(df, gg.aes(x="embedding_distance", y="covariate_distance"))
         + gg.geom_point()
@@ -286,7 +331,12 @@ def make_count_table(
 
 def write_seq_meta_tables(df: pl.LazyFrame, outdir: Path):
     cols = df.collect_schema().names()
-    to_split = {"hamr_drug_class": ";", "hamr_resistance_mechanism": ";"}
+    to_split = {
+        "hamr_drug_class": ";",
+        "hamr_resistance_mechanism": ";",
+        "combgc_InterPro_ID": ";",
+        "combgc_PFAM_domains": ";",
+    }
     ignore = {"bakta_locus_tag"}
     all_anno_cols = []
     count_outdir = outdir / "count_tables"

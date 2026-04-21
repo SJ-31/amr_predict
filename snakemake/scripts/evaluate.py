@@ -109,13 +109,19 @@ def modify_for_test(dataset: Dataset, x_key) -> Dataset:
 
 
 def make_eval_kws(
-    model_name, bmodel, module_cfg, preprocessor, in_features, dataset_name
+    model_name,
+    bmodel,
+    module_cfg: ModuleConfig,
+    preprocessor,
+    in_features,
+    dataset_name,
 ) -> tuple[dict, dict]:
     model_kws = (MODEL_ENV[model_name] or {}).get("kws", {})
     trainer_kws = (MODEL_ENV[model_name] or {}).get("trainer", DEFAULT_TRAIN)
     if smk.config["log_wandb"]:
         trainer_kws["logger"] = WandbLogger(
-            f"{model_name}-{dataset_name}", project="amr_predict"
+            f"{model_name}-{dataset_name}",
+            project=f"amr_predict-{module_cfg.task_type}",
         )
     loader_kws = (MODEL_ENV[model_name] or {}).get("dataloader", DEFAULT_LOADER)
     val_kws = RCONFIG.get("validation_kws", {})
