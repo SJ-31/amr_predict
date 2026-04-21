@@ -15,8 +15,10 @@ EMBEDDING_RES["time"] = config.get("slurm_time_limit", "25-0:0:0")
 
 embedding_methods = config["embedding_methods"]
 
-embedded_datasets, activation_datasets, sae_dirs = [], [], []
+levels = ("tokens", "seqs")
+embedded_datasets, activation_datasets, sae_weights, indices = [], [], [], []
 for st in ("aa", "nuc"):
+    indices.extend(expand(f"{OUTDIR}/training_indices/{{l}}_{st}.json", l=levels))
     if embedding_methods.get(st) and config["fastas"].get(st):
         cur_methods = embedding_methods[st].keys()
         embedded_datasets.extend(
@@ -28,18 +30,18 @@ for st in ("aa", "nuc"):
                     f"{DATASETS}/activations_{st}/{spec['embedding']}-{sae}-pretrained"
                 )
             else:  # Custom SAEs to train up
-                sae_dirs.extend(
+                sae_weights.extend(
                     expand(
-                        f"{OUTDIR}/saes_{st}_{l}/{{m}}-{sae}",
+                        f"{OUTDIR}/saes_{st}_{{l}}/{{m}}-{sae}.pt",
                         m=cur_methods,
-                        l=("tokens", "seqs"),
+                        l=levels,
                     )
                 )
                 activation_datasets.extend(
                     expand(
                         f"{DATASETS}/activations_{st}_{{l}}/{{m}}-{sae}",
                         m=cur_methods,
-                        l=("tokens", "seqs"),
+                        l=levels,
                     )
                 )
 
@@ -52,8 +54,11 @@ rule all:
             if (files := config["fastas"].get(st)) is not None and len(files) > 1
         ],
         *embedded_datasets,
-        # *activation_datasets, # [2026-04-11 Sat] TODO: set the SAEs up
-        # *sae_dirs,
+        *indices,
+        *sae_weights,
+        # *activation_datasets,
+        f"{OUTDIR}/label_cooccurrence.csv",
+        f"{OUTDIR}/cooccurence_stats.yaml",
 
 
 rule make_seq_dataset:
@@ -63,6 +68,9 @@ rule make_seq_dataset:
         directory(f"{DATASETS}/sequence_{{seqtype}}"),
     script:
         "main.py"
+
+
+# rule make_control_datasets
 
 
 rule get_embeddings:  # NOTE: this saves them as an embedding cache
@@ -78,6 +86,16 @@ rule get_embeddings:  # NOTE: this saves them as an embedding cache
     script:
         "main.py"
 
+
+rule write_training_indices:
+    input:
+        rules.make_seq_dataset.output,
+    params:
+        seqtype=lambda wc: wc.get("seqtype"),
+        level=lambda wc: wc.get("level"),
+        dataset_path=Path(DATASETS),
+    output:
+        f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
 
 
 rule train_sae:
@@ -104,6 +122,19 @@ rule label_coccurrence:
         f"{OUTDIR}/cooccurence_stats.yaml",
     script:
         "main.py"
+
+
+# rule evaluation:
+
+
+# rule label_clustering:
+#     input:
+#         config["metadata"]["file"],
+#     output:
+#         f"{OUTDIR}/label_clusters_final.csv",
+#         f"{OUTDIR}/label_cluster_stats.csv",
+#     script:
+#         "main.py"
 
 
 rule get_activations:
