@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from subprocess import run
 from tempfile import TemporaryDirectory
-from typing import Callable, Literal, TypeAlias
+from typing import Callable, Literal, TypeAlias, get_args
 
 import numpy as np
 import pandera.polars as pa
@@ -18,6 +18,7 @@ import polars as pl
 import polars.selectors as cs
 import skbio
 import torch
+from amr_predict.pooling import BASIC_POOLING_METHODS, pool_tensor
 from amr_predict.utils import (
     EmbeddingCache,
     add_intergenic,
@@ -40,6 +41,15 @@ from transformers.modeling_outputs import MaskedLMOutput
 SPLIT_METHODS: TypeAlias = Literal["bin", "bakta"]
 EMBEDDING_METHODS: TypeAlias = Literal[
     "seqLens", "Evo2", "kmer", "feature_presence", "esm"
+]
+ESM_MODELS: TypeAlias = Literal[
+    "esm2_t6_8m_UR50D",
+    "esm2_t33_650m_UR50D",
+    "esm3-open",
+    "esmc_600m",
+    "esmc_300m",
+    "esmc_600m_synthyra",
+    "esmc_300m_synthyra",
 ]
 
 disable_progress_bar()
@@ -376,19 +386,14 @@ class SeqEmbedder:
         dset: Dataset,
         huggingface: str,
         text_key: str = "sequence",
-        model: Literal[
-            "esm3-open",
-            "esmc_600m",
-            "esmc_300m",
-            "esmc_600m_synthyra",
-            "esmc_300m_synthyra",
-        ] = "esmc_600m",
-        pooling: Literal["cls", "mean", "max", "sum"] = "mean",
+        model: ESM_MODELS = "esmc_600m",
+        pooling: Literal["cls"] | BASIC_POOLING_METHODS = "mean",
         hidden_layer: int | None = None,
         batch_size=5,
         degenerate_handling: Literal["ignore", "random", "error"] = "random",
         save_dset: Path | None = None,
         from_nucleotide: bool = True,
+        **kws,
     ) -> Dataset | None:
         """Embed nucleotide sequences with an esm model after translating into protein
 
@@ -431,7 +436,22 @@ class SeqEmbedder:
             save_interval=self.save_interval,
             token_prop=self.token_prop,
         )
-        if not model.endswith("synthyra"):
+        if model.startswith("esm2"):
+            os.environ["HF_HOME"] = huggingface
+            from interplm.esm.embed import embed_single_sequence
+
+            def esm2_interplm(proteins):
+                layer = hidden_layer or 4
+                for prot in proteins:
+                    token_embeddings = embed_single_sequence(
+                        prot, model_name=model, layer=layer
+                    )
+                    tokens = token_embeddings if self.with_tokens else None
+                    pooled = pool_tensor(token_embeddings, pooling, **kws)
+                    yield prot, pooled, tokens
+
+            cache.save(df[tkey], fn=esm2_interplm, batch_size=batch_size)
+        elif not model.endswith("synthyra"):
             from esm.sdk.api import ESMProtein, LogitsConfig
 
             lconf = LogitsConfig(
@@ -448,7 +468,6 @@ class SeqEmbedder:
             to_get = "hidden_states" if hidden_layer is not None else "embeddings"
 
             def esm_official(proteins):
-                edict = {}
                 for prot in proteins:
                     encoded = client.encode(ESMProtein(sequence=prot))
                     logits = client.logits(encoded, lconf)
@@ -463,24 +482,17 @@ class SeqEmbedder:
                         tokens = target[0, 1:-1, :]
                     else:
                         tokens = None
-                    if pooling == "cls" and get_hidden:
+                    if pooling in get_args(BASIC_POOLING_METHODS):
+                        if get_hidden:
+                            to_pool = target[hidden_layer, 0, 1:-1, :]
+                        else:
+                            to_pool = target[0, 1:-1, :]
+                        embedding = pool_tensor(to_pool, pooling, **kws)
+                    elif pooling == "cls" and get_hidden:
                         embedding = target[hidden_layer, 0, 0, :]
-                    elif pooling == "cls":
+                    else:
                         embedding = target[0, 0, :]
-                    elif pooling == "mean" and get_hidden:
-                        embedding = target[hidden_layer, 0, 1:-1, :].mean(dim=0)
-                    elif pooling == "mean":
-                        embedding = target[0, 1:-1, :].mean(dim=0)
-                    elif pooling == "max" and get_hidden:
-                        embedding = target[hidden_layer, 0, 1:-1, :].max(dim=0).values
-                    elif pooling == "max":
-                        embedding = target[0, 1:-1, :].max(dim=0).values
-                    elif pooling == "sum" and get_hidden:
-                        embedding = target[hidden_layer, 0, 1:-1, :].sum(dim=0)
-                    elif pooling == "sum":
-                        embedding = target[0, 1:-1, :].sum(dim=0)
                     yield prot, embedding, tokens
-                return edict
 
             cache.save(df[tkey], fn=esm_official, batch_size=batch_size)
         elif model.endswith("synthyra"):
@@ -527,12 +539,12 @@ class SeqEmbedder:
                             )
                             if pooling == "cls":
                                 yield prot, hidden[hidden_layer][0, 0, :].cpu(), tokens
-                            elif pooling == "mean":
-                                yield prot, tokens.mean(dim=0).cpu(), tokens
-                            elif pooling == "max":
-                                yield prot, tokens.max(dim=0).values.cpu(), tokens
-                            elif pooling == "sum":
-                                yield prot, tokens.sum(dim=0).cpu(), tokens
+                            else:
+                                yield (
+                                    prot,
+                                    pool_tensor(tokens, pooling, **kws).cpu(),
+                                    tokens,
+                                )
 
             cache.save(
                 df[tkey],
@@ -655,7 +667,7 @@ class SeqEmbedder:
         text_key: str = "sequence",
         model_key: str = "omicseye/seqLens_4096_512_46M-Mp",
         batch_size: int = 64,
-        pooling: Literal["mean", "cls", "max", "concat"] = "mean",
+        pooling: Literal["cls", "concat"] | BASIC_POOLING_METHODS = "mean",
     ) -> Dataset | None:
         """Generate embeddings of `dataset` with seqLens
 
