@@ -221,7 +221,7 @@ preprocessing: # NOTE: must prefix baseline pooling methods with "baseline-"
     source: "bakta"
     method: feature_presence
     feature_whitelist: "../data/meta/frequent_clusters_5000.txt"
-    recoding_join_cols: [gene, product]
+    recoding_join_cols: [Gene, Product]
     recode_file: ?f"{remote}/bakta_mmseqs_2026-03-25/cluster_recode_aa.csv"
     # TODO: check if recoding the features works
   # baseline-feature_presence_hamr:
