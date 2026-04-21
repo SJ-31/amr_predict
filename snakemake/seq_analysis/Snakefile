@@ -29,10 +29,18 @@ for st in ("aa", "nuc"):
                 )
             else:  # Custom SAEs to train up
                 sae_dirs.extend(
-                    expand(f"{OUTDIR}/saes_{st}/{{m}}-{sae}", m=cur_methods)
+                    expand(
+                        f"{OUTDIR}/saes_{st}_{l}/{{m}}-{sae}",
+                        m=cur_methods,
+                        l=("tokens", "seqs"),
+                    )
                 )
                 activation_datasets.extend(
-                    expand(f"{DATASETS}/activations_{st}/{{m}}-{sae}", m=cur_methods)
+                    expand(
+                        f"{DATASETS}/activations_{st}_{{l}}/{{m}}-{sae}",
+                        m=cur_methods,
+                        l=("tokens", "seqs"),
+                    )
                 )
 
 
@@ -71,15 +79,19 @@ rule get_embeddings:  # NOTE: this saves them as an embedding cache
         "main.py"
 
 
+
 rule train_sae:
     input:
         rules.get_embeddings.output,
+        f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
     params:
         seqtype=lambda wc: wc.get("seqtype"),
         sae=lambda wc: wc.get("sae"),
         embedding_method=lambda wc: wc.get("embedding_method"),
+        level=lambda wc: wc.get("level"),
+        dataset_path=Path(DATASETS),
     output:
-        f"{OUTDIR}/saes_{{seqtype}}/{{embedding_method}}-{{sae}}.pt",
+        f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{sae}}.pt",
 
 
 rule label_coccurrence:
@@ -107,9 +119,13 @@ rule get_activations:
     params:
         seqtype=lambda wc: wc.get("seqtype"),
         sae=lambda wc: wc.get("sae"),
+        level=lambda wc: wc.get("level"),
         embedding_method=lambda wc: wc.get("embedding_method"),
+        dataset_path=Path(DATASETS),
     output:
-        directory(f"{DATASETS}/activations_{{seqtype}}/{{sae}}-{{embedding_method}}"),
+        directory(
+            f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{sae}}-{{embedding_method}}"
+        ),
 
 
 # rule neighbor_metrics:

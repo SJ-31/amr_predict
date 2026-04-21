@@ -113,6 +113,22 @@ def account_for_max_length(
     return expanded
 
 
+
+def load_embeddings(
+    cache_completion_file: str,
+    dataset_path: Path,
+    seqtype: str,
+    level: Literal["tokens", "seqs"],
+) -> LinkedDataset:
+    cache_path: Path = Path(cache_completion_file).with_suffix("")
+    cache = EmbeddingCache(dir=cache_path)
+    seqs: Path = dataset_path / f"sequence_{seqtype}"
+    seq_df: pl.DataFrame = load_from_disk(seqs).to_polars()
+    dset = cache.to_dataset(
+        df=seq_df, key_col="sequence", tokens=level == "tokens", new_col="x"
+    )
+    assert isinstance(dset, LinkedDataset)
+    return dset
 # * Rules
 
 
@@ -147,9 +163,9 @@ def label_cooccurrence():
         alg = cudaAprioriTID
     else:
         alg = FPGrowth
-    labels = pl.read_csv(smk.input[0])
+    label_df: pl.DataFrame = pl.read_csv(smk.input[0]).unique()
     frequent_patterns, pattern_stats = pami_wrapper(
-        labels,
+        label_df,
         alg,
         label_col=LCOL,
         sep=LABEL_SEP,
