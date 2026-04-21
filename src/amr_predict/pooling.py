@@ -4,6 +4,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal, TypeAlias, override
 
+import jaxtyping
 import lightning as L
 import polars as pl
 import torch
@@ -16,6 +17,7 @@ from amr_predict.utils import (
     load_as,
     read_tabular,
 )
+from attrs import define, field, validators
 from datasets import Array2D, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from loguru import logger
@@ -29,13 +31,55 @@ from torchmetrics.functional.pairwise import (
 
 logger.disable("amr_predict")
 
+BASIC_POOLING_METHODS: TypeAlias = Literal["max", "sum", "mean", "similarity"]
 STATIC_POOLING_METHODS: TypeAlias = Literal[
     "max", "sum", "mean", "similarity", "swe", "concat", "seq_subset", "random"
 ]
 LEARNING_POOLING_METHODS: TypeAlias = Literal["autoencoder", "swe"]
 
 
+def pool_tensor(x: Tensor, method: BASIC_POOLING_METHODS, **kws) -> Tensor:
+    """Functional interface to pooling methods
+
+    Parameters
+    ----------
+    x : Tensor
+        2d tensor e.g. of token-level representations that are to be pooled into
+    a 1d tensor
+    """
+    assert isinstance(x, jaxtyping.Float[Tensor, "a b"])
+    if method == "mean":
+        return x.mean(dim=0)
+    elif method == "sum":
+        return x.sum(dim=0)
+    elif method == "max":
+        return x.max(dim=0).values
+    elif method == "similarity":
+        return _pool_similarity(x, **kws)
+    raise NotImplementedError
+
+
+def _pool_similarity(
+    self,
+    x: Tensor,
+    metric: Literal["cosine", "dot_product", "euclidean"] = "cosine",
+    similarity_agg: Literal["mean", "sum", "max"] = "mean",
+) -> Tensor:
+    if metric == "cosine":
+        fn = pairwise_cosine_similarity
+    elif metric == "euclidean":
+        fn = lambda x: 1 / (1 + pairwise_euclidean_distance(x))
+        # Ranges from 0-1
+    elif metric == "dot_product":
+        fn = pairwise_linear_similarity
+    sim = pool_tensor(fn(x), similarity_agg).reshape((-1, 1))
+    weighted = x * sim
+    return weighted.sum(dim=0)
+
+
 class SeqPooler:
+    "Base class for dataset-level pooling"
+
     def __init__(
         self,
         obs_keep: Sequence | None = None,
@@ -426,10 +470,10 @@ class StaticPooler(SeqPooler):
         samples = self._encode_samples(dataset)
         embeddings: Tensor = self._get_embeddings(dataset)
         unique_samples = torch.unique(samples, sorted=True)
+        stacked = torch.stack([samples == s for s in unique_samples])
         if weight_fn is None:
-            mask = torch.stack([samples == s for s in unique_samples]).to(
-                torch.get_default_dtype()
-            )  # shape of n_samples x sequences
+            mask = stacked.to(torch.get_default_dtype())
+            # shape of n_samples x sequences
             logger.debug(
                 "sum of mask equal to number of samples {}",
                 mask.sum() == embeddings.shape[0],
