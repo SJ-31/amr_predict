@@ -108,10 +108,10 @@ def dummy_embed(texts):
 
 @pytest.fixture
 def make_default_cache(tmp_path, rng) -> Callable:
-    def fn(with_random: bool = False):
+    def fn(with_random: bool = False, mode="both"):
         path: Path = tmp_path / str(uuid4()) / ".cache"
         path.mkdir(parents=True)
-        cache: EmbeddingCache = EmbeddingCache(path, save_interval=1)
+        cache: EmbeddingCache = EmbeddingCache(path, save_interval=1, save_mode=mode)
         words = [
             "forest",
             "crane",
@@ -140,14 +140,20 @@ def make_default_cache(tmp_path, rng) -> Callable:
     return fn
 
 
+def test_cache1_only_tk(make_default_cache):
+    cache: EmbeddingCache
+    cache, words = make_default_cache(mode="tokens")
+    print(cache.to_pl().collect())
+
+
 def test_cache1(make_default_cache):
     cache: EmbeddingCache
     cache, words = make_default_cache()
     assert "bridge" in cache
     assert "foo" not in cache
     assert len(cache) == len(words)
-    assert cache.pl().collect().height == len(words)
-    print(cache.pl(as_array=True))
+    assert cache.to_pl().collect().height == len(words)
+    print(cache.to_pl(as_array=True))
     path = cache._dir
 
     assert (cache["forest"] == torch.tensor([5, 14, 17])).all()
@@ -194,7 +200,7 @@ def test_cache2(make_default_cache):
     # assert len(list(cache._dir.iterdir())) == 2
     prop = 0.3
     cache.rewrite(n_rows=3, token_prop=prop)
-    df = cache.pl().collect()
+    df = cache.to_pl().collect()
     null_count = df.filter(pl.col("token").is_not_null()).height
     print(null_count)
     print(df.height * prop)
@@ -205,7 +211,7 @@ def test_cache_combine(make_default_cache, tmp_path):
     cache, words = make_default_cache()
     cache2, words2 = make_default_cache(True)
     combined = EmbeddingCache.combine([cache, cache2], new_path=tmp_path)
-    df: pl.DataFrame = combined.pl().collect()
+    df: pl.DataFrame = combined.to_pl().collect()
     assert (set(words) | set(words2)) == set(df["key"])
 
 

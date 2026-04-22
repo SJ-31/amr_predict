@@ -953,7 +953,7 @@ class EmbeddingCache:
         dtype = torch2pl(torch.get_default_dtype())
         for batch in itertools.batched(set(to_embed), n=batch_size):
             try:
-                schema: dict = {"key": pl.String}
+                schema: dict = {"key": pl.String, "seq": pl.Null(), "token": pl.Null()}
                 gen = fn(batch)
                 key, seq, token = next(gen)
                 if len(seq.shape) != 1:
@@ -964,11 +964,7 @@ class EmbeddingCache:
                 if self._save_mode in ("seqs", "both"):
                     schema["seq"] = pl.Array(dtype, len(seq))
                 if self._save_mode in ("tokens", "both"):
-                    schema["token"] = (
-                        pl.List(pl.Array(dtype, token.shape[1]))
-                        if self._save_mode
-                        else pl.Null()
-                    )
+                    schema["token"] = pl.List(pl.Array(dtype, token.shape[1]))
                 tmp = {"key": [], "seq": [], "token": []}
                 gen = itertools.chain([(key, seq, token)], gen)
                 # REVIEW: you didn't wanna have to do this, but had trouble with
