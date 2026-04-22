@@ -1,64 +1,25 @@
 from pathlib import Path
+from env import SnakeEnv
 import os
 
 
 configfile: "env.yaml"
 
 
-OUTDIR = Path(config["outdir"])
-DATASETS = OUTDIR / "datasets"
+env = SnakeEnv.new(config)
 
-os.environ["HF_HOME"] = config["huggingface"]
+OUTDIR = env.outdir
+DATASETS = env.datasets
 
-EMBEDDING_RES = config["resources"]["gpu40"]
-EMBEDDING_RES["time"] = config.get("slurm_time_limit", "25-0:0:0")
+os.environ["HF_HOME"] = env.huggingface
 
-embedding_methods = config["embedding_methods"]
-
-levels = ("tokens", "seqs")
-embedded_datasets, activation_datasets, sae_weights, indices = [], [], [], []
-for st in ("aa", "nuc"):
-    indices.extend(expand(f"{OUTDIR}/training_indices/{{l}}_{st}.json", l=levels))
-    if embedding_methods.get(st) and config["fastas"].get(st):
-        cur_methods = embedding_methods[st].keys()
-        embedded_datasets.extend(
-            expand(f"{DATASETS}/embedded_{st}/{{method}}.completed", method=cur_methods)
-        )
-        for sae, spec in config["saes"].items():
-            if spec["source"] != "custom":
-                activation_datasets.append(
-                    f"{DATASETS}/activations_{st}/{spec['embedding']}-{sae}-pretrained"
-                )
-            else:  # Custom SAEs to train up
-                sae_weights.extend(
-                    expand(
-                        f"{OUTDIR}/saes_{st}_{{l}}/{{m}}-{sae}.pt",
-                        m=cur_methods,
-                        l=levels,
-                    )
-                )
-                activation_datasets.extend(
-                    expand(
-                        f"{DATASETS}/activations_{st}_{{l}}/{{m}}-{sae}",
-                        m=cur_methods,
-                        l=levels,
-                    )
-                )
+EMBEDDING_RES = env.resources["gpu40"]
+EMBEDDING_RES["time"] = env.slurm_time_limit
 
 
 rule all:
     input:
-        *[
-            DATASETS / f"sequence_{st}"
-            for st in ("aa", "nuc")
-            if (files := config["fastas"].get(st)) is not None and len(files) > 1
-        ],
-        *embedded_datasets,
-        *indices,
-        *sae_weights,
-        # *activation_datasets,
-        f"{OUTDIR}/label_cooccurrence.csv",
-        f"{OUTDIR}/cooccurence_stats.yaml",
+        *env.get_outputs(),
 
 
 rule make_seq_dataset:
@@ -78,11 +39,12 @@ rule get_embeddings:  # NOTE: this saves them as an embedding cache
         rules.make_seq_dataset.output,
     params:
         seqtype=lambda wc: wc.get("seqtype"),
+        level=lambda wc: wc.get("level"),
         embedding_method=lambda wc: wc.get("embedding_method"),
     resources:
         **EMBEDDING_RES,
     output:
-        f"{DATASETS}/embedded_{{seqtype}}/{{embedding_method}}.completed",
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{embedding_method}}.completed",
     script:
         "main.py"
 
@@ -96,6 +58,8 @@ rule write_training_indices:
         dataset_path=Path(DATASETS),
     output:
         f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
+    script:
+        "main.py"
 
 
 rule train_sae:
@@ -112,14 +76,14 @@ rule train_sae:
         f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{sae}}.pt",
 
 
-rule label_coccurrence:
+rule label_cooccurrence:
     input:
-        config["metadata"]["file"],
+        env.metadata.file,
     params:
         tmp_file=f"{OUTDIR}/label_cooccur_tmp.csv",
     output:
         f"{OUTDIR}/label_cooccurrence.csv",
-        f"{OUTDIR}/cooccurence_stats.yaml",
+        f"{OUTDIR}/cooccurrence_stats.yaml",
     script:
         "main.py"
 
@@ -137,15 +101,23 @@ rule label_coccurrence:
 #         "main.py"
 
 
+def is_pretrained(wc):
+    return wc.get("sae") in env.saes["pretrained"]
+
+
 rule get_activations:
     input:
-        embeddings=rules.get_embeddings.output,
+        embeddings=branch(
+            is_pretrained,
+            then=rules.make_seq_dataset.output[0],
+            otherwise=rules.get_embeddings.output[0],
+        ),
         sae=branch(
-            lambda wc: wc.get("embedding_method").endswith("-pretrained"),
+            is_pretrained,
             then=None,
             otherwise=lambda wc: OUTDIR
-            / f"saes_{wc.get('seqtype')}"
-            / f"{wc.get('embedding_method')}-{wc.get('sae')}",
+            / f"saes_{wc.get('seqtype')}_{wc.get('level')}"
+            / f"{wc.get('embedding_method')}-{wc.get('sae')}.pt",
         ),
     params:
         seqtype=lambda wc: wc.get("seqtype"),
@@ -155,9 +127,11 @@ rule get_activations:
         dataset_path=Path(DATASETS),
     output:
         directory(
-            f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{sae}}-{{embedding_method}}"
+            f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{sae}}"
         ),
 
 
 # rule neighbor_metrics:
 # rule sae_metrics:
+# This rule should also get activation metrics
+# TODO: report metrics on train set, including L0, MSE loss etc.

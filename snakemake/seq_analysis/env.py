@@ -163,7 +163,7 @@ def needs_val_if_not_custom(inst, attr, val, allowed=None):
 
 @define
 class SaeCfg:
-    source: str
+    source: str | None = None
     variant: str = field(default="BatchTopK", validator=validators.in_(["BatchTopK"]))
     kws: dict[str, Any] = field(factory=dict)
     level: str | None = field(default=None, validator=needs_val_if_not_custom)
@@ -193,18 +193,14 @@ class SnakeEnv:
     outdir: Path = field(converter=Path)
     metadata: Metadata
     resources: dict = field(validator=validators.instance_of(dict))
-    saes: dict[str, SaeCfg] = field(validator=validators.instance_of(dict))
-    fastas: dict[str, list] = field(
-        validator=validators.deep_mapping(
-            key_validator=validators.in_(SEQTYPES),
-            value_validator=validators.instance_of(list),
-        )
+    saes: dict[Literal["custom", "pretrained"], dict[str, SaeCfg]] = field(
+        validator=validators.instance_of(dict)
+    )
+    fastas: dict[str, list[FastaSpec]] = field(
+        validator=validators.deep_mapping(key_validator=validators.in_(SEQTYPES))
     )
     embedding_methods: dict[str, dict[str, EmbeddingMethod]] = field(
-        validator=validators.deep_mapping(
-            key_validator=validators.in_(SEQTYPES),
-            value_validator=validators.instance_of(dict),
-        )
+        validator=validators.deep_mapping(key_validator=validators.in_(SEQTYPES))
     )
 
     # Rules
@@ -236,18 +232,17 @@ class SnakeEnv:
             for mname, mspec in self.embedding_methods[st].items():
                 level = mspec.level
                 out.append(f"{self.datasets}/embedded_{st}_{level}/{mname}.completed")
-                for sae, spec in self.saes.items():
-                    if spec.source != "custom":
-                        out.append(
-                            self.datasets
-                            / f"activations_{st}_{spec.level}"
-                            / f"{spec.embedding}-{sae}-pretrained"
-                        )
-                    else:
-                        out.append(self.outdir / f"saes_{st}_{level}/{mname}-{sae}.pt")
-                        out.append(
-                            self.datasets / f"activations_{st}_{level}/{mname}-{sae}"
-                        )
+                for sae, spec in self.saes["custom"].items():
+                    out.append(self.outdir / f"saes_{st}_{level}/{mname}-{sae}.pt")
+                    out.append(
+                        self.datasets / f"activations_{st}_{level}/{mname}-{sae}"
+                    )
+            for sae, spec in self.saes["pretrained"].items():
+                out.append(
+                    self.datasets
+                    / f"activations_{st}_{spec.level}"
+                    / f"{spec.embedding}-{sae}"
+                )
         return out
 
     @classmethod
