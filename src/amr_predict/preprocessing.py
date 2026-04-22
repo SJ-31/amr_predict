@@ -61,7 +61,7 @@ class SeqEmbedder:
         self,
         method: EMBEDDING_METHODS = "seqLens",
         workdir: Path | None = None,
-        with_tokens: bool = False,
+        save_mode: Literal["tokens", "seqs", "both"] = "seqs",
         save_interval: int = 10,
         only_cache: bool = True,
         token_prop: float | None = None,
@@ -70,8 +70,8 @@ class SeqEmbedder:
         self.method: EMBEDDING_METHODS = method
         self.kwargs: dict = kwargs
         self.token_prop: float | None = token_prop
-        self.with_tokens = with_tokens
-        if self.with_tokens:
+        self.save_mode: Literal["tokens", "seqs", "both"] = save_mode
+        if self.save_mode != "seqs":
             logger.warning(
                 "Embedder set to save tokens. Ensure you have enough memory and space"
             )
@@ -83,6 +83,10 @@ class SeqEmbedder:
             self.workdir.mkdir()
         else:
             self.workdir = workdir
+
+    @property
+    def with_tokens(self) -> bool:
+        return self.save_mode != "seqs"
 
     def __call__(self, dataset: Dataset | None) -> Dataset | None:
         if self.method not in {"kmer", "feature_presence"} and dataset is None:
@@ -432,7 +436,7 @@ class SeqEmbedder:
         get_hidden: bool = hidden_layer is not None
         cache: EmbeddingCache = EmbeddingCache(
             self.workdir,
-            with_tokens=self.with_tokens,
+            save_mode=self.save_mode,
             save_interval=self.save_interval,
             token_prop=self.token_prop,
         )
@@ -584,7 +588,7 @@ class SeqEmbedder:
         cache: EmbeddingCache = EmbeddingCache(
             self.workdir,
             save_interval=self.save_interval,
-            with_tokens=self.with_tokens,
+            save_mode=self.save_mode,
             token_prop=self.token_prop,
         )
         error_message = "Evo2 failed to generate predictions"
@@ -693,7 +697,7 @@ class SeqEmbedder:
         cache: EmbeddingCache = EmbeddingCache(
             self.workdir,
             save_interval=self.save_interval,
-            with_tokens=self.with_tokens,
+            save_mode=self.save_mode,
             token_prop=self.token_prop,
         )
         to_remove = [c for c in dset.column_names if c != "seqlens_uid"]

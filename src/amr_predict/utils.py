@@ -721,7 +721,7 @@ class EmbeddingCache:
         "_prefix",
         "_dir",
         "_seen",
-        "_with_tokens",
+        "_save_mode",
         "_rng",
         "_token_prop",
         "_seed",
@@ -779,7 +779,7 @@ class EmbeddingCache:
         dir: Path,
         prefix: str = "batch",
         save_interval: int = 10,
-        with_tokens: bool = True,
+        save_mode: str = "seqs",
         token_prop: float | None = None,
         seed: int | None = None,
     ) -> None:
@@ -802,7 +802,8 @@ class EmbeddingCache:
         self._seed: int = seed
         self._prefix = prefix
         self._save_interval: int = save_interval
-        self._with_tokens = with_tokens
+        assert save_mode in ["both", "seqs", "tokens"]
+        self._save_mode: Literal["both", "seqs", "tokens"] = save_mode
         try:
             _ = next(self._dir.glob(self._glob(False)))
             self._set_seen()
@@ -960,12 +961,14 @@ class EmbeddingCache:
                 if token is not None and len(token.shape) != 2:
                     raise ValueError("Token-level embeddings must all be 2D")
 
-                schema["seq"] = pl.Array(dtype, len(seq))
-                schema["token"] = (
-                    pl.List(pl.Array(dtype, token.shape[1]))
-                    if self._with_tokens
-                    else pl.Null()
-                )
+                if self._save_mode in ("seqs", "both"):
+                    schema["seq"] = pl.Array(dtype, len(seq))
+                if self._save_mode in ("tokens", "both"):
+                    schema["token"] = (
+                        pl.List(pl.Array(dtype, token.shape[1]))
+                        if self._save_mode
+                        else pl.Null()
+                    )
                 tmp = {"key": [], "seq": [], "token": []}
                 gen = itertools.chain([(key, seq, token)], gen)
                 # REVIEW: you didn't wanna have to do this, but had trouble with
@@ -976,9 +979,11 @@ class EmbeddingCache:
                     tmp["token"].append(t)
 
                 lf = pl.LazyFrame(tmp, schema=schema)
-                if not self._with_tokens:
+                if self._save_mode == "seqs":
                     lf = lf.with_columns(pl.lit(None).alias("token"))
-                elif self._token_prop is not None:
+                elif self._save_mode == "tokens":
+                    lf = lf.with_columns(pl.lit(None).alias("seq"))
+                if self._token_prop is not None and self._save_mode != "seqs":
                     lf = self._mask_in_df(lf, "token", 1 - self._token_prop, len(batch))
                 self._seen |= set(lf.select("key").collect()["key"])
                 lfs.append(lf)
@@ -1101,7 +1106,7 @@ class LinkedDataset(td.Dataset):
             self.meta = self.meta[idx, :]
 
     def __len__(self):
-        return self.meta.height
+        return self.shape[0]
 
     def remove_missing(self):
         "Remove keys that are missing from the cache"
