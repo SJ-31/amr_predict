@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
 import contextlib
 from collections.abc import Callable, Sequence
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, TypeAlias, override
 
@@ -31,6 +32,11 @@ from torchmetrics.functional.pairwise import (
 
 logger.disable("amr_predict")
 
+BasicPoolings = Enum(
+    "BasicPoolings",
+    {n.upper(): n for n in ["max", "sum", "mean", "similarity", "cls"]},
+)
+
 BASIC_POOLING_METHODS: TypeAlias = Literal["max", "sum", "mean", "similarity"]
 STATIC_POOLING_METHODS: TypeAlias = Literal[
     "max", "sum", "mean", "similarity", "swe", "concat", "seq_subset", "random"
@@ -38,7 +44,7 @@ STATIC_POOLING_METHODS: TypeAlias = Literal[
 LEARNING_POOLING_METHODS: TypeAlias = Literal["autoencoder", "swe"]
 
 
-def pool_tensor(x: Tensor, method: BASIC_POOLING_METHODS, **kws) -> Tensor:
+def pool_tensor(x: Tensor, method: BasicPoolings, **kws) -> Tensor:
     """Functional interface to pooling methods
 
     Parameters
@@ -48,13 +54,13 @@ def pool_tensor(x: Tensor, method: BASIC_POOLING_METHODS, **kws) -> Tensor:
     a 1d tensor
     """
     assert isinstance(x, jaxtyping.Float[Tensor, "a b"])
-    if method == "mean":
+    if method == BasicPoolings.MEAN:
         return x.mean(dim=0)
-    elif method == "sum":
+    elif method == BasicPoolings.SUM:
         return x.sum(dim=0)
-    elif method == "max":
+    elif method == BasicPoolings.MAX:
         return x.max(dim=0).values
-    elif method == "similarity":
+    elif method == BasicPoolings.SIMILARITY:
         return _pool_similarity(x, **kws)
     raise NotImplementedError
 
