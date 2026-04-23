@@ -5,20 +5,18 @@ from __future__ import annotations
 
 import os
 import uuid
-from enum import Enum
+from enum import Enum, auto
 from pathlib import Path
-from typing import Callable, Generator, Literal, get_args, override
+from typing import Generator, Literal, override
 
 import jaxtyping
 import polars as pl
 import torch
-from amr_predict.pooling import BASIC_POOLING_METHODS, pool_tensor
+from amr_predict.pooling import BASIC_POOLING_METHODS
 from amr_predict.utils import EmbeddingCache
 from attrs import Factory, define, field, validators
 from datasets.arrow_dataset import Dataset
-from esm.models.esmc import ESMC
 from esm.sdk.api import ESMProtein
-from loguru import logger
 from torch import Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
@@ -26,20 +24,23 @@ from transformers.modeling_outputs import MaskedLMOutput
 
 EsmModels = Enum(
     "EsmModels",
-    [
-        "esm2_t6_8m_UR50D",
-        "esm2_t33_650m_UR50D",
-        "esm3_open",
-        "esmc_600m",
-        "esmc_300m",
-        "esmc_600m_synthyra",
-        "esmc_300m_synthyra",
-    ],
+    {
+        "esm2_t6_8m_UR50D": auto(),
+        "esm2_t33_650m_UR50D": auto(),
+        "esm3_open": auto(),
+        "esmc_600m": auto(),
+        "esmc_300m": auto(),
+        "esmc_600m_synthyra": "Synthyra/ESMplusplus_large",
+        "esmc_300m_synthyra": "Synthyra/ESMplusplus_small",
+    },
 )
 
 EmbeddingModels = Enum(
     "EmbeddingMethods",
-    ["Evo2", "seqLens"] + [n.name for n in EsmModels],
+    dict(
+        {"Evo2": auto(), "seqLens_4096_512_46M_Mp": "omicseye/seqLens_4096_512_46M-Mp"}
+        | {i.name: i.value for i in EsmModels}
+    ),
 )
 
 
@@ -48,7 +49,7 @@ class ModelEmbedder:
     method: EmbeddingModels
     token_prop: float | None = None
     workdir: Path = field(
-        factory=Factory(
+        default=Factory(
             lambda self: Path()
             .cwd()
             .joinpath(f"{self.method.name}-work_{uuid.uuid4().hex}"),
@@ -57,14 +58,16 @@ class ModelEmbedder:
     )
     save_mode: Literal["tokens", "seqs", "both"] = "seqs"
     default_dtype: torch.dtype = torch.float32
-    device: str = field(
-        factory=Factory(lambda: "cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device: str = field(factory=lambda: "cuda" if torch.cuda.is_available() else "cpu")
+    batch_size: int = 128
     hidden_layer: int = 0
     huggingface: str | None = None
     save_proba: bool = False
     save_interval: int = 10
     only_cache: bool = True
+    get_hidden: bool = field(
+        default=Factory(lambda self: self.hidden_layer < 0, takes_self=True)
+    )
 
     def __attrs_post_init__(self):
         os.environ["HF_HOME"] = self.huggingface
@@ -76,10 +79,7 @@ class ModelEmbedder:
             save_interval=self.save_interval,
             token_prop=self.token_prop,
         )
-
-    @property
-    def get_hidden(self) -> bool:
-        return self.hidden_layer < 0
+        self.hidden_layer = 0 if self.hidden_layer < 0 else self.hidden_layer
 
     @property
     def with_tokens(self) -> bool:
@@ -140,7 +140,7 @@ class Esm2Embedder(ModelEmbedder):
                 prot, model_name=self.model_name.name, layer=self.hidden_layer
             )
             tokens: Tensor = token_embeddings if self.with_tokens else None
-            yield prot, tokens, Tensor()
+            yield prot, tokens.to("cpu"), Tensor()
 
 
 @define
@@ -154,10 +154,8 @@ class EsmSynthyra(ModelEmbedder):
     )
 
     def __attrs_post_init__(self):
-        key: dict[EsmModels, str] = {
-            EsmModels.esmc_600m_synthyra: "Synthyra/ESMplusplus_large",
-            EsmModels.esmc_300m_synthyra: "Synthyra/ESMplusplus_small",
-        }[self.model]
+        super().__attrs_post__init()
+        key: str = self.model.value
         self.m: AutoModelForMaskedLM = AutoModelForMaskedLM.from_pretrained(
             key, trust_remote_code=True
         )
@@ -191,7 +189,7 @@ class EsmSynthyra(ModelEmbedder):
                     # Each element of hidden is a tensor with shape
                     # (1, sequence_len, dim_model)
                     tokens = hidden[self.hidden_layer][0, 1:-1, :]
-                    yield prot, tokens, Tensor()
+                    yield prot, tokens.to("cpu"), Tensor()
 
 
 @define
@@ -206,6 +204,7 @@ class EsmOfficial(ModelEmbedder):
     )
 
     def __attrs_post_init__(self):
+        super().__attrs_post_init__()
         from esm.sdk.api import LogitsConfig
 
         if isinstance(self.model, EsmModels.esm3_open):
@@ -241,3 +240,62 @@ class EsmOfficial(ModelEmbedder):
             else:
                 tokens = target[0, 1:-1, :]
             yield prot, tokens, Tensor()
+
+
+@define
+class SeqLensEmbedder(ModelEmbedder):
+    model: EmbeddingModels = EmbeddingModels.seqLens_4096_512_46M_Mp
+
+    def __attrs_post_init__(self):
+        super().__attrs_post_init__()
+        key = self.model.value
+        tokenizer = AutoTokenizer.from_pretrained(key)
+        model = AutoModelForMaskedLM.from_pretrained(key)
+        model.to(self.device)
+        model.config.output_hidden_states = True
+        torch.set_default_dtype(self.default_dtype)
+        self.tokenizer = tokenizer
+        self.model = model
+
+    def _embed_batch(
+        self, sequences
+    ) -> Generator[
+        tuple[str, jaxtyping.Float[Tensor, "a b"], jaxtyping.Float[Tensor, "a"] | None]
+    ]:
+        dataset = Dataset.from_dict({"sequence": list(sequences)})
+        dataset = dataset.add_column("seqlens_uid", list(range(len(dataset))))
+        to_remove = [c for c in dataset.column_names if c != "seqlens_uid"]
+        seqlens_uid2seq = dict(zip(dataset["seqlens_uid"], dataset["sequence"]))
+
+        data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
+        tokenized = dataset.map(
+            lambda x: self._tokenize(
+                x, tokenizer=self.tokenizer, text_key="sequence", max_length=512
+            ),
+            batched=True,
+            remove_columns=to_remove,
+        )
+        loader = DataLoader(
+            tokenized, batch_size=self.batch_size, collate_fn=data_collator
+        )
+
+        with torch.no_grad():
+            for batch in loader:
+                input_ids = batch["input_ids"].to(self.device)
+                attention_mask = batch["attention_mask"].to(self.device)
+                output: MaskedLMOutput = self.model(
+                    input_ids=input_ids, attention_mask=attention_mask
+                )
+                attention_mask = attention_mask.to("cpu")
+                chosen_layer = output.hidden_states[self.hidden_layer]
+
+                expanded_mask = attention_mask.unsqueeze(-1).expand_as(chosen_layer)
+                hidden_layer = chosen_layer * expanded_mask
+
+                for i, seqlens_uid in enumerate(torch.unbind(batch["seqlens_uid"])):
+                    seq = seqlens_uid2seq[seqlens_uid.cpu().item()]
+                    token = hidden_layer[i, :, :]
+                    yield seq, token, Tensor()
+
+
+# * Dispatcher
