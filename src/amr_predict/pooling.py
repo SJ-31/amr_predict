@@ -12,7 +12,6 @@ import torch
 import torch.nn as nn
 from amr_predict.models import BaseNN
 from amr_predict.utils import (
-    LinkedDataset,
     ModuleConfig,
     debug_tensor_vals,
     load_as,

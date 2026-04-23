@@ -20,12 +20,11 @@ import polars.selectors as cs
 import skbio as sb
 import torch
 import torch.utils.data as td
-from amr_predict.cache import EmbeddingCache
+from amr_predict.cache import LinkedDataset
 from datasets import DatasetDict, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
-from numpy.random import Generator
 from skbio import DNA
 from sklearn.preprocessing import LabelEncoder
 from torch import Tensor
@@ -706,46 +705,6 @@ class Preprocessor:
         return self.transform(dataset)
 
 
-# ** Cache utilities
-
-
-def gen_from_cached(
-    df: pl.DataFrame,
-    key: str,
-    cache: EmbeddingCache,
-    keep: bool = False,
-    drop_null_columns: bool = False,
-    new_col: str = "embedding",
-):
-    """Return a generator function to produce a huggingface dataset
-
-    Parameters
-    ----------
-    df : DataFrame
-        Polars dataframe containing the query values that were embedded, as well as other
-        metadata
-    key : str
-        Column of `df` containing the query values
-
-    If `keep`, then the column containing the input to the embedding will be kept in
-    the dataset
-    """
-    if drop_null_columns:
-        df = df[[s.name for s in df if not (s.null_count() == df.height)]]
-
-    def f():
-        for row in df.iter_rows(named=True):
-            if keep:
-                embedding = cache[row[key]]
-            else:
-                embedding = cache[row.pop(key)]
-            give = {new_col: embedding}
-            give.update(row)
-            yield give
-
-    return f
-
-
 def features_from_df(
     df: pl.DataFrame,
     convert_string_view: Literal["string", "large_string"] | None = "large_string",
@@ -758,67 +717,6 @@ def features_from_df(
             if v == Value("string_view"):
                 converted[k] = Value(convert_string_view)
     return converted
-
-
-def torch2pl(
-    dtype: torch.dtype | Sequence[torch.dtype],
-) -> pl.DataType | list[pl.DataType]:
-    # Valid v2.9.1
-    mapping: dict = {
-        torch.bool: pl.Boolean,
-        torch.int8: pl.Int8,
-        torch.uint8: pl.UInt8,
-        torch.int16: pl.Int16,  # alias: torch.short
-        torch.uint16: pl.UInt16,
-        torch.int32: pl.Int32,  # alias: torch.int
-        torch.uint32: pl.UInt32,
-        torch.int64: pl.Int64,  # alias: torch.long
-        torch.uint64: pl.UInt64,
-        torch.float32: pl.Float32,  # alias: torch.float
-        torch.float64: pl.Float64,  # alias: torch.double
-    }
-    if isinstance(dtype, Sequence):
-        converted = []
-        for tp in dtype:
-            try:
-                converted.append(mapping[tp])
-            except KeyError:
-                raise ValueError(f"`{tp}` is not supported by polars")
-        return converted
-    try:
-        return mapping[dtype]
-    except KeyError:
-        raise ValueError(f"`{dtype}` is not supported by polars")
-
-
-def torch2hf(dtype: torch.dtype | Sequence[torch.dtype]) -> Value | list[Value]:
-    # Valid v2.9.1
-    mapping: dict = {
-        torch.bool: "bool",
-        torch.int8: "int8",
-        torch.uint8: "uint8",
-        torch.int16: "int16",  # alias: torch.short
-        torch.uint16: "uint16",
-        torch.int32: "int32",  # alias: torch.int
-        torch.uint32: "uint32",
-        torch.int64: "int64",  # alias: torch.long
-        torch.uint64: "uint64",
-        torch.float16: "float16",  # alias: torch.half
-        torch.float32: "float32",  # alias: torch.float
-        torch.float64: "float64",  # alias: torch.double
-    }
-    if isinstance(dtype, Sequence):
-        converted = []
-        for tp in dtype:
-            try:
-                converted.append(Value(mapping[tp]))
-            except KeyError:
-                raise ValueError(f"`{tp}` is not supported by HF")
-        return converted
-    try:
-        return Value(mapping[dtype])
-    except KeyError:
-        raise ValueError(f"`{dtype}` is not supported by HF")
 
 
 def translate_df(

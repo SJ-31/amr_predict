@@ -15,8 +15,8 @@ import numpy as np
 import polars as pl
 import torch
 import torch.utils.data as td
+from amr_predict.compat import torch2pl
 from amr_predict.pooling import BasicPoolings, pool_tensor
-from amr_predict.utils import torch2pl
 from attrs import define, field, validators
 from beartype import beartype
 from datasets import Dataset
@@ -509,3 +509,40 @@ class LinkedDataset(td.Dataset):
             text_key=self.text_key,
             level=self.level,
         )
+
+
+def gen_from_cached(
+    df: pl.DataFrame,
+    key: str,
+    cache: EmbeddingCache,
+    keep: bool = False,
+    drop_null_columns: bool = False,
+    new_col: str = "embedding",
+):
+    """Return a generator function to produce a huggingface dataset
+
+    Parameters
+    ----------
+    df : DataFrame
+        Polars dataframe containing the query values that were embedded, as well as other
+        metadata
+    key : str
+        Column of `df` containing the query values
+
+    If `keep`, then the column containing the input to the embedding will be kept in
+    the dataset
+    """
+    if drop_null_columns:
+        df = df[[s.name for s in df if not (s.null_count() == df.height)]]
+
+    def f():
+        for row in df.iter_rows(named=True):
+            if keep:
+                embedding = cache[row[key]]
+            else:
+                embedding = cache[row.pop(key)]
+            give = {new_col: embedding}
+            give.update(row)
+            yield give
+
+    return f
