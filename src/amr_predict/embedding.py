@@ -146,9 +146,10 @@ class ModelEmbedder:
         save_mode: Literal["tokens", "seqs", "both"] = "seqs",
         default_dtype: torch.dtype = torch.float32,
         batch_size: int = 128,
+        workdir: Path | None = None,
         hidden_layer: int = 0,
         huggingface: str | None = None,
-        save_proba: bool = False,
+        save_logits: bool = False,
         save_interval: int = 10,
         only_cache: bool = True,
     ):
@@ -163,11 +164,12 @@ class ModelEmbedder:
             raise NotImplementedError()
         return cls(
             save_mode=save_mode,
+            workdir=workdir,
             default_dtype=default_dtype,
             batch_size=batch_size,
             hidden_layer=hidden_layer,
             huggingface=huggingface,
-            save_proba=save_proba,
+            save_logits=save_logits,
             save_interval=save_interval,
             only_cache=only_cache,
         )
@@ -272,7 +274,7 @@ class EsmOfficial(ModelEmbedder):
         super().__attrs_post_init__()
         from esm.sdk.api import LogitsConfig
 
-        if isinstance(self.model, EsmModels.esm3_open):
+        if self.model == EsmModels.esm3_open:
             from esm.models.esm3 import ESM3
 
             self.client = ESM3.from_pretrained(self.model.name, device=self.device)
@@ -310,17 +312,26 @@ class EsmOfficial(ModelEmbedder):
 @define
 class SeqLensEmbedder(ModelEmbedder):
     model: EmbeddingModels = EmbeddingModels.seqLens_4096_512_46M_Mp
+    tokenizer: AutoTokenizer = field(
+        init=False,
+        default=Factory(
+            lambda self: AutoTokenizer.from_pretrained(self.model.value),
+            takes_self=True,
+        ),
+    )
+    m: AutoModelForMaskedLM = field(
+        init=False,
+        default=Factory(
+            lambda self: AutoModelForMaskedLM.from_pretrained(self.model.value),
+            takes_self=True,
+        ),
+    )
 
     def __attrs_post_init__(self):
         super().__attrs_post_init__()
-        key = self.model.value
-        tokenizer = AutoTokenizer.from_pretrained(key)
-        model = AutoModelForMaskedLM.from_pretrained(key)
-        model.to(self.device)
-        model.config.output_hidden_states = True
+        self.m.to(self.device)
+        self.m.config.output_hidden_states = True
         torch.set_default_dtype(self.default_dtype)
-        self.tokenizer = tokenizer
-        self.model = model
 
     def _embed_batch(
         self, sequences
@@ -348,7 +359,7 @@ class SeqLensEmbedder(ModelEmbedder):
             for batch in loader:
                 input_ids = batch["input_ids"].to(self.device)
                 attention_mask = batch["attention_mask"].to(self.device)
-                output: MaskedLMOutput = self.model(
+                output: MaskedLMOutput = self.m(
                     input_ids=input_ids, attention_mask=attention_mask
                 )
                 attention_mask = attention_mask.to("cpu")
