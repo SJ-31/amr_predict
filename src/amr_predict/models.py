@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from typing import override
 
@@ -126,14 +127,16 @@ class BaseNN(L.LightningModule):
             self.task_names = self.cfg.task_names
 
         # Cache results after iterations or validation for custom callbacks
-        self.cache: dict[str, tuple[bool, list]] = {
-            "train_loss": (False, []),
-            "train_acc": (False, []),
-            "val_acc": (False, []),
-            "val_loss": (False, []),
-            "test_loss": (False, []),
-            "test_acc": (False, []),
-        }
+        self.cache: dict[str, tuple[bool, list]] = defaultdict(lambda: (False, []))
+        # BUG: modify this to accept any (reasonable) metrics e.g. regression metrics
+        # self.cache: dict[str, tuple[bool, list]] = {
+        #     "train_loss": (False, []),
+        #     "train_acc": (False, []),
+        #     "val_acc": (False, []),
+        #     "val_loss": (False, []),
+        #     "test_loss": (False, []),
+        #     "test_acc": (False, []),
+        # }
         if isinstance(self.cfg.cache, str):
             self.set_cache(self.cfg.cache)
         elif self.cfg.cache is not None:

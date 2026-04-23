@@ -1,18 +1,17 @@
 #!/usr/bin/env ipython
-
-#!/usr/bin/env ipython
 from __future__ import annotations
 
 import os
 import uuid
-from enum import Enum, EnumType, auto
+from enum import Enum, EnumType
 from pathlib import Path
 from typing import Generator, Literal, override
 
 import jaxtyping
 import polars as pl
 import torch
-from amr_predict.utils import EmbeddingCache
+from amr_predict.cache import EmbeddingCache
+from amr_predict.pooling import BasicPoolings
 from attrs import Factory, define, field, validators
 from datasets.arrow_dataset import Dataset
 from esm.sdk.api import ESMProtein
@@ -95,19 +94,24 @@ class ModelEmbedder:
     batch_size: int = 128
     hidden_layer: int = 0
     huggingface: str | None = None
-    save_proba: bool = False
+    rng: int | None = None
+    save_logits: bool = False
     save_interval: int = 10
+    pooling: BasicPoolings = BasicPoolings.MEAN
     only_cache: bool = True
     get_hidden: bool = field(
-        default=Factory(lambda self: self.hidden_layer < 0, takes_self=True)
+        init=False, default=Factory(lambda self: self.hidden_layer < 0, takes_self=True)
     )
     cache: EmbeddingCache = field(
         default=Factory(
             lambda self: EmbeddingCache(
                 self.workdir,
                 save_mode=self.save_mode,
+                rng=self.rng,
+                save_logits=self.save_logits,
                 save_interval=self.save_interval,
                 token_prop=self.token_prop,
+                pooling=self.pooling,
             ),
             takes_self=True,
         )
