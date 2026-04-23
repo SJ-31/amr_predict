@@ -17,6 +17,13 @@ EMBEDDING_RES = env.resources["gpu40"]
 EMBEDDING_RES["time"] = env.slurm_time_limit
 
 
+def get_wc(wildcard: str):
+    def f(wc):
+        return wc.get(wildcard)
+
+    return f
+
+
 rule all:
     input:
         *env.get_outputs(),
@@ -24,27 +31,57 @@ rule all:
 
 rule make_seq_dataset:
     params:
-        seqtype=lambda wc: wc.get("seqtype"),
+        seqtype=get_wc("seqtype"),
     output:
         directory(f"{DATASETS}/sequence_{{seqtype}}"),
     script:
         "main.py"
 
 
-# rule make_control_datasets
+rule get_random_embeddings:
+    input:
+        rules.make_seq_dataset.output,
+    params:
+        seqtype=get_wc("seqtype"),
+        level=get_wc("level"),
+        embedding_method=get_wc("embedding_method"),
+    resources:
+        **EMBEDDING_RES,
+    output:
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/random/"
+        "{{embedding_method}}-{{pooling}}-{{randomization}}.completed",
+    script:
+        "main.py"
+
+
+rule get_perturbed_embeddings:
+    input:
+        rules.make_seq_dataset.output,
+    params:
+        seqtype=get_wc("seqtype"),
+        level=get_wc("level"),
+        perturbation=get_wc("perturbation"),
+        embedding_method=get_wc("embedding_method"),
+    resources:
+        **EMBEDDING_RES,
+    output:
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/perturbed/{{embedding_method}}-{{pooling}}-{{perturbation}}.completed",
+    script:
+        "main.py"
 
 
 rule get_embeddings:  # NOTE: this saves them as an embedding cache
     input:
         rules.make_seq_dataset.output,
     params:
-        seqtype=lambda wc: wc.get("seqtype"),
-        level=lambda wc: wc.get("level"),
-        embedding_method=lambda wc: wc.get("embedding_method"),
+        seqtype=get_wc("seqtype"),
+        level=get_wc("level"),
+        embedding_method=get_wc("embedding_method"),
+        pooling=get_wc("pooling"),
     resources:
         **EMBEDDING_RES,
     output:
-        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{embedding_method}}.completed",
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}.completed",
     script:
         "main.py"
 
@@ -53,9 +90,8 @@ rule write_training_indices:
     input:
         rules.make_seq_dataset.output,
     params:
-        seqtype=lambda wc: wc.get("seqtype"),
-        level=lambda wc: wc.get("level"),
-        dataset_path=Path(DATASETS),
+        seqtype=get_wc("seqtype"),
+        level=get_wc("level"),
     output:
         f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
     script:
@@ -67,13 +103,13 @@ rule train_sae:
         rules.get_embeddings.output,
         f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
     params:
-        seqtype=lambda wc: wc.get("seqtype"),
-        sae=lambda wc: wc.get("sae"),
-        embedding_method=lambda wc: wc.get("embedding_method"),
-        level=lambda wc: wc.get("level"),
-        dataset_path=Path(DATASETS),
+        seqtype=get_wc("seqtype"),
+        sae=get_wc("sae"),
+        embedding_method=get_wc("embedding_method"),
+        level=get_wc("level"),
+        pooling=get_wc("pooling"),
     output:
-        f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{sae}}.pt",
+        f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pt",
 
 
 rule label_cooccurrence:
@@ -81,6 +117,8 @@ rule label_cooccurrence:
         env.metadata.file,
     params:
         tmp_file=f"{OUTDIR}/label_cooccur_tmp.csv",
+    resources:
+        mem="100g",
     output:
         f"{OUTDIR}/label_cooccurrence.csv",
         f"{OUTDIR}/cooccurrence_stats.yaml",
@@ -116,18 +154,18 @@ rule get_activations:
             is_pretrained,
             then=None,
             otherwise=lambda wc: OUTDIR
-            / f"saes_{wc.get('seqtype')}_{wc.get('level')}"
-            / f"{wc.get('embedding_method')}-{wc.get('sae')}.pt",
+            / f"saes_{wc['seqtype']}_{wc['level']}"
+            / f"{wc['embedding_method']}-{wc['pooling']}-{wc['sae']}.pt",
         ),
     params:
-        seqtype=lambda wc: wc.get("seqtype"),
-        sae=lambda wc: wc.get("sae"),
-        level=lambda wc: wc.get("level"),
-        embedding_method=lambda wc: wc.get("embedding_method"),
-        dataset_path=Path(DATASETS),
+        seqtype=get_wc("seqtype"),
+        sae=get_wc("sae"),
+        level=get_wc("level"),
+        embedding_method=get_wc("embedding_method"),
+        pooling=get_wc("pooling"),
     output:
         directory(
-            f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{sae}}"
+            f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}"
         ),
 
 

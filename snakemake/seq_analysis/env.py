@@ -239,16 +239,16 @@ class SnakeEnv:
                     l=[v.value for v in Levels],
                 )
             )
-            acts_prefix: str = f"{self.datasets}/embedded_{st.value}"
+            acts_prefix: str = f"{self.datasets}/activations_{st.value}"
             sae_prefix: str = f"{self.outdir}/saes_{st.value}"
             embedding_prefix: str = f"{self.datasets}/embedded_{st.value}"
 
             for mname, mspec in self.embedding_methods[st].items():
-                out.append(f"{embedding_prefix}_tokens/{mname}.completed")
+                out.append(f"{embedding_prefix}_tokens/{mname}-0.completed")
 
                 for s in custom_saes.keys():
-                    out.append(f"{sae_prefix}_tokens/{mname}-{s}.pt")
-                    out.append(f"{acts_prefix}_tokens/{mname}-{s}.pt")
+                    out.append(f"{sae_prefix}_tokens/{mname}-0-{s}.pt")
+                    out.append(f"{acts_prefix}_tokens/{mname}-0-{s}")
 
                 for p in mspec.poolings:
                     out.append(f"{embedding_prefix}_seqs/{mname}-{p.value}.completed")
@@ -259,8 +259,8 @@ class SnakeEnv:
             for sae, spec in self.saes["pretrained"].items():
                 out.append(
                     self.datasets
-                    / f"activations_{st.value}_{spec.level}"
-                    / f"{spec.embedding}-{sae}"
+                    / f"activations_{st.value}_{spec.level.value}"
+                    / f"{spec.embedding}-_-{sae}"
                 )
         return out
 
