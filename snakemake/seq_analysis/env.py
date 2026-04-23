@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
@@ -11,8 +12,8 @@ from attrs import asdict, define, field, validators
 from snakemake.io import expand
 from yte import process_yaml
 
-LEVELS = ("tokens", "seqs")
-SEQTYPES = ("aa", "nuc")
+Levels = Enum("Levels", (("TOKENS", "tokens"), ("SEQS", "seqs")))
+SeqTypes = Enum("SeqTypes", (("AA", "aa"), ("NUC", "nuc")))
 
 
 cattrs.register_structure_hook(Union[str, bool], Union[str, bool])
@@ -136,7 +137,7 @@ class DataLoaderCfg:
 @define
 class EmbeddingMethod:
     method: str
-    level: str = field(validator=validators.in_(LEVELS))
+    level: Levels = field(validator=validators.instance_of(Levels))
     kws: dict[str, Any] = field(factory=dict)
 
 
@@ -155,7 +156,7 @@ class TrainSae:
     dataloader: DataLoaderCfg
 
 
-def needs_val_if_not_custom(inst, attr, val, allowed=None):
+def needs_val_if_not_custom(inst, attr, val, allowed: Enum | None = None):
     if not allowed:
         return inst.source == "custom" or (inst.source != "custom" and val)
     return inst.source == "custom" or (inst.source != "custom" and val in allowed)
@@ -166,12 +167,12 @@ class SaeCfg:
     source: str | None = None
     variant: str = field(default="BatchTopK", validator=validators.in_(["BatchTopK"]))
     kws: dict[str, Any] = field(factory=dict)
-    level: str | None = field(default=None, validator=needs_val_if_not_custom)
+    level: Levels | None = field(default=None, validator=needs_val_if_not_custom)
     embedding: str | None = field(default=None, validator=needs_val_if_not_custom)
 
     @level.validator
     def check_level(inst, attr, val):
-        return needs_val_if_not_custom(inst, attr, val, LEVELS)
+        return needs_val_if_not_custom(inst, attr, val, Levels)
 
 
 @define
@@ -196,11 +197,15 @@ class SnakeEnv:
     saes: dict[Literal["custom", "pretrained"], dict[str, SaeCfg]] = field(
         validator=validators.instance_of(dict)
     )
-    fastas: dict[str, list[FastaSpec]] = field(
-        validator=validators.deep_mapping(key_validator=validators.in_(SEQTYPES))
+    fastas: dict[SeqTypes, list[FastaSpec]] = field(
+        validator=validators.deep_mapping(
+            key_validator=validators.instance_of(SeqTypes)
+        )
     )
-    embedding_methods: dict[str, dict[str, EmbeddingMethod]] = field(
-        validator=validators.deep_mapping(key_validator=validators.in_(SEQTYPES))
+    embedding_methods: dict[SeqTypes, dict[str, EmbeddingMethod]] = field(
+        validator=validators.deep_mapping(
+            key_validator=validators.instance_of(SeqTypes)
+        )
     )
 
     # Rules
@@ -223,24 +228,31 @@ class SnakeEnv:
             self.outdir / "label_cooccurrence.csv",
             self.outdir / "cooccurrence_stats.yaml",
         ]
-        for st in SEQTYPES:
+        for st in SeqTypes:
             if st not in self.embedding_methods or st not in self.fastas:
                 continue
             out.extend(
-                expand(f"{self.outdir}/training_indices/{{l}}_{st}.json", l=LEVELS)
+                expand(
+                    f"{self.outdir}/training_indices/{{l}}_{st.value}.json",
+                    l=[v.value for v in Levels],
+                )
             )
             for mname, mspec in self.embedding_methods[st].items():
                 level = mspec.level
-                out.append(f"{self.datasets}/embedded_{st}_{level}/{mname}.completed")
+                out.append(
+                    f"{self.datasets}/embedded_{st.value}_{level}/{mname}.completed"
+                )
                 for sae, spec in self.saes["custom"].items():
-                    out.append(self.outdir / f"saes_{st}_{level}/{mname}-{sae}.pt")
                     out.append(
-                        self.datasets / f"activations_{st}_{level}/{mname}-{sae}"
+                        self.outdir / f"saes_{st.value}_{level}/{mname}-{sae}.pt"
+                    )
+                    out.append(
+                        self.datasets / f"activations_{st.value}_{level}/{mname}-{sae}"
                     )
             for sae, spec in self.saes["pretrained"].items():
                 out.append(
                     self.datasets
-                    / f"activations_{st}_{spec.level}"
+                    / f"activations_{st.value}_{spec.level}"
                     / f"{spec.embedding}-{sae}"
                 )
         return out
