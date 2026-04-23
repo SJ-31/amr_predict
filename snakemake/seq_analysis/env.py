@@ -8,6 +8,7 @@ from typing import Any, Literal, Optional, Union
 
 import cattrs
 import yaml
+from amr_predict.embedding import EmbeddingModels
 from amr_predict.pooling import BasicPoolings
 from attr.validators import instance_of
 from attrs import asdict, define, field, validators
@@ -138,7 +139,7 @@ class DataLoaderCfg:
 
 @define
 class EmbeddingMethod:
-    method: str
+    model: EmbeddingModels
     poolings: dict[BasicPoolings, dict[str, Any] | None] = field(factory=dict)
     kws: dict[str, Any] | None = field(factory=dict)
 

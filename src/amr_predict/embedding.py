@@ -13,7 +13,7 @@ import jaxtyping
 import polars as pl
 import torch
 from amr_predict.utils import EmbeddingCache
-from attrs import Factory, define, field
+from attrs import Factory, define, field, validators
 from datasets.arrow_dataset import Dataset
 from esm.sdk.api import ESMProtein
 from torch import Tensor
@@ -29,20 +29,38 @@ EsmSynthraModels = Enum(
     },
 )
 
+
 EsmModels = Enum(
     "EsmModels",
     {
-        "esm2_t6_8m_UR50D": auto(),
-        "esm2_t33_650m_UR50D": auto(),
-        "esm3_open": auto(),
-        "esmc_600m": auto(),
-        "esmc_300m": auto(),
+        i: i
+        for i in [
+            "esm2_t6_8m_UR50D",
+            "esm2_t33_650m_UR50D",
+            "esm3_open",
+            "esmc_600m",
+            "esmc_300m",
+        ]
     },
 )
+
 
 SeqLensModels = Enum(
     "SeqLensModels", {"seqLens_4096_512_46M_Mp": "omicseye/seqLens_4096_512_46M-Mp"}
 )
+
+
+def embedding_size(model: EmbeddingModels) -> int:
+    if isinstance(model, EmbeddingModels.esm3_open):
+        raise NotImplementedError("figure this out")
+    elif validate_model_group(model, SeqLensModels):
+        return 512
+    elif validate_model_group(model, EsmSynthraModels) or validate_model_group(
+        model, EsmModels
+    ):
+        return 2048
+    raise NotImplementedError()
+
 
 EmbeddingModels = Enum(
     "EmbeddingModels",
@@ -69,7 +87,9 @@ class ModelEmbedder:
     workdir: Path = field(
         factory=lambda: Path().cwd().joinpath(f"embedding_work_{uuid.uuid4().hex}")
     )
-    save_mode: Literal["tokens", "seqs", "both"] = "seqs"
+    save_mode: Literal["tokens", "seqs", "both"] = field(
+        default="seqs", validator=validators.in_(("tokens", "seqs", "both"))
+    )
     default_dtype: torch.dtype = torch.float32
     device: str = field(factory=lambda: "cuda" if torch.cuda.is_available() else "cpu")
     batch_size: int = 128
@@ -150,11 +170,13 @@ class ModelEmbedder:
 
     def embed(
         self,
-        dataset: Dataset | None,
+        dataset: Dataset | pl.DataFrame,
         text_key: str = "sequence",
         cols_remove: str | None = None,
     ) -> Dataset | None:
-        df: pl.DataFrame = dataset.to_polars()
+        df: pl.DataFrame = (
+            dataset.to_polars() if not isinstance(dataset, pl.DataFrame) else dataset
+        )
         self.cache.save(df[text_key], fn=self._embed_batch, batch_size=self.batch_size)
         if not self.only_cache:
             result = self.cache.to_dataset(df, key_col=text_key)
