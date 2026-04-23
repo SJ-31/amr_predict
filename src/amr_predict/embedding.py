@@ -5,22 +5,29 @@ from __future__ import annotations
 
 import os
 import uuid
-from enum import Enum, auto
+from enum import Enum, EnumType, auto
 from pathlib import Path
 from typing import Generator, Literal, override
 
 import jaxtyping
 import polars as pl
 import torch
-from amr_predict.pooling import BASIC_POOLING_METHODS
 from amr_predict.utils import EmbeddingCache
-from attrs import Factory, define, field, validators
+from attrs import Factory, define, field
 from datasets.arrow_dataset import Dataset
 from esm.sdk.api import ESMProtein
 from torch import Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
 from transformers.modeling_outputs import MaskedLMOutput
+
+EsmSynthraModels = Enum(
+    "EsmSynthraModels",
+    {
+        "esmc_600m_synthyra": "Synthyra/ESMplusplus_large",
+        "esmc_300m_synthyra": "Synthyra/ESMplusplus_small",
+    },
+)
 
 EsmModels = Enum(
     "EsmModels",
@@ -30,31 +37,37 @@ EsmModels = Enum(
         "esm3_open": auto(),
         "esmc_600m": auto(),
         "esmc_300m": auto(),
-        "esmc_600m_synthyra": "Synthyra/ESMplusplus_large",
-        "esmc_300m_synthyra": "Synthyra/ESMplusplus_small",
     },
 )
 
+SeqLensModels = Enum(
+    "SeqLensModels", {"seqLens_4096_512_46M_Mp": "omicseye/seqLens_4096_512_46M-Mp"}
+)
+
 EmbeddingModels = Enum(
-    "EmbeddingMethods",
+    "EmbeddingModels",
     dict(
-        {"Evo2": auto(), "seqLens_4096_512_46M_Mp": "omicseye/seqLens_4096_512_46M-Mp"}
+        {i.name: i.value for i in EsmSynthraModels}
+        | {i.name: i.value for i in SeqLensModels}
         | {i.name: i.value for i in EsmModels}
     ),
 )
 
 
+def validate_model_group(model: EmbeddingModels, group: EnumType) -> bool:
+    try:
+        group[model.name]
+        return True
+    except KeyError:
+        return False
+
+
 @define
 class ModelEmbedder:
-    method: EmbeddingModels
+    model: EmbeddingModels
     token_prop: float | None = None
     workdir: Path = field(
-        default=Factory(
-            lambda self: Path()
-            .cwd()
-            .joinpath(f"{self.method.name}-work_{uuid.uuid4().hex}"),
-            takes_self=True,
-        )
+        factory=lambda: Path().cwd().joinpath(f"embedding_work_{uuid.uuid4().hex}")
     )
     save_mode: Literal["tokens", "seqs", "both"] = "seqs"
     default_dtype: torch.dtype = torch.float32
@@ -68,17 +81,23 @@ class ModelEmbedder:
     get_hidden: bool = field(
         default=Factory(lambda self: self.hidden_layer < 0, takes_self=True)
     )
+    cache: EmbeddingCache = field(
+        default=Factory(
+            lambda self: EmbeddingCache(
+                self.workdir,
+                save_mode=self.save_mode,
+                save_interval=self.save_interval,
+                token_prop=self.token_prop,
+            ),
+            takes_self=True,
+        )
+    )
 
     def __attrs_post_init__(self):
-        os.environ["HF_HOME"] = self.huggingface
+        if self.huggingface:
+            os.environ["HF_HOME"] = self.huggingface
         if not self.workdir.exists():
             self.workdir.mkdir()
-        self.cache: EmbeddingCache = EmbeddingCache(
-            self.workdir,
-            save_mode=self.save_mode,
-            save_interval=self.save_interval,
-            token_prop=self.token_prop,
-        )
         self.hidden_layer = 0 if self.hidden_layer < 0 else self.hidden_layer
 
     @property
@@ -95,6 +114,39 @@ class ModelEmbedder:
         tensor of token probabilities
         """
         raise NotImplementedError()
+
+    @classmethod
+    def new(
+        _cls,
+        model: EmbeddingModels,
+        save_mode: Literal["tokens", "seqs", "both"] = "seqs",
+        default_dtype: torch.dtype = torch.float32,
+        batch_size: int = 128,
+        hidden_layer: int = 0,
+        huggingface: str | None = None,
+        save_proba: bool = False,
+        save_interval: int = 10,
+        only_cache: bool = True,
+    ):
+        cls: ModelEmbedder
+        if validate_model_group(model, EsmSynthraModels):
+            cls = EsmSynthyra
+        elif validate_model_group(model, SeqLensModels):
+            cls = SeqLensEmbedder
+        elif validate_model_group(model, EsmModels):
+            cls = EsmOfficial
+        else:
+            raise NotImplementedError()
+        return cls(
+            save_mode=save_mode,
+            default_dtype=default_dtype,
+            batch_size=batch_size,
+            hidden_layer=hidden_layer,
+            huggingface=huggingface,
+            save_proba=save_proba,
+            save_interval=save_interval,
+            only_cache=only_cache,
+        )
 
     def embed(
         self,
@@ -145,13 +197,7 @@ class Esm2Embedder(ModelEmbedder):
 
 @define
 class EsmSynthyra(ModelEmbedder):
-    model: EmbeddingModels = field(
-        default=EsmModels.esmc_600m_synthyra,
-        validator=validators.or_(
-            validators.instance_of(EsmModels.esmc_600m_synthyra),
-            validators.instance_of(EsmModels.esmc_300m_synthyra),
-        ),
-    )
+    model: EmbeddingModels = field(default=EsmSynthraModels.esmc_600m_synthyra)
 
     def __attrs_post_init__(self):
         super().__attrs_post__init()
@@ -194,14 +240,7 @@ class EsmSynthyra(ModelEmbedder):
 
 @define
 class EsmOfficial(ModelEmbedder):
-    model: EmbeddingModels = field(
-        default=EsmModels.esmc_600m,
-        validator=validators.or_(
-            validators.instance_of(EsmModels.esmc_300m),
-            validators.instance_of(EsmModels.esmc_600m),
-            validators.instance_of(EsmModels.esm3_open),
-        ),
-    )
+    model: EmbeddingModels = field(default=EsmModels.esmc_600m)
 
     def __attrs_post_init__(self):
         super().__attrs_post_init__()
@@ -296,6 +335,3 @@ class SeqLensEmbedder(ModelEmbedder):
                     seq = seqlens_uid2seq[seqlens_uid.cpu().item()]
                     token = hidden_layer[i, :, :]
                     yield seq, token, Tensor()
-
-
-# * Dispatcher
