@@ -8,6 +8,8 @@ from typing import Any, Literal, Optional, Union
 
 import cattrs
 import yaml
+from amr_predict.pooling import BasicPoolings
+from attr.validators import instance_of
 from attrs import asdict, define, field, validators
 from snakemake.io import expand
 from yte import process_yaml
@@ -137,8 +139,8 @@ class DataLoaderCfg:
 @define
 class EmbeddingMethod:
     method: str
-    level: Levels = field(validator=validators.instance_of(Levels))
-    kws: dict[str, Any] = field(factory=dict)
+    poolings: dict[BasicPoolings, dict[str, Any] | None] = field(factory=dict)
+    kws: dict[str, Any] | None = field(factory=dict)
 
 
 @define
@@ -193,18 +195,16 @@ class SnakeEnv:
     rng: int
     outdir: Path = field(converter=Path)
     metadata: Metadata
-    resources: dict = field(validator=validators.instance_of(dict))
+    resources: dict = field(validator=instance_of(dict))
     saes: dict[Literal["custom", "pretrained"], dict[str, SaeCfg]] = field(
-        validator=validators.instance_of(dict)
+        validator=instance_of(dict)
     )
     fastas: dict[SeqTypes, list[FastaSpec]] = field(
-        validator=validators.deep_mapping(
-            key_validator=validators.instance_of(SeqTypes)
-        )
+        validator=validators.deep_mapping(key_validator=instance_of(SeqTypes))
     )
     embedding_methods: dict[SeqTypes, dict[str, EmbeddingMethod]] = field(
         validator=validators.deep_mapping(
-            key_validator=validators.instance_of(SeqTypes)
+            key_validator=instance_of(SeqTypes),
         )
     )
 
@@ -215,6 +215,7 @@ class SnakeEnv:
 
     slurm_time_limit: str = "18-0:0:0"
     co_occurence_min_support: float = 0.3
+    save_token_proportion: float = 0.3
     log_wandb: bool = True
     embedding_key: str = "x"
     embedding_max_lengths: dict = field(default={"esm": 2048, "seqLens": 512})
@@ -228,6 +229,7 @@ class SnakeEnv:
             self.outdir / "label_cooccurrence.csv",
             self.outdir / "cooccurrence_stats.yaml",
         ]
+        custom_saes: dict = self.saes["custom"]
         for st in SeqTypes:
             if st not in self.embedding_methods or st not in self.fastas:
                 continue
@@ -237,18 +239,23 @@ class SnakeEnv:
                     l=[v.value for v in Levels],
                 )
             )
+            acts_prefix: str = f"{self.datasets}/embedded_{st.value}"
+            sae_prefix: str = f"{self.outdir}/saes_{st.value}"
+            embedding_prefix: str = f"{self.datasets}/embedded_{st.value}"
+
             for mname, mspec in self.embedding_methods[st].items():
-                level = mspec.level
-                out.append(
-                    f"{self.datasets}/embedded_{st.value}_{level}/{mname}.completed"
-                )
-                for sae, spec in self.saes["custom"].items():
-                    out.append(
-                        self.outdir / f"saes_{st.value}_{level}/{mname}-{sae}.pt"
-                    )
-                    out.append(
-                        self.datasets / f"activations_{st.value}_{level}/{mname}-{sae}"
-                    )
+                out.append(f"{embedding_prefix}_tokens/{mname}.completed")
+
+                for s in custom_saes.keys():
+                    out.append(f"{sae_prefix}_tokens/{mname}-{s}.pt")
+                    out.append(f"{acts_prefix}_tokens/{mname}-{s}.pt")
+
+                for p in mspec.poolings:
+                    out.append(f"{embedding_prefix}_seqs/{mname}-{p.value}.completed")
+                    for sae in custom_saes:
+                        out.append(f"{sae_prefix}_seqs/{mname}-{p.value}-{sae}.pt")
+                        out.append(f"{acts_prefix}_seqs/{mname}-{p.value}-{sae}")
+
             for sae, spec in self.saes["pretrained"].items():
                 out.append(
                     self.datasets
