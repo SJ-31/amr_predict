@@ -7,9 +7,10 @@ from collections.abc import Sequence
 from os import replace
 from pathlib import Path
 from shutil import copyfile
-from typing import Any, Callable, Literal, override
+from typing import Any, Callable, Literal, get_args, override
 
 import duckdb
+import jaxtyping
 import numpy as np
 import polars as pl
 import torch
@@ -17,10 +18,13 @@ import torch.utils.data as td
 from amr_predict.pooling import BasicPoolings, pool_tensor
 from amr_predict.utils import torch2pl
 from attrs import define, field, validators
+from beartype import beartype
 from datasets import Dataset
 from loguru import logger
 from numpy.random import Generator
 from torch import Tensor
+
+LEVELS = Literal["logits", "seqs", "tokens"]
 
 
 @define
@@ -34,7 +38,7 @@ class EmbeddingCache:
     """
 
     dir: Path
-    prefix: str
+    prefix: str = "batch"
     rng: Generator = field(
         default=4243, converter=lambda val: np.random.default_rng(val)
     )
@@ -43,6 +47,7 @@ class EmbeddingCache:
     save_mode: Literal["both", "seqs", "tokens"] = field(
         default="seqs", validator=validators.in_(["both", "seqs", "tokens"])
     )
+    save_interval: int = 10
     seen: set = field(init=False, factory=set)
     pooling: BasicPoolings = BasicPoolings.MEAN
     storage: Tensor = field(init=False, factory=lambda: torch.tensor([]))
@@ -54,14 +59,18 @@ class EmbeddingCache:
         except StopIteration:
             pass
 
+    @beartype
     def retrieve(
-        self, keys: pl.Series, tokens: bool = False, as_array: bool = True
+        self, keys: pl.Series, level: LEVELS, as_array: bool = True
     ) -> pl.DataFrame:
         key_length = len(keys)
-        col = "token" if tokens else "seq"
+        col = level.removesuffix("s")
+        col_selector = f"t.{col}"
+        if level == "tokens":
+            col_selector = f"t.{col}, t.token_idx"
         key_df = pl.DataFrame({"key": keys})
         lf: pl.LazyFrame = duckdb.query(f"""
-        SELECT DISTINCT ON (t.key) t.key, t.{col}
+        SELECT DISTINCT ON (t.key) t.key, {col_selector}
         FROM '{self._glob()}' t
         INNER JOIN key_df k on k.key = t.key
         """).pl(lazy=True)
@@ -243,19 +252,21 @@ class EmbeddingCache:
         token: jaxtyping.Float[Tensor, "a b"]
 
         batches = itertools.batched(set(to_embed), n=batch_size)
-        first_batch = next(batches)
+        try:
+            first_batch = next(batches)
+        except StopIteration:
+            return
         schema: dict = {"key": pl.String}
         save_into = {"key": []}
         key, token, logit = next(fn(first_batch))
         assert isinstance(token, jaxtyping.Float[Tensor, "a b"])
 
         if self.save_mode in ("seqs", "both"):
-            schema["seq"] = pl.Array(dtype, len(pooled))
+            schema["seq"] = pl.Array(dtype, token.shape[1])
             save_into["seq"] = []
         if self.save_mode in ("tokens", "both"):
             schema["token"] = pl.List(pl.Array(dtype, token.shape[1]))
             save_into["token"] = []
-        if self.token_prop:
             schema["token_idx"] = pl.List(pl.Int64)
             save_into["token_idx"] = []
         if self.save_logits:
@@ -274,6 +285,7 @@ class EmbeddingCache:
                         tmp["seq"].append(pool_tensor(t, method=self.pooling))
                     if self.save_mode in ("tokens", "both") and not self.token_prop:
                         tmp["token"].append(t)
+                        tmp["token_idx"].append(range(t.shape[0]))
                     elif self.save_mode in ("tokens", "both"):
                         n_tokens = t.shape[0]
                         n = max(1, int(n_tokens * self.token_prop))
@@ -308,7 +320,7 @@ class EmbeddingCache:
         self,
         df: pl.DataFrame,
         key_col: str,
-        tokens: bool = False,
+        level: LEVELS,
         new_col: str = "embedding",
         drop_null_columns: bool = True,
         hf: bool = False,
@@ -329,10 +341,11 @@ class EmbeddingCache:
             # be zero-copy
             return dset
         return LinkedDataset(
-            meta=df, text_key=key_col, cache=self, token_level=tokens, x_key=new_col
+            meta=df, text_key=key_col, cache=self, level=level, x_key=new_col
         )
 
 
+@define
 class LinkedDataset(td.Dataset):
     """Dataset using duckdb (through EmbeddingCache) to stream large embedding data in
     batches.
@@ -346,33 +359,20 @@ class LinkedDataset(td.Dataset):
         Dataframe or dataset containing the metadata for each sequence
     text_key : str
         Key in the dictionary on indexing to store the embeddings
-
-    Notes
-    -----
-
     """
 
-    def __init__(
-        self,
-        meta: pl.DataFrame | Dataset,
-        cache: EmbeddingCache,
-        token_level: bool = False,
-        x_key: str = "embedding",
-        text_key: str = "sequence",
-    ) -> None:
-        self.cache: EmbeddingCache = cache
-        self.meta: pl.DataFrame = (
-            meta if isinstance(meta, pl.DataFrame) else meta.to_polars()
-        )
-        self.text_key: str = text_key
-        self.token_level: bool = token_level
-        self.x_key: str = x_key
-        super().__init__()
+    cache: EmbeddingCache
+    meta: pl.DataFrame = field(
+        converter=lambda x: x if isinstance(x, pl.DataFrame) else x.to_polars()
+    )
+    level: LEVELS = field(default="seqs", validator=validators.in_(get_args(LEVELS)))
+    x_key: str = "embedding"
+    text_key: str = "sequence"
 
     @property
     def shape(self):
         n_col = self.meta.shape[1] + 1
-        if not self.token_level:
+        if self.level != "tokens":
             return self.meta.shape[0], n_col
         key_df = pl.DataFrame({"key": self.meta[self.text_key]})
         n_row = (
@@ -412,13 +412,13 @@ class LinkedDataset(td.Dataset):
 
     def to_polars(self) -> pl.DataFrame:
         embeddings: pl.DataFrame = self.cache.retrieve(
-            self.meta[self.text_key].unique(), tokens=self.token_level, as_array=True
+            self.meta[self.text_key].unique(), level=self.level, as_array=True
         )
         joined = self.meta.join(
             embeddings, left_on=self.text_key, right_on="key", how="left"
         )
-        if self.token_level:
-            joined = joined.explode("token")
+        if self.level == "tokens":
+            joined = joined.explode("token", "token_idx")
         return joined
 
     @property
@@ -428,27 +428,27 @@ class LinkedDataset(td.Dataset):
     def _get_x(self, indices: Any | None = None) -> pl.DataFrame:
         df: pl.DataFrame = self.meta[indices] if indices is not None else self.meta
         x_df: pl.DataFrame = self.cache.retrieve(
-            df[self.text_key].unique(), tokens=self.token_level, as_array=True
+            df[self.text_key].unique(), level=self.level, as_array=True
         )
-        joined = df.join(x_df, left_on=self.text_key, right_on="key", how="left")
+        joined = df.join(
+            x_df, left_on=self.text_key, right_on="key", how="left", validate="m:1"
+        )
         return joined
 
     def _get_col(self, col) -> Tensor | pl.Series:
         if col == self.x_key:
             collected = self._get_x(None)
-            if self.token_level:
-                return collected["token"].to_torch()
-            return collected["seq"].to_torch()
+            return collected[self.level.removesuffix("s")].to_torch()
         return self.meta[col]
 
     @override
     def __getitem__(self, index) -> dict | Tensor | pl.Series:
         if isinstance(index, str):
             return self._get_col(index)
-        level = "token" if self.token_level else "seq"
+        level = self.level.removesuffix("s")
         df = self._get_x(index)
-        if self.token_level:
-            df = df.explode("token")
+        if self.level == "tokens":
+            df = df.explode("token", "token_idx")
         can_convert = self.meta.select(pl.selectors.numeric()).columns
         converted = {col: df[col].to_torch() for col in can_convert}
         x = df[level].to_torch()
@@ -470,7 +470,7 @@ class LinkedDataset(td.Dataset):
         return LinkedDataset(
             meta=self.meta[indices],
             cache=self.cache,
-            token_level=self.token_level,
+            level=self.level,
             x_key=self.x_key,
             text_key=self.text_key,
         )
@@ -487,7 +487,7 @@ class LinkedDataset(td.Dataset):
             "cache": self.cache,
             "x_key": self.x_key,
             "text_key": self.text_key,
-            "token_level": self.token_level,
+            "level": self.level,
         }
         if keep:
             kws["meta"] = self.meta.select(columns)
@@ -507,5 +507,5 @@ class LinkedDataset(td.Dataset):
             cache=self.cache,
             x_key=self.x_key,
             text_key=self.text_key,
-            token_level=self.token_level,
+            level=self.level,
         )
