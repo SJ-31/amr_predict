@@ -42,7 +42,7 @@ class EmbeddingCache:
         default=4243, converter=lambda val: np.random.default_rng(val)
     )
     save_proba: bool = False
-    token_prop: float | None = None
+    token_amount: float | int | None = None
     save_mode: Literal["both", "seqs", "tokens"] = field(
         default="seqs", validator=validators.in_(["both", "seqs", "tokens"])
     )
@@ -108,6 +108,21 @@ class EmbeddingCache:
             .otherwise(pl.col(column))
             .alias(column)
         )
+
+    def _maybe_sample_tokens(
+        self, tokens: jaxtyping.Float[Tensor, "a b"]
+    ) -> tuple[Tensor, np.ndarray | list]:
+        n_tokens = tokens.shape[0]
+        if self.token_amount is None or (
+            isinstance(self.token_amount, int) and self.token_amount >= n_tokens
+        ):
+            return tokens, list(range(n_tokens))
+        elif isinstance(self.token_amount, float):
+            n = max(1, int(n_tokens * self.token_amount))
+        else:
+            n = self.token_amount
+        indices = self.rng.choice(range(n_tokens), n, replace=False)
+        return tokens[indices, :], indices
 
     def _set_seen(self) -> None:
         self.seen = set(
@@ -260,7 +275,7 @@ class EmbeddingCache:
         _, token, logits = next(embed_fn(first_batch))
         assert isinstance(token, jaxtyping.Float[Tensor, "a b"])
         if self.save_proba:
-            assert isinstance(logits, jaxtyping.Float[Tensor, "a b"])
+            assert isinstance(logits, jaxtyping.Float[Tensor, "a"])
 
         if self.save_mode in ("seqs", "both"):
             schema["seq"] = pl.Array(dtype, token.shape[1])
@@ -284,14 +299,9 @@ class EmbeddingCache:
                     tmp["key"].append(k)
                     if self.save_mode in ("seqs", "both"):
                         tmp["seq"].append(pool_tensor(t, method=self.pooling))
-                    if self.save_mode in ("tokens", "both") and not self.token_prop:
-                        tmp["token"].append(t)
-                        tmp["token_idx"].append(range(t.shape[0]))
-                    elif self.save_mode in ("tokens", "both"):
-                        n_tokens = t.shape[0]
-                        n = max(1, int(n_tokens * self.token_prop))
-                        indices = self.rng.choice(range(n_tokens), n, replace=False)
-                        tmp["token"].append(t[indices, :])
+                    if self.save_mode in ("tokens", "both"):
+                        tokens, indices = self._maybe_sample_tokens(t)
+                        tmp["token"].append(tokens)
                         tmp["token_idx"].append(indices)
                     if self.save_proba:
                         tmp["token_pr"].append(l)
