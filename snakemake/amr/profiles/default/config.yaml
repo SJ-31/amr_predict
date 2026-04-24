@@ -1,7 +1,7 @@
 cores: 1
 jobs: 10
 executor: slurm
-slurm-logdir: "/data/home/shannc/amr_predict/snakemake/slurm_logs"
+slurm-logdir: "/data/home/shannc/amr_predict/snakemake/amr/slurm_logs"
 default-resources:
   mem: 50G
   qos: cpu24h
