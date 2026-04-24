@@ -34,7 +34,7 @@ dependencies = [
   "datasets",
   "snakemake",
   "memray",
-  "umap",
+  "umap-learn",
   "scikit-bio",
   "anndata",
   "fastcluster",
