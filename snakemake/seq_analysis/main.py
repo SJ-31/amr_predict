@@ -1,37 +1,57 @@
 #!/usr/bin/env python3
 
+import json
 import os
 from pathlib import Path
 from typing import Literal
 
+import fastcluster
+import lightning as L
 import polars as pl
+import sklearn.model_selection as ms
 import torch
 import yaml
-from amr_predict.evaluation import pami_wrapper
-from amr_predict.preprocessing import EMBEDDING_METHODS, SeqEmbedder
-from amr_predict.utils import EmbeddingCache
+from attrs import asdict
 from beartype import beartype
 from Bio import SeqIO
 from datasets import load_from_disk
 from datasets.arrow_dataset import Dataset
+from datasets.packaged_modules import text
+from lightning.pytorch.loggers import WandbLogger
 from loguru import logger
+from scipy.cluster.hierarchy import cut_tree
+from torch.utils.data import DataLoader
+
+from amr_predict.cache import EmbeddingCache, LinkedDataset
+from amr_predict.embedding import EmbeddingModels, ModelEmbedder, embedding_size
+from amr_predict.evaluation import pami_wrapper, to_binary_form
+from amr_predict.models import BaseNN
+from amr_predict.pooling import BasicPoolings
+from amr_predict.sae import BatchTopK
+from amr_predict.utils import (
+    ModuleConfig,
+    SeqTypes,
+    read_tabular,
+)
+from env import SnakeEnv
 
 try:
     from snakemake.script import snakemake as smk
 except ImportError:
     smk = type("snakemake", (), {"rule": None, "config": {}, "log": [0]})
 
-CONFIG = smk.config
-RCONFIG = smk.config.get(smk.rule)
-RNG: int = smk.config.get("rng", 20021031)
-SCOL = smk.config.get("metadata", {}).get("sample_col")
-LABEL_SEP = smk.config.get("metadata", {}).get("label_sep")
-LCOL = smk.config.get("metadata", {}).get("label_col")
+ENV: SnakeEnv = SnakeEnv.new(smk.config)
+
+SCOL = ENV.metadata.sample_col
+LABEL_SEP = ENV.metadata.label_sep
+LCOL = ENV.metadata.label_col
+
 logger.enable("")
 if len(smk.log) == 1:
     logger.add(smk.log[0])
 
-os.environ["HF_HOME"] = smk.config["huggingface"]
+
+os.environ["HF_HOME"] = ENV.huggingface
 
 # * Utility functions
 
@@ -60,10 +80,11 @@ def account_for_max_length(
     dset: pl.DataFrame,
     max_len: int,
     seq_col: str = "sequence",
+    token_level: bool = False,
     embedding_col: str = "x",
     id_col: str = "id",
     cache: EmbeddingCache | None = None,
-    agg: Literal["max", "mean", "sum"] = "mean",
+    agg: BasicPoolings = BasicPoolings.MEAN,
 ) -> pl.DataFrame:
     """
     Split sequences in `dset` into subsequences of length `max_len` so that
@@ -94,24 +115,36 @@ def account_for_max_length(
     if cache is None:
         return expanded.select(subseq_id_col, seq_col)
     retrieved: pl.DataFrame = cache.retrieve(expanded[seq_col])
-    expanded = (
-        expanded.join(
-            retrieved, left_on=seq_col, right_on="key", how="inner", validate="m:1"
-        )
-        .group_by(id_col)
-        .agg(
-            pl.when(agg == "max")
-            .then(pl.col("seq").max())
-            .when(agg == "mean")
-            .then(pl.col("seq").mean())
-            .otherwise(pl.col("seq").sum()),
-            pl.len().alias("n_subseq"),
-        )
-        .rename({"seq": embedding_col})
-        .select(id_col, embedding_col)
+    expanded = expanded.join(
+        retrieved, left_on=seq_col, right_on="key", how="inner", validate="m:1"
     )
-    return expanded
+    if not token_level:
+        expanded = (
+            expanded.group_by(id_col)
+            .agg(
+                pl.when(agg == BasicPoolings.MAX)
+                .then(pl.col("seq").max())
+                .when(agg == BasicPoolings.SUM)
+                .then(pl.col("seq").mean())
+                .otherwise(pl.col("seq").sum()),
+                pl.len().alias("n_subseq"),
+            )
+            .rename({"seq": embedding_col})
+        )
+    else:
+        expanded = (
+            expanded.group_by(id_col)
+            .agg(pl.col("token").arr.explode())
+            .rename({"token": embedding_col})
+        )
+    return expanded.select(id_col, embedding_col)
 
+
+def get_dset_indices(file) -> tuple[list, list, list]:
+    """Read saved indices file and return a tuple of train, test, val indices"""
+    with open(file, "r") as f:
+        obj = json.loads(f)
+    return obj["train"], obj["test"], obj["val"]
 
 
 def load_embeddings(
@@ -124,19 +157,86 @@ def load_embeddings(
     cache = EmbeddingCache(dir=cache_path)
     seqs: Path = dataset_path / f"sequence_{seqtype}"
     seq_df: pl.DataFrame = load_from_disk(seqs).to_polars()
-    dset = cache.to_dataset(
-        df=seq_df, key_col="sequence", tokens=level == "tokens", new_col="x"
-    )
+    dset = cache.to_dataset(df=seq_df, key_col="sequence", level=level, new_col="x")
     assert isinstance(dset, LinkedDataset)
     return dset
+
+
+def from_pretrained(dset: LinkedDataset):
+    pass
+
+
+def lookup_sae(spec: str, act_size: int) -> BaseNN:
+    from_env = ENV.saes["custom"][spec]
+    variant = from_env.variant
+    if variant == "BatchTopK":
+        cls = BatchTopK
+    else:
+        raise NotImplementedError("SAE variant not recognized")
+    cfg: ModuleConfig = ModuleConfig(act_size=act_size, **from_env.get("kws", {}))
+    return cls(cfg=cfg, x_key="x")
+
+
 # * Rules
+
+
+def get_activations():
+    dset: LinkedDataset = load_embeddings(
+        cache_completion_file=smk.input["embeddings"],
+        dataset_path=ENV.datasets,
+        level=smk.params["level"],
+        seqtype=smk.params["seqtype"],
+    )
+    if not smk.input["sae"]:
+        return from_pretrained()
+    pass
+
+
+def write_training_indices():
+    sample_df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
+    if smk.params["level"] == "tokens":
+        sample_df = sample_df.with_columns(pl.col("sequence").str.split("")).explode(
+            "sequence"
+        )
+    sample_df = sample_df.with_columns(pl.row_index())
+    train_idx, test_idx = ms.train_test_split(
+        sample_df["index"], **asdict(ENV.write_training_indices)
+    )
+    train_idx, val_idx = ms.train_test_split(train_idx, random_state=ENV.rng)
+    with open(smk.output[0], "w") as f:
+        json.dump({"train": train_idx, "val": val_idx, "test": test_idx}, f)
+
+
+def train_sae():
+    cache_path: Path = Path(smk.input[0]).with_suffix("")
+    rconfig = ENV.train_sae
+    train_kws = rconfig.trainer.to_kws()
+    sae_name = smk.params["sae"]
+    run_name = f"{cache_path.stem}-seq_analysis-train_sae-{sae_name}"
+    if smk.config["log_wandb"]:
+        train_kws["logger"] = WandbLogger(run_name, project="amr_predict")
+    seq_level = smk.params["level"]
+    dset: LinkedDataset = load_embeddings(
+        cache_completion_file=smk.input[0],
+        dataset_path=ENV.datasets,
+        seqtype=smk.params["seqtype"],
+        level=seq_level,
+    )
+    sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
+    load_kws = rconfig.dataloader.to_kws()
+    trainer = L.Trainer(**train_kws)
+    train_idx, _, val_idx = get_dset_indices(smk.input[1])
+    train_l = DataLoader(dset.select(train_idx), **load_kws)
+    val_l = DataLoader(dset.select(val_idx), **load_kws)
+    trainer.fit(sae, train_dataloaders=train_l, val_dataloaders=val_l)
+    torch.save(sae.state_dict(), smk.output[0])
 
 
 def make_seq_dataset():
     dfs: pl.DataFrame = []
     outdir = Path(smk.config["outdir"])
-    for spec in CONFIG["fastas"][smk.params["seqtype"]]:
-        dfs.append(read_fasta(spec["file"], spec["header_style"]))
+    for spec in ENV.fastas[smk.params["seqtype"]]:
+        dfs.append(read_fasta(spec.file, spec.header_style))
     combined = pl.concat(dfs)
     for col in ("id", "sequence"):
         if not combined[col].is_duplicated().any():
@@ -163,7 +263,7 @@ def label_cooccurrence():
         alg = cudaAprioriTID
     else:
         alg = FPGrowth
-    label_df: pl.DataFrame = pl.read_csv(smk.input[0]).unique()
+    label_df: pl.DataFrame = read_tabular(smk.input[0]).unique()
     frequent_patterns, pattern_stats = pami_wrapper(
         label_df,
         alg,
@@ -179,30 +279,81 @@ def label_cooccurrence():
         yaml.safe_dump(f, pattern_stats)
 
 
-def get_embeddings():
-    df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
-    seqtype = smk.params["seqtype"]
-    spec: dict = CONFIG["embedding_methods"][seqtype][smk.params["embedding_method"]]
-    method: EMBEDDING_METHODS = spec.get("method", smk.params["embedding_method"])
-    max_length = CONFIG["embedding_max_lengths"][method]
+# def label_clustering():
+#     label_df = read_tabular(smk.input[0]).unique()
+#     binary = to_binary_form(label_df, sample_col=SCOL, label_col=LCOL, sep=LABEL_SEP)
+#     labels = binary.columns
+#     linkage = fastcluster.linkage_vector(
+#         binary.to_numpy(),
+#         metric=RCONFIG["metric"],
+#         method=RCONFIG["method"],
+#     )
+#     cut = cut_tree(linkage, height=RCONFIG["height"])
+#     # TODO: should optimize this somehow. Maybe silhouette score? Or dynamically cutting
+#     # the tree
+#     # Cluster robustness may also work, but you're not confident that the R version will
+#     # scale to the size
+#     # TODO: also need to put out the stats
+#     pl.DataFrame({"label": labels, "cluster": cut.flatten()}).write_csv(smk.output[0])
+
+
+# def get_embeddings():
+#     df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
+#     seqtype = SeqTypes[smk.params["seqtype"].upper()]
+#     spec = ENV.embedding_methods[seqtype][smk.params["embedding_method"]]
+#     model: EmbeddingModels = spec.model
+#     max_length = embedding_size(model)
+#     df = account_for_max_length(df, max_len=max_length, seq_col="sequence", id_col="id")
+#     kws: dict = spec.kws
+#     out = Path(smk.output[0])
+#     cache_path = out.with_suffix("")
+#     if not cache_path.exists():
+#         cache_path.mkdir()
+#     kws["huggingface"] = ENV.huggingface
+#     kws["save_mode"] = smk.params["level"]
+#     embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
+#     embedder.embed(dataset=Dataset.from_polars(df))
+#     out.write_text("completed")
+
+
+def get_embeddings(input, output, seqtype_str: str, level: str, embedding_method: str):
+    df: pl.DataFrame = load_from_disk(input).to_polars()
+    seqtype = SeqTypes[seqtype_str.upper()]
+    print(ENV)
+    spec = ENV.embedding_methods[seqtype][embedding_method]
+    model: EmbeddingModels = spec.model
+    max_length = embedding_size(model)
     df = account_for_max_length(df, max_len=max_length, seq_col="sequence", id_col="id")
-    kws: dict = spec.get("kws", {})
-    kws["method"] = method
-    out = Path(smk.output[0])
+    kws: dict = spec.kws
+    out = Path(output)
     cache_path = out.with_suffix("")
     if not cache_path.exists():
         cache_path.mkdir()
-    if method in ("seqLens", "esm"):
-        kws["huggingface"] = CONFIG["huggingface"]
-    if method == "esm":
-        kws["from_nucleotide"] = False
-    embedder = SeqEmbedder(
-        workdir=cache_path, only_cache=True, with_tokens=False, **kws
-    )
-    embedder(Dataset.from_polars(df))
+    kws["huggingface"] = ENV.huggingface
+    kws["save_mode"] = level
+    embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
+    embedder.embed(dataset=Dataset.from_polars(df))
     out.write_text("completed")
 
 
 # * Entry
-if rule_fn := globals().get(smk.rule):
+def parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--input")
+    parser.add_argument("-o", "--output")
+    parser.add_argument("-r", "--rule")
+    parser.add_argument("-e", "--embedding_method")
+    parser.add_argument("-l", "--level")
+    parser.add_argument("-s", "--seqtype")
+    args = vars(parser.parse_args())  # convert to dict
+    return args
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    rule_fn = globals()[args["rule"]]
+    rule_fn(args)
+elif rule_fn := globals().get(smk.rule):
     rule_fn()

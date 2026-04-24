@@ -4,11 +4,13 @@ import numpy as np
 import polars as pl
 import pytest
 from amr_predict.embedding import EmbeddingModels, ModelEmbedder
+from loguru import logger
 from numpy.random import Generator
 from pyhere import here
 
 HF = here("data", "remote", "cache", "huggingface")
 
+logger.enable("amr_predict")
 
 # [2026-04-23 Thu] TODO: run this test
 

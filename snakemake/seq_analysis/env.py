@@ -8,15 +8,16 @@ from typing import Any, Literal, Optional, Union
 
 import cattrs
 import yaml
-from amr_predict.embedding import EmbeddingModels
-from amr_predict.pooling import BasicPoolings
 from attr.validators import instance_of
 from attrs import asdict, define, field, validators
 from snakemake.io import expand
 from yte import process_yaml
 
+from amr_predict.embedding import EmbeddingModels
+from amr_predict.pooling import BasicPoolings
+from amr_predict.utils import SeqTypes
+
 Levels = Enum("Levels", (("TOKENS", "tokens"), ("SEQS", "seqs")))
-SeqTypes = Enum("SeqTypes", (("AA", "aa"), ("NUC", "nuc")))
 
 
 cattrs.register_structure_hook(Union[str, bool], Union[str, bool])
