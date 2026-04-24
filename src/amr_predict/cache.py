@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Sequence
-from os import replace
 from pathlib import Path
 from shutil import copyfile
 from typing import Any, Callable, Literal, get_args, override
@@ -42,7 +41,7 @@ class EmbeddingCache:
     rng: Generator = field(
         default=4243, converter=lambda val: np.random.default_rng(val)
     )
-    save_logits: bool = False
+    save_proba: bool = False
     token_prop: float | None = None
     save_mode: Literal["both", "seqs", "tokens"] = field(
         default="seqs", validator=validators.in_(["both", "seqs", "tokens"])
@@ -226,7 +225,7 @@ class EmbeddingCache:
     def save(
         self,
         to_embed: Sequence,
-        fn: Callable[[Any], dict[str, Tensor]],
+        embed_fn: Callable,
         batch_size: int = 50,
     ) -> None:
         """Embed all unique sequences in `to_embed`
@@ -235,11 +234,11 @@ class EmbeddingCache:
 
         Parameters
         ----------
-        fn : Callable
-            A function that takes a sequence of text and returns a
-            dictionary mapping texts to a tuple of
-                (sequence-level embeddings, token-level embeddings)
-            The token-level embeddings (a 2D tensor) are optional
+        embedding_fn : Callable
+            A function that takes a sequence of strs and returns a
+            dictionary mapping strs to a tuple of
+                (str, token-level embeddings, token probabilities)
+            Token probabilities are only required if self.with_proba is set
         """
         as_set = set(to_embed)
         n_old = len(as_set & self.seen)
@@ -258,8 +257,10 @@ class EmbeddingCache:
             return
         schema: dict = {"key": pl.String}
         save_into = {"key": []}
-        key, token, logit = next(fn(first_batch))
+        _, token, logits = next(embed_fn(first_batch))
         assert isinstance(token, jaxtyping.Float[Tensor, "a b"])
+        if self.save_proba:
+            assert isinstance(logits, jaxtyping.Float[Tensor, "a b"])
 
         if self.save_mode in ("seqs", "both"):
             schema["seq"] = pl.Array(dtype, token.shape[1])
@@ -269,14 +270,14 @@ class EmbeddingCache:
             save_into["token"] = []
             schema["token_idx"] = pl.List(pl.Int64)
             save_into["token_idx"] = []
-        if self.save_logits:
-            schema["logit"] = pl.List(dtype)
-            save_into["logit"] = []
+        if self.save_proba:
+            schema["token_pr"] = pl.List(dtype)
+            save_into["token_pr"] = []
 
         for batch in itertools.chain([first_batch], batches):
             tmp = save_into.copy()
             try:
-                gen = fn(batch)
+                gen = embed_fn(batch)
                 # REVIEW: you didn't wanna have to do this, but had trouble with
                 # casting types from the generator directly
                 for k, t, l in gen:
@@ -292,9 +293,8 @@ class EmbeddingCache:
                         indices = self.rng.choice(range(n_tokens), n, replace=False)
                         tmp["token"].append(t[indices, :])
                         tmp["token_idx"].append(indices)
-                    if self.save_logits:
-                        tmp["logit"].append(l)
-
+                    if self.save_proba:
+                        tmp["token_pr"].append(l)
                 lf = pl.LazyFrame(tmp, schema=schema)
                 self.seen |= set(tmp["key"])
                 lfs.append(lf)
@@ -331,8 +331,8 @@ class EmbeddingCache:
             df = df[not_nulls]
             logger.warning(f"Dropping {len(nulls)} null columns: {nulls}")
         if hf:
-            col = "token" if tokens else "seq"
-            join_with = self.retrieve(df[key_col], tokens=tokens).rename({col: new_col})
+            col = level.removesuffix("s")
+            join_with = self.retrieve(df[key_col], level=level).rename({col: new_col})
             joined = df.join(join_with, left_on=key_col, right_on="key").filter(
                 pl.col(new_col).is_not_null()
             )

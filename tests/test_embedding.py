@@ -14,16 +14,16 @@ HF = here("data", "remote", "cache", "huggingface")
 
 
 @pytest.mark.parametrize(
-    "model,seqtype,save_mode",
+    "model,seqtype,save_mode,lg",
     [
-        (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "seqs"),
-        (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "tokens"),
-        (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "tokens"),
-        (EmbeddingModels.esmc_600m, "aa", "seqs"),
-        (EmbeddingModels.esmc_600m, "aa", "tokens"),
+        (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "seqs", False),
+        (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "tokens", False),
+        (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "tokens", False),
+        (EmbeddingModels.esmc_600m, "aa", "seqs", False),
+        (EmbeddingModels.esmc_600m, "aa", "tokens", True),
     ],
 )
-def test_embedding(tmp_path, model, seqtype, save_mode):
+def test_embedding(tmp_path, model, seqtype, save_mode, lg):
     workdir = tmp_path / "cache"
     rng: Generator = np.random.default_rng()
     choices = list("ATCG" if seqtype == "nuc" else "FRILSPEGYNA")
@@ -42,8 +42,10 @@ def test_embedding(tmp_path, model, seqtype, save_mode):
         batch_size=10,
         workdir=workdir,
         save_mode=save_mode,
+        save_proba=lg,
         only_cache=True,
         hidden_layer=0,
         huggingface=str(HF),
     )
     E.embed(dataset)
+    print(E.cache.to_pl().collect())

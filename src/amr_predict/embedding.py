@@ -17,6 +17,7 @@ from datasets.arrow_dataset import Dataset
 from esm.models.esm3 import ESM3
 from esm.models.esmc import ESMC
 from esm.sdk.api import ESMProtein, LogitsConfig
+from esm.tokenization.sequence_tokenizer import EsmSequenceTokenizer
 from torch import Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
@@ -97,11 +98,11 @@ class ModelEmbedder:
     hidden_layer: int = 0
     huggingface: str | None = None
     rng: int | None = None
-    save_logits: bool = False
+    save_proba: bool = False
     save_interval: int = 10
     pooling: BasicPoolings = BasicPoolings.MEAN
     only_cache: bool = True
-    get_hidden: bool = field(
+    choose_hidden: bool = field(
         init=False, default=Factory(lambda self: self.hidden_layer < 0, takes_self=True)
     )
     cache: EmbeddingCache = field(
@@ -110,7 +111,7 @@ class ModelEmbedder:
                 self.workdir,
                 save_mode=self.save_mode,
                 rng=self.rng,
-                save_logits=self.save_logits,
+                save_proba=self.save_proba,
                 save_interval=self.save_interval,
                 token_prop=self.token_prop,
                 pooling=self.pooling,
@@ -151,7 +152,7 @@ class ModelEmbedder:
         workdir: Path | None = None,
         hidden_layer: int = 0,
         huggingface: str | None = None,
-        save_logits: bool = False,
+        save_proba: bool = False,
         save_interval: int = 10,
         only_cache: bool = True,
     ):
@@ -171,7 +172,7 @@ class ModelEmbedder:
             batch_size=batch_size,
             hidden_layer=hidden_layer,
             huggingface=huggingface,
-            save_logits=save_logits,
+            save_proba=save_proba,
             save_interval=save_interval,
             only_cache=only_cache,
         )
@@ -185,7 +186,9 @@ class ModelEmbedder:
         df: pl.DataFrame = (
             dataset.to_polars() if not isinstance(dataset, pl.DataFrame) else dataset
         )
-        self.cache.save(df[text_key], fn=self._embed_batch, batch_size=self.batch_size)
+        self.cache.save(
+            df[text_key], embed_fn=self._embed_batch, batch_size=self.batch_size
+        )
         if not self.only_cache:
             result = self.cache.to_dataset(df, key_col=text_key)
             if cols_remove is not None:
@@ -228,13 +231,19 @@ class Esm2Embedder(ModelEmbedder):
 @define
 class EsmSynthyra(ModelEmbedder):
     model: EmbeddingModels = field(default=EsmSynthraModels.esmc_600m_synthyra)
+    m: AutoModelForMaskedLM = field(
+        init=False,
+        default=Factory(
+            lambda self: AutoModelForMaskedLM.from_pretrained(self.model.value),
+            takes_self=True,
+        ),
+    )
+    proba: TokenProbabilities = field(
+        init=False, default=Factory(lambda self: TokenProbabilities(self.m.tokenizer))
+    )
 
     def __attrs_post_init__(self):
         super().__attrs_post__init()
-        key: str = self.model.value
-        self.m: AutoModelForMaskedLM = AutoModelForMaskedLM.from_pretrained(
-            key, trust_remote_code=True
-        )
         self.m.to(self.device)
 
     def _embed_batch(
@@ -242,7 +251,7 @@ class EsmSynthyra(ModelEmbedder):
     ) -> Generator[
         tuple[str, jaxtyping.Float[Tensor, "a b"], jaxtyping.Float[Tensor, "a"] | None]
     ]:
-        if not self.get_hidden:
+        if not self.choose_hidden:
             tmp = self.m.embed_dataset(
                 tokenizer=self.m.tokenizer,
                 sequences=sequences,
@@ -273,6 +282,14 @@ class EsmOfficial(ModelEmbedder):
     model: EmbeddingModels = field(default=EsmModels.esmc_600m)
     client: ESM3 | ESMC = field(init=False)
     lconf: LogitsConfig = field(init=False)
+    tokenizer: EsmSequenceTokenizer = field(init=False, factory=EsmSequenceTokenizer)
+    token2idx: dict[str, int] | None = field(
+        init=False,
+        default=Factory(  # 33 is the size of ESM's vocab
+            lambda self: {self.tokenizer.decode(i): i for i in range(33)},
+            takes_self=True,
+        ),
+    )
 
     @client.default
     def _get_client(self):
@@ -284,7 +301,9 @@ class EsmOfficial(ModelEmbedder):
     @lconf.default
     def _get_logits_conf(self):
         return LogitsConfig(
-            return_embeddings=not self.get_hidden, return_hidden_states=self.get_hidden
+            return_embeddings=not self.choose_hidden,
+            return_hidden_states=self.choose_hidden,
+            sequence=True,
         )
 
     def _embed_batch(
@@ -292,21 +311,31 @@ class EsmOfficial(ModelEmbedder):
     ) -> Generator[
         tuple[str, jaxtyping.Float[Tensor, "a b"], jaxtyping.Float[Tensor, "a"] | None]
     ]:
-        to_get = "hidden_states" if self.get_hidden else "embeddings"
+        to_get = "hidden_states" if self.choose_hidden else "embeddings"
         for prot in sequences:
             encoded = self.client.encode(ESMProtein(sequence=prot))
-            logits = self.client.logits(encoded, self.lconf)
+            logit_out = self.client.logits(encoded, self.lconf)
 
-            target: Tensor = getattr(logits, to_get)
-            # If `get_hidden`, target has shape
+            target: Tensor = getattr(logit_out, to_get)
+            # Target has shape
             #    (n_hidden, 1, sequence_len, dim_model)
             # Otherwise
             #  (1, sequence_len, dim_model)
-            if self.get_hidden:
+            # which is just the last hidden state by default
+            if self.choose_hidden:
                 tokens = target[self.hidden_layer, 0, 1:-1, :]
             else:
                 tokens = target[0, 1:-1, :]
-            yield prot, tokens, Tensor()
+            logits: Tensor = logit_out.logits.sequence[0, :, :]
+            logits = logits[1:-1, :]  # remove cls and eos tokens
+            # shape of (1, sequence_len, vocab_size)
+            all_proba = torch.softmax(logits, dim=1)
+            proba = torch.concat(
+                [all_proba[i, self.token2idx[p]] for i, p in enumerate(prot)]
+            )
+            # NOTE: See https://github.com/evolutionaryscale/esm/issues/252
+            # for how to convert logits to tokens
+            yield prot, tokens, proba
 
 
 @define
@@ -325,6 +354,9 @@ class SeqLensEmbedder(ModelEmbedder):
             lambda self: AutoModelForMaskedLM.from_pretrained(self.model.value),
             takes_self=True,
         ),
+    )
+    proba: TokenProbabilities = field(
+        init=False, default=Factory(lambda self: TokenProbabilities(self.tokenizer))
     )
 
     def __attrs_post_init__(self):
@@ -354,10 +386,10 @@ class SeqLensEmbedder(ModelEmbedder):
         loader = DataLoader(
             tokenized, batch_size=self.batch_size, collate_fn=data_collator
         )
-
         with torch.no_grad():
             for batch in loader:
                 input_ids = batch["input_ids"].to(self.device)
+                # Indices of tokens in the dictionary
                 attention_mask = batch["attention_mask"].to(self.device)
                 output: MaskedLMOutput = self.m(
                     input_ids=input_ids, attention_mask=attention_mask
@@ -371,4 +403,30 @@ class SeqLensEmbedder(ModelEmbedder):
                 for i, seqlens_uid in enumerate(torch.unbind(batch["seqlens_uid"])):
                     seq = seqlens_uid2seq[seqlens_uid.cpu().item()]
                     token = hidden_layer[i, :, :]
-                    yield seq, token, Tensor()
+                    seq_proba = self.proba(i, input_ids[0], output, i == 0)
+                    yield seq, token, seq_proba
+
+
+@define
+class TokenProbabilities:
+    tokenizer: AutoTokenizer
+    special: set = field(init=False)
+
+    @special.default
+    def _get_special_tokens(self):
+        return set(self.tokenizer.special_tokens_map.values())
+
+    def __call__(
+        self, i: int, tokens: dict, lm_out: MaskedLMOutput, check_compat: bool = False
+    ) -> Tensor:
+        if check_compat:
+            assert (
+                self.tokenizer.vocab_size == lm_out.logits.shape[2]
+            ), "The tokenizer vocabulary size doesn't match that the logits dimension"
+        probabilities = torch.softmax(lm_out.logits[i, :, :], dim=1)
+        seq_proba = [
+            probabilities[i, id].repeat(len(decoded))
+            for i, id in enumerate(tokens["input_ids"])
+            if (decoded := self.tokenizer.decode(id)) not in self.special
+        ]
+        return torch.concat(seq_proba)
