@@ -54,7 +54,7 @@ SeqLensModels = Enum(
 
 
 def embedding_size(model: EmbeddingModels) -> int:
-    if isinstance(model, EmbeddingModels.esm3_open):
+    if model == EmbeddingModels.esm3_open:
         raise NotImplementedError("figure this out")
     elif validate_model_group(model, SeqLensModels):
         return 512
@@ -152,31 +152,9 @@ class ModelEmbedder:
         raise NotImplementedError()
 
     @classmethod
-    def new(
-        _cls,
-        model: EmbeddingModels,
-        save_mode: Literal["tokens", "seqs", "both"] = "seqs",
-        default_dtype: torch.dtype = torch.float32,
-        batch_size: int = 128,
-        workdir: Path | None = None,
-        hidden_layer: int = 0,
-        huggingface: str | None = None,
-        save_proba: bool = False,
-        save_interval: int = 10,
-        only_cache: bool = True,
-    ):
+    def new(_cls, model: EmbeddingModels, **kws):
         cls = ModelEmbedder._registry[model.name]
-        return cls(
-            save_mode=save_mode,
-            workdir=workdir,
-            default_dtype=default_dtype,
-            batch_size=batch_size,
-            hidden_layer=hidden_layer,
-            huggingface=huggingface,
-            save_proba=save_proba,
-            save_interval=save_interval,
-            only_cache=only_cache,
-        )
+        return cls(**kws)
 
     def embed(
         self,
