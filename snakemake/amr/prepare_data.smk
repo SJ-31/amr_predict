@@ -59,7 +59,7 @@ if config["embedding"] == "esm":
     PREPROCESSING = tmp
 elif config["embedding"] == "Evo2":
     EMBEDDING_RES = {"qos": "cpu24h", "mem": "30G"}
-EMBEDDING_RES["time"] = config.get("slurm_time_limit", "15-0:0:0")
+EMBEDDING_RES["time"] = config.get("slurm_time_limit", "25-0:0:0")
 
 PLOT_OUT = Path(f"{OUT}/{DATE}/embedding_comparison/pooled_distance_correlation")
 

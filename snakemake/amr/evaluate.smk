@@ -95,6 +95,7 @@ for model in config["cross_validate"]["models"]:
         else:
             res = GPU20
             default_params["device"] = DEVICE
+        res["time"] = config.get("slurm_time_limit", "8-0:0:0")
 
         def get_output(task):
             return {
