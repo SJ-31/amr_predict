@@ -14,7 +14,9 @@ from amr_predict.cache import EmbeddingCache
 from amr_predict.pooling import BasicPoolings
 from attrs import Factory, define, field, validators
 from datasets.arrow_dataset import Dataset
-from esm.sdk.api import ESMProtein
+from esm.models.esm3 import ESM3
+from esm.models.esmc import ESMC
+from esm.sdk.api import ESMProtein, LogitsConfig
 from torch import Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
@@ -269,21 +271,19 @@ class EsmSynthyra(ModelEmbedder):
 @define
 class EsmOfficial(ModelEmbedder):
     model: EmbeddingModels = field(default=EsmModels.esmc_600m)
+    client: ESM3 | ESMC = field(init=False)
+    lconf: LogitsConfig = field(init=False)
 
-    def __attrs_post_init__(self):
-        super().__attrs_post_init__()
-        from esm.sdk.api import LogitsConfig
-
+    @client.default
+    def _get_client(self):
         if self.model == EsmModels.esm3_open:
-            from esm.models.esm3 import ESM3
-
-            self.client = ESM3.from_pretrained(self.model.name, device=self.device)
+            return ESM3.from_pretrained(self.model.name, device=self.device)
         else:
-            from esm.models.esmc import ESMC
+            return ESMC.from_pretrained(self.model.name)
 
-            self.client = ESMC.from_pretrained(self.model.name)
-
-        self.lconf = LogitsConfig(
+    @lconf.default
+    def _get_logits_conf(self):
+        return LogitsConfig(
             return_embeddings=not self.get_hidden, return_hidden_states=self.get_hidden
         )
 
