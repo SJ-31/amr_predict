@@ -5,7 +5,7 @@ import os
 import uuid
 from enum import Enum, EnumType
 from pathlib import Path
-from typing import Generator, Literal, override
+from typing import ClassVar, Generator, Literal, override
 
 import jaxtyping
 import polars as pl
@@ -84,6 +84,7 @@ def validate_model_group(model: EmbeddingModels, group: EnumType) -> bool:
 
 @define
 class ModelEmbedder:
+    registry: ClassVar[dict[str, ModelEmbedder]] = {}
     model: EmbeddingModels
     token_prop: float | None = None
     workdir: Path = field(
@@ -105,6 +106,7 @@ class ModelEmbedder:
     choose_hidden: bool = field(
         init=False, default=Factory(lambda self: self.hidden_layer < 0, takes_self=True)
     )
+    valid_models: ClassVar[tuple[EmbeddingModels]] | None = None
     cache: EmbeddingCache = field(
         default=Factory(
             lambda self: EmbeddingCache(
@@ -119,6 +121,12 @@ class ModelEmbedder:
             takes_self=True,
         )
     )
+
+    @classmethod
+    def __attrs_init_subclass__(cls):
+        if cls.valid_models is not None:
+            for model in cls.valid_models:
+                ModelEmbedder.registry[model.name] = cls
 
     def __attrs_post_init__(self):
         if self.huggingface:
@@ -156,15 +164,7 @@ class ModelEmbedder:
         save_interval: int = 10,
         only_cache: bool = True,
     ):
-        cls: ModelEmbedder
-        if validate_model_group(model, EsmSynthraModels):
-            cls = EsmSynthyra
-        elif validate_model_group(model, SeqLensModels):
-            cls = SeqLensEmbedder
-        elif validate_model_group(model, EsmModels):
-            cls = EsmOfficial
-        else:
-            raise NotImplementedError()
+        cls = ModelEmbedder.registry[model.name]
         return cls(
             save_mode=save_mode,
             workdir=workdir,
@@ -207,6 +207,7 @@ class ModelEmbedder:
 
 @define
 class Esm2Embedder(ModelEmbedder):
+    valid_models = tuple(EsmModels)
     model_name: EsmModels = field(
         default=EsmModels.esm2_t33_650m_UR50D,
         validator=lambda inst, cls, val: val.name.startswith("esm2"),
@@ -231,6 +232,7 @@ class Esm2Embedder(ModelEmbedder):
 @define
 class EsmSynthyra(ModelEmbedder):
     model: EmbeddingModels = field(default=EsmSynthraModels.esmc_600m_synthyra)
+    valid_models = tuple(EsmSynthraModels)
     m: AutoModelForMaskedLM = field(
         init=False,
         default=Factory(
@@ -282,6 +284,7 @@ class EsmOfficial(ModelEmbedder):
     model: EmbeddingModels = field(default=EsmModels.esmc_600m)
     client: ESM3 | ESMC = field(init=False)
     lconf: LogitsConfig = field(init=False)
+    valid_models = tuple(EsmModels)
     tokenizer: EsmSequenceTokenizer = field(init=False, factory=EsmSequenceTokenizer)
     token2idx: dict[str, int] | None = field(
         init=False,
@@ -330,7 +333,7 @@ class EsmOfficial(ModelEmbedder):
             logits = logits[1:-1, :]  # remove cls and eos tokens
             # shape of (1, sequence_len, vocab_size)
             all_proba = torch.softmax(logits, dim=1)
-            proba = torch.concat(
+            proba = torch.tensor(
                 [all_proba[i, self.token2idx[p]] for i, p in enumerate(prot)]
             )
             # NOTE: See https://github.com/evolutionaryscale/esm/issues/252
