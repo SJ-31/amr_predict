@@ -18,6 +18,7 @@ from esm.models.esm3 import ESM3
 from esm.models.esmc import ESMC
 from esm.sdk.api import ESMProtein, LogitsConfig
 from esm.tokenization.sequence_tokenizer import EsmSequenceTokenizer
+from loguru import logger
 from torch import Tensor
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
@@ -84,9 +85,9 @@ def validate_model_group(model: EmbeddingModels, group: EnumType) -> bool:
 
 @define
 class ModelEmbedder:
-    registry: ClassVar[dict[str, ModelEmbedder]] = {}
+    _registry: ClassVar[dict[str, ModelEmbedder]] = {}
     model: EmbeddingModels
-    token_prop: float | None = None
+    token_amount: float | None = None
     workdir: Path = field(
         factory=lambda: Path().cwd().joinpath(f"embedding_work_{uuid.uuid4().hex}")
     )
@@ -115,7 +116,7 @@ class ModelEmbedder:
                 rng=self.rng,
                 save_proba=self.save_proba,
                 save_interval=self.save_interval,
-                token_prop=self.token_prop,
+                token_amount=self.token_amount,
                 pooling=self.pooling,
             ),
             takes_self=True,
@@ -126,7 +127,7 @@ class ModelEmbedder:
     def __attrs_init_subclass__(cls):
         if cls.valid_models is not None:
             for model in cls.valid_models:
-                ModelEmbedder.registry[model.name] = cls
+                ModelEmbedder._registry[model.name] = cls
 
     def __attrs_post_init__(self):
         if self.huggingface:
@@ -164,7 +165,7 @@ class ModelEmbedder:
         save_interval: int = 10,
         only_cache: bool = True,
     ):
-        cls = ModelEmbedder.registry[model.name]
+        cls = ModelEmbedder._registry[model.name]
         return cls(
             save_mode=save_mode,
             workdir=workdir,
@@ -344,6 +345,7 @@ class EsmOfficial(ModelEmbedder):
 @define
 class SeqLensEmbedder(ModelEmbedder):
     model: EmbeddingModels = EmbeddingModels.seqLens_4096_512_46M_Mp
+    valid_models = tuple(SeqLensModels)
     tokenizer: AutoTokenizer = field(
         init=False,
         default=Factory(
@@ -359,7 +361,10 @@ class SeqLensEmbedder(ModelEmbedder):
         ),
     )
     proba: TokenProbabilities = field(
-        init=False, default=Factory(lambda self: TokenProbabilities(self.tokenizer))
+        init=False,
+        default=Factory(
+            lambda self: TokenProbabilities(self.tokenizer), takes_self=True
+        ),
     )
 
     def __attrs_post_init__(self):
@@ -403,11 +408,17 @@ class SeqLensEmbedder(ModelEmbedder):
                 expanded_mask = attention_mask.unsqueeze(-1).expand_as(chosen_layer)
                 hidden_layer = chosen_layer * expanded_mask
 
-                for i, seqlens_uid in enumerate(torch.unbind(batch["seqlens_uid"])):
+                for i, (seqlens_uid, input_id, logits, hidden) in enumerate(
+                    zip(
+                        torch.unbind(batch["seqlens_uid"]),
+                        torch.unbind(batch["input_ids"]),
+                        torch.unbind(output.logits),
+                        torch.unbind(hidden_layer),
+                    )
+                ):
                     seq = seqlens_uid2seq[seqlens_uid.cpu().item()]
-                    token = hidden_layer[i, :, :]
-                    seq_proba = self.proba(i, input_ids[0], output, i == 0)
-                    yield seq, token, seq_proba
+                    seq_proba = self.proba(input_id, logits, i == 0)
+                    yield seq, hidden, seq_proba
 
 
 @define
@@ -420,16 +431,20 @@ class TokenProbabilities:
         return set(self.tokenizer.special_tokens_map.values())
 
     def __call__(
-        self, i: int, tokens: dict, lm_out: MaskedLMOutput, check_compat: bool = False
+        self,
+        tokens: dict | Tensor,
+        logits: jaxtyping.Float[Tensor, "a b"],
+        check_compat: bool = False,
     ) -> Tensor:
         if check_compat:
             assert (
-                self.tokenizer.vocab_size == lm_out.logits.shape[2]
+                self.tokenizer.vocab_size == logits.shape[1]
             ), "The tokenizer vocabulary size doesn't match that the logits dimension"
-        probabilities = torch.softmax(lm_out.logits[i, :, :], dim=1)
+        probabilities = torch.softmax(logits, dim=1)
+        iter = tokens["input_ids"] if isinstance(tokens, dict) else tokens
         seq_proba = [
             probabilities[i, id].repeat(len(decoded))
-            for i, id in enumerate(tokens["input_ids"])
+            for i, id in enumerate(iter)
             if (decoded := self.tokenizer.decode(id)) not in self.special
         ]
         return torch.concat(seq_proba)
