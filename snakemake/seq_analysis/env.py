@@ -188,22 +188,46 @@ class FastaSpec:
     header_style: Literal["uniprot"] = "uniprot"
 
 
+# TODO: there's gotta be a better pattern for this... though it doesn't take that long to write
+
+
+@define
+class Perturbation:
+    method: ae.Perturbations
+    kws: ae.PerturbationCfg = field(
+        converter=lambda x: x or ae.PerturbationCfg(), factory=ae.PerturbationCfg
+    )
+
+
+@define
+class Randomization:
+    method: ae.RandomizationMethods
+    kws: dict[str, Any] = field(converter=lambda x: x or {}, factory=dict)
+
+
+@define
+class SequenceVariants:
+    perturbed: dict[str, Perturbation] | None = None
+    random: dict[str, Randomization] | None = None
+
+
 @define
 class SnakeEnv:
     huggingface: str
     rng: int
     outdir: Path = field(converter=Path)
     metadata: Metadata
+    sequence_variants: SequenceVariants
     resources: dict = field(validator=instance_of(dict))
     saes: dict[Literal["custom", "pretrained"], dict[str, SaeCfg]] = field(
         validator=instance_of(dict)
     )
-    fastas: dict[SeqTypes, list[FastaSpec]] = field(
-        validator=validators.deep_mapping(key_validator=instance_of(SeqTypes))
+    fastas: dict[ae.SeqTypes, list[FastaSpec]] = field(
+        validator=validators.deep_mapping(key_validator=instance_of(ae.SeqTypes))
     )
-    embedding_methods: dict[SeqTypes, dict[str, EmbeddingMethod]] = field(
+    embedding_methods: dict[ae.SeqTypes, dict[str, EmbeddingMethod]] = field(
         validator=validators.deep_mapping(
-            key_validator=instance_of(SeqTypes),
+            key_validator=instance_of(ae.SeqTypes),
         )
     )
 
@@ -229,7 +253,7 @@ class SnakeEnv:
             self.outdir / "cooccurrence_stats.yaml",
         ]
         custom_saes: dict = self.saes["custom"]
-        for st in SeqTypes:
+        for st in ae.SeqTypes:
             if st not in self.embedding_methods or st not in self.fastas:
                 continue
             out.extend(
@@ -250,7 +274,17 @@ class SnakeEnv:
                     out.append(f"{acts_prefix}_tokens/{mname}-0-{s}")
 
                 for p in mspec.poolings:
-                    out.append(f"{embedding_prefix}_seqs/{mname}-{p.value}.completed")
+                    out.append(
+                        f"{embedding_prefix}_seqs/natural-_/{mname}-{p.value}.completed"
+                    )
+                    for ptb in self.sequence_variants.perturbed.keys() or ():
+                        out.append(
+                            f"{embedding_prefix}_seqs/perturbed-{ptb}/{mname}-{p.value}.completed"
+                        )
+                    for rnd in self.sequence_variants.random.keys() or ():
+                        out.append(
+                            f"{embedding_prefix}_seqs/randomized-{rnd}/{mname}-{p.value}.completed"
+                        )
                     for sae in custom_saes:
                         out.append(f"{sae_prefix}_seqs/{mname}-{p.value}-{sae}.pt")
                         out.append(f"{acts_prefix}_seqs/{mname}-{p.value}-{sae}")

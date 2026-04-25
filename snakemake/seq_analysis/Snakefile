@@ -3,6 +3,14 @@ from env import SnakeEnv
 import os
 
 
+singularity: "/data/home/shannc/image.sif"
+
+
+# TODO: you might be able to get this working if you pass it in as a script on the shell
+# and no longer use the snakemake thing. Should be fine since you already can use
+# the config from the SnakeEnv object
+
+
 configfile: "env.yaml"
 
 
@@ -32,40 +40,14 @@ rule all:
 rule make_seq_dataset:
     params:
         seqtype=get_wc("seqtype"),
+        method=get_wc("method"),
+        variation=get_wc("variation"),
     output:
-        directory(f"{DATASETS}/sequence_{{seqtype}}"),
-    script:
-        "main.py"
-
-
-rule get_random_embeddings:
-    input:
-        rules.make_seq_dataset.output,
-    params:
-        seqtype=get_wc("seqtype"),
-        level=get_wc("level"),
-        embedding_method=get_wc("embedding_method"),
-    resources:
-        **EMBEDDING_RES,
-    output:
-        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/random/"
-        "{{embedding_method}}-{{pooling}}-{{randomization}}.completed",
-    script:
-        "main.py"
-
-
-rule get_perturbed_embeddings:
-    input:
-        rules.make_seq_dataset.output,
-    params:
-        seqtype=get_wc("seqtype"),
-        level=get_wc("level"),
-        perturbation=get_wc("perturbation"),
-        embedding_method=get_wc("embedding_method"),
-    resources:
-        **EMBEDDING_RES,
-    output:
-        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/perturbed/{{embedding_method}}-{{pooling}}-{{perturbation}}.completed",
+        # Variation: random, natural, perturbed
+        # Seqtypes: aa, nuc
+        # `Method` refers to perturbation or randomization method. It's '0' for natural
+        # sequences
+        directory(f"{DATASETS}/sequences/{{seqtype}}-{{variation}}-{{method}}"),
     script:
         "main.py"
 
@@ -99,8 +81,8 @@ rule write_training_indices:
 
 
 rule train_sae:
-    input:
-        rules.get_embeddings.output,
+    input:  # NOTE: Only train with natural sequences for now
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}-{{sae}}.pt",
         f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
     params:
         seqtype=get_wc("seqtype"),
@@ -110,6 +92,8 @@ rule train_sae:
         pooling=get_wc("pooling"),
     output:
         f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pt",
+    script:
+        "main.py"
 
 
 rule label_cooccurrence:
