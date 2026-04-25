@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 import polars as pl
 import torch
+from datasets import Value
 
 
 def torch2pl(

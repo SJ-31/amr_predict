@@ -6,16 +6,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
+import amr_predict.enums as ae
 import cattrs
 import yaml
 from attr.validators import instance_of
 from attrs import asdict, define, field, validators
 from snakemake.io import expand
 from yte import process_yaml
-
-from amr_predict.embedding import EmbeddingModels
-from amr_predict.pooling import BasicPoolings
-from amr_predict.utils import SeqTypes
 
 Levels = Enum("Levels", (("TOKENS", "tokens"), ("SEQS", "seqs")))
 
@@ -140,8 +137,8 @@ class DataLoaderCfg:
 
 @define
 class EmbeddingMethod:
-    model: EmbeddingModels
-    poolings: dict[BasicPoolings, dict[str, Any] | None] = field(factory=dict)
+    model: ae.EmbeddingModels
+    poolings: dict[ae.BasicPoolings, dict[str, Any] | None] = field(factory=dict)
     kws: dict[str, Any] | None = field(factory=dict)
 
 

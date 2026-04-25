@@ -18,7 +18,8 @@ import polars as pl
 import polars.selectors as cs
 import skbio
 import torch
-from amr_predict.pooling import BASIC_POOLING_METHODS, pool_tensor
+from amr_predict.enums import BasicPoolings
+from amr_predict.pooling import pool_tensor
 from amr_predict.utils import (
     EmbeddingCache,
     add_intergenic,
@@ -391,7 +392,7 @@ class SeqEmbedder:
         huggingface: str,
         text_key: str = "sequence",
         model: ESM_MODELS = "esmc_600m",
-        pooling: Literal["cls"] | BASIC_POOLING_METHODS = "mean",
+        pooling: Literal["cls"] = "mean",
         hidden_layer: int | None = None,
         batch_size=5,
         degenerate_handling: Literal["ignore", "random", "error"] = "random",
@@ -486,7 +487,7 @@ class SeqEmbedder:
                         tokens = target[0, 1:-1, :]
                     else:
                         tokens = None
-                    if pooling in get_args(BASIC_POOLING_METHODS):
+                    if pooling in [n.value for n in list(BasicPoolings)]:
                         if get_hidden:
                             to_pool = target[hidden_layer, 0, 1:-1, :]
                         else:
@@ -671,7 +672,7 @@ class SeqEmbedder:
         text_key: str = "sequence",
         model_key: str = "omicseye/seqLens_4096_512_46M-Mp",
         batch_size: int = 64,
-        pooling: Literal["cls", "concat"] | BASIC_POOLING_METHODS = "mean",
+        pooling: Literal["cls", "concat"] | BasicPoolings = "mean",
     ) -> Dataset | None:
         """Generate embeddings of `dataset` with seqLens
 

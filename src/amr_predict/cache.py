@@ -15,7 +15,8 @@ import polars as pl
 import torch
 import torch.utils.data as td
 from amr_predict.compat import torch2pl
-from amr_predict.pooling import BasicPoolings, pool_tensor
+from amr_predict.enums import BasicPoolings
+from amr_predict.pooling import pool_tensor
 from attrs import define, field, validators
 from beartype import beartype
 from datasets import Dataset

@@ -11,6 +11,16 @@ import polars as pl
 import sklearn.model_selection as ms
 import torch
 import yaml
+from amr_predict.cache import EmbeddingCache, LinkedDataset
+from amr_predict.embedding import EmbeddingModels, ModelEmbedder, embedding_size
+from amr_predict.enums import SeqTypes
+from amr_predict.evaluation import pami_wrapper, to_binary_form
+from amr_predict.models import BaseNN
+from amr_predict.pooling import BasicPoolings
+from amr_predict.random import Perturber, Randomizer
+from amr_predict.sae import BatchTopK
+from amr_predict.sae_external import get_default_cfg
+from amr_predict.utils import ModuleConfig, read_tabular
 from attrs import asdict
 from beartype import beartype
 from Bio import SeqIO
@@ -22,17 +32,6 @@ from loguru import logger
 from scipy.cluster.hierarchy import cut_tree
 from torch.utils.data import DataLoader
 
-from amr_predict.cache import EmbeddingCache, LinkedDataset
-from amr_predict.embedding import EmbeddingModels, ModelEmbedder, embedding_size
-from amr_predict.evaluation import pami_wrapper, to_binary_form
-from amr_predict.models import BaseNN
-from amr_predict.pooling import BasicPoolings
-from amr_predict.sae import BatchTopK
-from amr_predict.utils import (
-    ModuleConfig,
-    SeqTypes,
-    read_tabular,
-)
 from env import SnakeEnv
 
 try:
@@ -168,12 +167,17 @@ def from_pretrained(dset: LinkedDataset):
 
 def lookup_sae(spec: str, act_size: int) -> BaseNN:
     from_env = ENV.saes["custom"][spec]
+    sae_cfg = get_default_cfg()
+    from_env.kws["device"] = "gpu" if torch.cuda.is_available() else "cpu"
+    from_env.kws["act_size"] = act_size
+    from_env.kws["dtype"] = torch.get_default_dtype()
     variant = from_env.variant
     if variant == "BatchTopK":
         cls = BatchTopK
     else:
         raise NotImplementedError("SAE variant not recognized")
-    cfg: ModuleConfig = ModuleConfig(act_size=act_size, **from_env.get("kws", {}))
+    sae_cfg.update(from_env.kws)
+    cfg: ModuleConfig = ModuleConfig(**sae_cfg)
     return cls(cfg=cfg, x_key="x")
 
 
@@ -297,63 +301,27 @@ def label_cooccurrence():
 #     pl.DataFrame({"label": labels, "cluster": cut.flatten()}).write_csv(smk.output[0])
 
 
-# def get_embeddings():
-#     df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
-#     seqtype = SeqTypes[smk.params["seqtype"].upper()]
-#     spec = ENV.embedding_methods[seqtype][smk.params["embedding_method"]]
-#     model: EmbeddingModels = spec.model
-#     max_length = embedding_size(model)
-#     df = account_for_max_length(df, max_len=max_length, seq_col="sequence", id_col="id")
-#     kws: dict = spec.kws
-#     out = Path(smk.output[0])
-#     cache_path = out.with_suffix("")
-#     if not cache_path.exists():
-#         cache_path.mkdir()
-#     kws["huggingface"] = ENV.huggingface
-#     kws["save_mode"] = smk.params["level"]
-#     embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
-#     embedder.embed(dataset=Dataset.from_polars(df))
-#     out.write_text("completed")
-
-
-def get_embeddings(input, output, seqtype_str: str, level: str, embedding_method: str):
-    df: pl.DataFrame = load_from_disk(input).to_polars()
-    seqtype = SeqTypes[seqtype_str.upper()]
-    print(ENV)
-    spec = ENV.embedding_methods[seqtype][embedding_method]
+def get_embeddings():
+    df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
+    seqtype = SeqTypes[smk.params["seqtype"].upper()]
+    spec = ENV.embedding_methods[seqtype][smk.params["embedding_method"]]
     model: EmbeddingModels = spec.model
     max_length = embedding_size(model)
     df = account_for_max_length(df, max_len=max_length, seq_col="sequence", id_col="id")
     kws: dict = spec.kws
-    out = Path(output)
+    out = Path(smk.output[0])
     cache_path = out.with_suffix("")
     if not cache_path.exists():
         cache_path.mkdir()
+    kws["workdir"] = cache_path
     kws["huggingface"] = ENV.huggingface
-    kws["save_mode"] = level
+    kws["save_mode"] = smk.params["level"]
     embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
     embedder.embed(dataset=Dataset.from_polars(df))
     out.write_text("completed")
 
 
 # * Entry
-def parse_args():
-    import argparse
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--input")
-    parser.add_argument("-o", "--output")
-    parser.add_argument("-r", "--rule")
-    parser.add_argument("-e", "--embedding_method")
-    parser.add_argument("-l", "--level")
-    parser.add_argument("-s", "--seqtype")
-    args = vars(parser.parse_args())  # convert to dict
-    return args
-
-
-if __name__ == "__main__":
-    args = parse_args()
-    rule_fn = globals()[args["rule"]]
-    rule_fn(args)
-elif rule_fn := globals().get(smk.rule):
+if rule_fn := globals().get(smk.rule):
     rule_fn()

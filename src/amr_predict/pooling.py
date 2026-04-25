@@ -10,6 +10,7 @@ import lightning as L
 import polars as pl
 import torch
 import torch.nn as nn
+from amr_predict.enums import BasicPoolings
 from amr_predict.utils import (
     ModuleConfig,
     debug_tensor_vals,
@@ -30,11 +31,6 @@ from torchmetrics.functional.pairwise import (
 )
 
 logger.disable("amr_predict")
-
-BasicPoolings = Enum(
-    "BasicPoolings",
-    {n.upper(): n for n in ["max", "sum", "mean", "similarity", "cls"]},
-)
 
 
 STATIC_POOLING_METHODS: TypeAlias = Literal[

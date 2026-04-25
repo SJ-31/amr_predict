@@ -11,7 +11,13 @@ import jaxtyping
 import polars as pl
 import torch
 from amr_predict.cache import EmbeddingCache
-from amr_predict.pooling import BasicPoolings
+from amr_predict.enums import (
+    BasicPoolings,
+    EmbeddingModels,
+    EsmModels,
+    EsmSynthraModels,
+    SeqLensModels,
+)
 from attrs import Factory, define, field, validators
 from datasets.arrow_dataset import Dataset
 from esm.models.esm3 import ESM3
@@ -24,34 +30,6 @@ from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
 from transformers.modeling_outputs import MaskedLMOutput
 
-EsmSynthraModels = Enum(
-    "EsmSynthraModels",
-    {
-        "esmc_600m_synthyra": "Synthyra/ESMplusplus_large",
-        "esmc_300m_synthyra": "Synthyra/ESMplusplus_small",
-    },
-)
-
-
-EsmModels = Enum(
-    "EsmModels",
-    {
-        i: i
-        for i in [
-            "esm2_t6_8m_UR50D",
-            "esm2_t33_650m_UR50D",
-            "esm3_open",
-            "esmc_600m",
-            "esmc_300m",
-        ]
-    },
-)
-
-
-SeqLensModels = Enum(
-    "SeqLensModels", {"seqLens_4096_512_46M_Mp": "omicseye/seqLens_4096_512_46M-Mp"}
-)
-
 
 def embedding_size(model: EmbeddingModels) -> int:
     if model == EmbeddingModels.esm3_open:
@@ -63,16 +41,6 @@ def embedding_size(model: EmbeddingModels) -> int:
     ):
         return 2048
     raise NotImplementedError()
-
-
-EmbeddingModels = Enum(
-    "EmbeddingModels",
-    dict(
-        {i.name: i.value for i in EsmSynthraModels}
-        | {i.name: i.value for i in SeqLensModels}
-        | {i.name: i.value for i in EsmModels}
-    ),
-)
 
 
 def validate_model_group(model: EmbeddingModels, group: EnumType) -> bool:
