@@ -1,0 +1,48 @@
+import sys
+
+
+from pathlib import Path
+from env import SnakeEnv
+import os
+
+
+singularity: "/data/home/shannc/image.sif"
+
+
+# TODO: you might be able to get this working if you pass it in as a script on the shell
+# and no longer use the snakemake thing. Should be fine since you already can use
+# the config from the SnakeEnv object
+
+
+configfile: "env.yaml"
+
+
+env = SnakeEnv.new(config)
+os.environ["HF_HOME"] = env.huggingface
+EMBEDDING_RES = env.resources["gpu40"]
+
+config["a"] = "foo"
+config["b"] = "bar"
+config["c"] = "baz"
+
+
+rule all:
+    input:
+        "results/from_shell_rule.txt",
+        "results/from_script_rule.txt",
+
+
+rule shell_rule:
+    output:
+        "results/from_shell_rule.txt",
+    shell:
+        "./shell.py -o {output}"
+
+
+rule script_rule:
+    resources:
+        **EMBEDDING_RES,
+    output:
+        "results/from_script_rule.txt",
+    script:
+        "script.py"

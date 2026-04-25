@@ -35,3 +35,4 @@ snakemake/lightning_logs
 /docs/reports/no_date/
 /docs/reports/no_date.zip
 /snakemake/amr/slurm_logs/
+*slurm_logs*
