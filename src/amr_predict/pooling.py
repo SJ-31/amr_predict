@@ -26,6 +26,7 @@ from torchmetrics.functional.pairwise import (
     pairwise_cosine_similarity,
     pairwise_euclidean_distance,
     pairwise_linear_similarity,
+    pairwise_manhattan_distance,
 )
 
 logger.disable("amr_predict")
@@ -64,18 +65,30 @@ def pool_tensor(x: Tensor, method: BasicPoolings, **kws) -> Tensor:
 
 
 def _pool_similarity(
-    self,
     x: Tensor,
-    metric: Literal["cosine", "dot_product", "euclidean"] = "cosine",
+    metric: Literal[
+        "cosine_distance",
+        "cosine_similarity",
+        "dot_product",
+        "euclidean_distance",
+        "euclidean_similarity",
+        "manhattan_distance",
+    ] = "euclidean_distance",
     similarity_agg: Literal["mean", "sum", "max"] = "mean",
 ) -> Tensor:
-    if metric == "cosine":
+    if metric == "cosine_similarity":
         fn = pairwise_cosine_similarity
-    elif metric == "euclidean":
+    elif metric == "cosine_distance":
+        fn = lambda x: 1 - pairwise_cosine_similarity(x)
+    elif metric == "euclidean_similarity":
         fn = lambda x: 1 / (1 + pairwise_euclidean_distance(x))
         # Ranges from 0-1
+    elif metric == "euclidean_distance":
+        fn = pairwise_euclidean_distance
     elif metric == "dot_product":
         fn = pairwise_linear_similarity
+    elif metric == "manhattan_distance":
+        fn = pairwise_manhattan_distance
     sim = pool_tensor(fn(x), similarity_agg).reshape((-1, 1))
     weighted = x * sim
     return weighted.sum(dim=0)
