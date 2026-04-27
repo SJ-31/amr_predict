@@ -7,7 +7,7 @@ import sys
 sys.path.append("/py_lib")
 
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import fastcluster
 import lightning as L
@@ -38,20 +38,17 @@ from torch.utils.data import DataLoader
 
 from env import SnakeEnv
 
-try:
-    from snakemake.script import snakemake as smk
-except ImportError:
-    smk = type("snakemake", (), {"rule": None, "config": {}, "log": [0]})
+if TYPE_CHECKING:
+    from snakemake.iocontainers import snakemake
 
-ENV: SnakeEnv = SnakeEnv.new(smk.config)
+
+ENV: SnakeEnv = SnakeEnv.new(snakemake.config)
+
+PARAMS: dict = snakemake.params
 
 SCOL = ENV.metadata.sample_col
 LABEL_SEP = ENV.metadata.label_sep
 LCOL = ENV.metadata.label_col
-
-logger.enable("")
-if len(smk.log) == 1:
-    logger.add(smk.log[0])
 
 
 os.environ["HF_HOME"] = ENV.huggingface
@@ -190,19 +187,20 @@ def lookup_sae(spec: str, act_size: int) -> BaseNN:
 
 def get_activations():
     dset: LinkedDataset = load_embeddings(
-        cache_completion_file=smk.input["embeddings"],
+        cache_completion_file=snakemake.input["embeddings"],
         dataset_path=ENV.datasets,
-        level=smk.params["level"],
-        seqtype=smk.params["seqtype"],
+        level=PARAMS["level"],
+        seqtype=PARAMS["seqtype"],
     )
-    if not smk.input["sae"]:
+    if not snakemake.input["sae"]:
         return from_pretrained()
+    # TODO: unfinished
     pass
 
 
 def write_training_indices():
-    sample_df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
-    if smk.params["level"] == "tokens":
+    sample_df: pl.DataFrame = load_from_disk(snakemake.input[0]).to_polars()
+    if PARAMS["level"] == "tokens":
         sample_df = sample_df.with_columns(pl.col("sequence").str.split("")).explode(
             "sequence"
         )
@@ -211,39 +209,49 @@ def write_training_indices():
         sample_df["index"], **asdict(ENV.write_training_indices)
     )
     train_idx, val_idx = ms.train_test_split(train_idx, random_state=ENV.rng)
-    with open(smk.output[0], "w") as f:
+    with open(snakemake.output[0], "w") as f:
         json.dump({"train": train_idx, "val": val_idx, "test": test_idx}, f)
 
 
 def train_sae():
-    cache_path: Path = Path(smk.input[0]).with_suffix("")
+    cache_path: Path = Path(snakemake.input[0]).with_suffix("")
     rconfig = ENV.train_sae
     train_kws = rconfig.trainer.to_kws()
-    sae_name = smk.params["sae"]
+    sae_name = PARAMS["sae"]
     run_name = f"{cache_path.stem}-seq_analysis-train_sae-{sae_name}"
-    if smk.config["log_wandb"]:
+    if ENV.log_wandb:
         train_kws["logger"] = WandbLogger(run_name, project="amr_predict")
-    seq_level = smk.params["level"]
+    seq_level = PARAMS["level"]
     dset: LinkedDataset = load_embeddings(
-        cache_completion_file=smk.input[0],
+        cache_completion_file=snakemake.input[0],
         dataset_path=ENV.datasets,
-        seqtype=smk.params["seqtype"],
+        seqtype=PARAMS["seqtype"],
         level=seq_level,
     )
     sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
     load_kws = rconfig.dataloader.to_kws()
     trainer = L.Trainer(**train_kws)
-    train_idx, _, val_idx = get_dset_indices(smk.input[1])
+    train_idx, _, val_idx = get_dset_indices(snakemake.input[1])
     train_l = DataLoader(dset.select(train_idx), **load_kws)
     val_l = DataLoader(dset.select(val_idx), **load_kws)
     trainer.fit(sae, train_dataloaders=train_l, val_dataloaders=val_l)
-    torch.save(sae.state_dict(), smk.output[0])
+    torch.save(sae.state_dict(), snakemake.output[0])
+
+
+def pooling_comparison(dataset: str):
+    dset: LinkedDataset = load_embeddings(
+        snakemake.input[0],
+        dataset_path=ENV.datasets,
+        variation=PARAMS["variation"],
+        vmethod=PARAMS["vmethod"],
+        level=PARAMS["level"],
+    )
+    metadata = dset.meta
 
 
 def make_seq_dataset():
     dfs: pl.DataFrame = []
-    outdir = Path(smk.config["outdir"])
-    seqtype = SeqTypes[smk.params["seqtype"].upper()]
+    seqtype = SeqTypes[PARAMS["seqtype"].upper()]
     for spec in ENV.fastas[seqtype]:
         dfs.append(read_fasta(spec.file, spec.header_style))
     combined = pl.concat(dfs)
@@ -251,18 +259,18 @@ def make_seq_dataset():
         if not combined[col].is_duplicated().any():
             logger.warning(f"Duplicate {col} present in fastas")
             dups: pl.DataFrame = combined.filter(combined[col].is_duplicated())
-            dups.write_csv(outdir / f"duplicated_{col}_{seqtype.value}.csv")
+            dups.write_csv(ENV.outdir / f"duplicated_{col}_{seqtype.value}.csv")
             combined = combined.unique(col)
-    if smk.params["variation"] == "randomized":
-        lookup = ENV.sequence_variants.random[smk.params["method"]]
+    if PARAMS["variation"] == "randomized":
+        lookup = ENV.sequence_variants.random[PARAMS["method"]]
         rnd = Randomizer(method=lookup.method, seqtype=seqtype, **lookup.kws)
         combined = rnd.randomize(combined)
-    elif smk.params["variation"] == "perturbed":
-        lookup = ENV.sequence_variants.perturbed[smk.params["method"]]
+    elif PARAMS["variation"] == "perturbed":
+        lookup = ENV.sequence_variants.perturbed[PARAMS["method"]]
         ptb = Perturber.new(lookup.method, seqtype=seqtype, cfg=lookup.kws)
         combined = ptb.perturb(combined)
     dset: Dataset = Dataset.from_polars(combined)
-    dset.save_to_disk(dataset_path=smk.output[0])
+    dset.save_to_disk(dataset_path=snakemake.output[0])
 
 
 def label_cooccurrence():
@@ -280,24 +288,24 @@ def label_cooccurrence():
         alg = cudaAprioriTID
     else:
         alg = FPGrowth
-    label_df: pl.DataFrame = read_tabular(smk.input[0]).unique()
+    label_df: pl.DataFrame = read_tabular(snakemake.input[0]).unique()
     frequent_patterns, pattern_stats = pami_wrapper(
         label_df,
         alg,
         label_col=LCOL,
         sep=LABEL_SEP,
-        min_sup=smk.config.get("co_occurence_min_support", 0.3),
-        tmp_file=smk.params["tmp_file"],
+        min_sup=ENV.co_occurence_min_support,
+        tmp_file=PARAMS["tmp_file"],
     )
     frequent_patterns.with_columns(pl.col("Patterns").str.join(";")).write_csv(
-        smk.output[0]
+        snakemake.output[0]
     )
-    with open(smk.output[1], "w") as f:
+    with open(snakemake.output[1], "w") as f:
         yaml.safe_dump(f, pattern_stats)
 
 
 # def label_clustering():
-#     label_df = read_tabular(smk.input[0]).unique()
+#     label_df = read_tabular(snakemake.input[0]).unique()
 #     binary = to_binary_form(label_df, sample_col=SCOL, label_col=LCOL, sep=LABEL_SEP)
 #     labels = binary.columns
 #     linkage = fastcluster.linkage_vector(
@@ -315,20 +323,20 @@ def label_cooccurrence():
 
 
 def get_embeddings():
-    df: pl.DataFrame = load_from_disk(smk.input[0]).to_polars()
-    seqtype = SeqTypes[smk.params["seqtype"].upper()]
-    spec = ENV.embedding_methods[seqtype][smk.params["embedding_method"]]
+    df: pl.DataFrame = load_from_disk(snakemake.input[0]).to_polars()
+    seqtype = SeqTypes[PARAMS["seqtype"].upper()]
+    spec = ENV.embedding_methods[seqtype][PARAMS["embedding_method"]]
     model: EmbeddingModels = spec.model
     max_length = embedding_size(model)
     df = account_for_max_length(df, max_len=max_length, seq_col="sequence", id_col="id")
     kws: dict = spec.kws
-    out = Path(smk.output[0])
+    out = Path(snakemake.output[0])
     cache_path = out.with_suffix("")
     if not cache_path.exists():
         cache_path.mkdir()
     kws["workdir"] = cache_path
     kws["huggingface"] = ENV.huggingface
-    kws["save_mode"] = smk.params["level"]
+    kws["save_mode"] = PARAMS["level"]
     embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
     embedder.embed(dataset=Dataset.from_polars(df))
     out.write_text("completed")
@@ -336,5 +344,5 @@ def get_embeddings():
 
 # * Entry
 
-if rule_fn := globals().get(smk.rule):
+if rule_fn := globals().get(snakemake.rule):
     rule_fn()
