@@ -12,10 +12,12 @@ import sklearn.preprocessing as sp
 import torch
 import torch.nn as nn
 import torchmetrics.functional.classification as tmet
-from amr_predict.utils import iter_cols, vecdist
+from amr_predict.utils import expand_annotations, iter_cols, vecdist
+from attrs import Factory, define, field, validators
 from loguru import logger
 from numpy.random import Generator
-from scipy.stats import ecdf
+from scipy.spatial.distance import pdist
+from scipy.stats import ecdf, permutation_test
 from sklearn.metrics.pairwise import paired_distances
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import LabelEncoder
@@ -453,6 +455,133 @@ def nn_proportions(
             )
         result.update(nulls)
     return result
+
+
+@define
+class NeighborMetrics:
+    adata: ad.AnnData
+    category_cols: Sequence[str]
+    anno_cols: Sequence[str]
+    anno_sep: str = ";"
+    random_sample: float = field(
+        default=-1.0,
+        validator=validators.or_(
+            validators.in_([-1.0]), validators.and_(validators.gt(0), validators.lt(1))
+        ),
+    )
+    seed: int | None = None
+    rng: Generator = field(
+        init=False,
+        default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
+    )
+    n_neighbors: int = 5
+    n_random: int = 10_000
+    nn: NearestNeighbors = field(
+        default=Factory(
+            lambda self: NearestNeighbors(n_neighbors=self.n_neighbors), takes_self=True
+        )
+    )
+    neighbors: np.ndarray = field(init=False)
+    distances: np.ndarray = field(init=False)
+
+    def __attrs_post_init__(self):
+        logger.info("Kneighbor computation started")
+        self.nn.fit(self.adata.X)
+        logger.success("Kneighbors fitted")
+        self.distances, self.neighbors = self.nn.kneighbors()
+
+    def _to_sample(self) -> np.ndarray:
+        if self.random_sample == -1:
+            return np.array(range(self.adata.shape[0]))
+        n = self.random_sample * self.adata.shape[0]
+        return self.rng.choice()
+
+    def _random_neighbors(self, x: pd.Series | np.ndarray) -> np.ndarray:
+        if isinstance(x, pd.Series):
+            c1 = x.sample(
+                self.n_random, replace=True, random_state=self.rng
+            ).values.reshape(-1, 1)
+            nn = [
+                x.sample(self.n_neighbors, random_state=self.rng)
+                for _ in range(self.n_random)
+            ]
+        else:
+            indices = range(x.shape[0])
+            c1 = x[self.rng.choice(indices, self.n_random, replace=True), :]
+            nn = [
+                x[self.rng.choice(indices, self.n_neighbors), :]
+                for _ in range(self.n_random)
+            ]
+        return np.hstack([c1, nn])
+
+    def neighbor_proportion(self, x: np.ndarray) -> float:
+        return (x[:, 0].reshape(-1, 1) == x[:, 1:]).sum(axis=1) / self.n_neighbors
+
+    # @staticmethod
+    # def
+
+    def _compute_category_metrics(self, indices, neighbors, category_col: str) -> None:
+        cats = self.adata.obs[category_col]
+        neighbors = self.neighbors[indices, :]
+        category_mat: np.ndarray = np.hstack(
+            [
+                cats[indices].values.reshape(-1, 1),
+                np.vstack([cats.iloc[n] for n in neighbors]),
+            ]
+        )  # Array of shape: (samples, 1 + n_neighbors)
+        random_neighbors = self._random_neighbors()
+        # TODO: add the calculation for the labels
+
+        n_prop_result = permutation_test(
+            (category_mat, random_neighbors),
+            statistic=self.neighbor_proportion,
+            n_resamples=self.n_random,
+            vectorized=True,
+        )
+        impurity_result = permutation_test(
+            (category_mat, random_neighbors),
+            statistic=gini_impurity,
+            n_resamples=self.n_random,
+        )
+        # TODO:
+        return
+
+    def _compute_anno_metrics(self, indices, anno_col: str):
+        binary_annots: np.ndarray = expand_annotations(
+            self.adata.obs[anno_col], self.anno_sep
+        )
+        observed = binary_annots[indices, :]
+        neighbors = self.neighbors[indices, :]
+        anno_mat: np.ndarray = np.hstack(
+            [
+                observed[indices, :],
+                np.vstack([binary_annots.iloc[n, :] for n in neighbors]),
+            ]
+        )
+        random_neighbors = self._random_neighbors(binary_annots)
+        permutation_test(
+            (anno_mat, random_neighbors),
+            statistic=lambda x: np.mean(pdist(x, metric="jaccard")),
+            n_resamples=self.n_random,
+        )
+
+    def _compute_all(self):
+        sample_idx = self._to_sample()
+        tmp, impurity_tmp, null, impurity_null = {}, {}, {}, {}
+        for col in self.category_cols:
+            self._compute_category_metrics(sample_idx, category_col=col)
+
+        index_df = pl.DataFrame({"sample": sample_idx})
+        prop: pl.DataFrame = pl.concat([index_df, pl.DataFrame(tmp)], how="horizontal")
+        gi: pl.DataFrame = pl.concat(
+            [index_df, pl.DataFrame(impurity_tmp)], how="horizontal"
+        )
+
+
+@define
+class TestObj:
+    observed: np.ndarray
+    null: np.ndarray
 
 
 # * Neighbor-preserving score
