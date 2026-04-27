@@ -194,6 +194,7 @@ class FastaSpec:
 @define
 class Perturbation:
     method: ae.Perturbations
+    seqtype: ae.SeqTypes
     kws: ae.PerturbationCfg = field(
         converter=lambda x: x or ae.PerturbationCfg(), factory=ae.PerturbationCfg
     )
@@ -236,7 +237,7 @@ class SnakeEnv:
     write_training_indices: WriteTrainingIndices
     label_clustering: LabelClustering
 
-    slurm_time_limit: str = "18-0:0:0"
+    slurm_time_limit: str = "18-00:00:00"
     co_occurence_min_support: float = 0.3
     save_token_proportion: float = 0.3
     log_wandb: bool = True
@@ -256,37 +257,32 @@ class SnakeEnv:
         for st in ae.SeqTypes:
             if st not in self.embedding_methods or st not in self.fastas:
                 continue
-            out.extend(
-                expand(
-                    f"{self.outdir}/training_indices/{{l}}_{st.value}.json",
-                    l=[v.value for v in Levels],
-                )
-            )
+            # TODO: the intermediate outputs (mainly embeddings) can be omitted
+            # and left to snakemake wildcards to decide
+            # The final outputs should be the analyses which will specify which
+            # embeddings are required
+
             acts_prefix: str = f"{self.datasets}/activations_{st.value}"
-            sae_prefix: str = f"{self.outdir}/saes_{st.value}"
             embedding_prefix: str = f"{self.datasets}/embedded_{st.value}"
 
             for mname, mspec in self.embedding_methods[st].items():
-                out.append(f"{embedding_prefix}_tokens/{mname}-0.completed")
-
                 for s in custom_saes.keys():
-                    out.append(f"{sae_prefix}_tokens/{mname}-0-{s}.pt")
                     out.append(f"{acts_prefix}_tokens/{mname}-0-{s}")
 
                 for p in mspec.poolings:
                     out.append(
-                        f"{embedding_prefix}_seqs/natural-_/{mname}-{p.value}.completed"
+                        f"{embedding_prefix}_seqs/natural-0/{mname}-{p.value}.completed"
                     )
-                    for ptb in self.sequence_variants.perturbed.keys() or ():
-                        out.append(
-                            f"{embedding_prefix}_seqs/perturbed-{ptb}/{mname}-{p.value}.completed"
-                        )
+                    for ptb, ptb_spec in self.sequence_variants.perturbed.items() or {}:
+                        if ptb_spec.seqtype == st:
+                            out.append(
+                                f"{embedding_prefix}_seqs/perturbed-{ptb}/{mname}-{p.value}.completed"
+                            )
                     for rnd in self.sequence_variants.random.keys() or ():
                         out.append(
                             f"{embedding_prefix}_seqs/randomized-{rnd}/{mname}-{p.value}.completed"
                         )
                     for sae in custom_saes:
-                        out.append(f"{sae_prefix}_seqs/{mname}-{p.value}-{sae}.pt")
                         out.append(f"{acts_prefix}_seqs/{mname}-{p.value}-{sae}")
 
             for sae, spec in self.saes["pretrained"].items():

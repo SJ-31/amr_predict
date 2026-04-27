@@ -2,6 +2,10 @@
 
 import json
 import os
+import sys
+
+sys.path.append("/py_lib")
+
 from pathlib import Path
 from typing import Literal
 
@@ -239,15 +243,24 @@ def train_sae():
 def make_seq_dataset():
     dfs: pl.DataFrame = []
     outdir = Path(smk.config["outdir"])
-    for spec in ENV.fastas[smk.params["seqtype"]]:
+    seqtype = SeqTypes[smk.params["seqtype"].upper()]
+    for spec in ENV.fastas[seqtype]:
         dfs.append(read_fasta(spec.file, spec.header_style))
     combined = pl.concat(dfs)
     for col in ("id", "sequence"):
         if not combined[col].is_duplicated().any():
             logger.warning(f"Duplicate {col} present in fastas")
             dups: pl.DataFrame = combined.filter(combined[col].is_duplicated())
-            dups.write_csv(outdir / f"duplicated_{col}_{smk.params["seqtype"]}.csv")
+            dups.write_csv(outdir / f"duplicated_{col}_{seqtype.value}.csv")
             combined = combined.unique(col)
+    if smk.params["variation"] == "randomized":
+        lookup = ENV.sequence_variants.random[smk.params["method"]]
+        rnd = Randomizer(method=lookup.method, seqtype=seqtype, **lookup.kws)
+        combined = rnd.randomize(combined)
+    elif smk.params["variation"] == "perturbed":
+        lookup = ENV.sequence_variants.perturbed[smk.params["method"]]
+        ptb = Perturber.new(lookup.method, seqtype=seqtype, cfg=lookup.kws)
+        combined = ptb.perturb(combined)
     dset: Dataset = Dataset.from_polars(combined)
     dset.save_to_disk(dataset_path=smk.output[0])
 

@@ -32,7 +32,6 @@ dependencies = [
   "cattrs",
   "click",
   "datasets",
-  "snakemake",
   "memray",
   "umap-learn[plot]",
   "scikit-bio",

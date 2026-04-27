@@ -3,7 +3,7 @@ from env import SnakeEnv
 import os
 
 
-singularity: "/data/home/shannc/image.sif"
+singularity: "../../image.sif"
 
 
 # TODO: you might be able to get this working if you pass it in as a script on the shell
@@ -63,35 +63,19 @@ rule get_embeddings:  # NOTE: this saves them as an embedding cache
     resources:
         **EMBEDDING_RES,
     output:
-        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}.completed",
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{variation}}-{{method}}/{{embedding_method}}-{{pooling}}.completed",
     script:
         "main.py"
 
 
 rule write_training_indices:
     input:
-        rules.make_seq_dataset.output,
+        f"{DATASETS}/sequences/{{seqtype}}-natural-0",
     params:
         seqtype=get_wc("seqtype"),
         level=get_wc("level"),
     output:
-        f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
-    script:
-        "main.py"
-
-
-rule train_sae:
-    input:  # NOTE: Only train with natural sequences for now
-        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}-{{sae}}.pt",
-        f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
-    params:
-        seqtype=get_wc("seqtype"),
-        sae=get_wc("sae"),
-        embedding_method=get_wc("embedding_method"),
-        level=get_wc("level"),
-        pooling=get_wc("pooling"),
-    output:
-        f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pt",
+        f"{OUTDIR}/training_indices/{{level}}-{{seqtype}}.json",
     script:
         "main.py"
 
@@ -123,6 +107,22 @@ rule label_cooccurrence:
 #         "main.py"
 
 
+rule train_sae:
+    input:  # NOTE: Only train with natural sequences for now
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
+        f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
+    params:
+        seqtype=get_wc("seqtype"),
+        sae=get_wc("sae"),
+        embedding_method=get_wc("embedding_method"),
+        level=get_wc("level"),
+        pooling=get_wc("pooling"),
+    output:
+        f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pt",
+    script:
+        "main.py"
+
+
 def is_pretrained(wc):
     return wc.get("sae") in env.saes["pretrained"]
 
@@ -131,8 +131,8 @@ rule get_activations:
     input:
         embeddings=branch(
             is_pretrained,
-            then=rules.make_seq_dataset.output[0],
-            otherwise=rules.get_embeddings.output[0],
+            then=f"{DATASETS}/sequences/{{seqtype}}-natural-0",
+            otherwise=f"{DATASETS}/sequences/{{seqtype}}-natural-0",
         ),
         sae=branch(
             is_pretrained,
