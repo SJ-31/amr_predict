@@ -1,5 +1,4 @@
 #!/usr/bin/env ipython
-#!/usr/bin/env ipython
 
 from pathlib import Path
 from string import ascii_letters
@@ -27,7 +26,7 @@ def dummy_embed(texts):
         yield (
             t,
             torch.vstack([embed(t) for _ in range(torch.randint(2, 10, (1,)))]),
-            [mapping[letter] for letter in t],
+            torch.tensor([mapping[letter] + torch.rand(1).item() for letter in t]),
         )
 
 
@@ -38,10 +37,12 @@ def rng():
 
 @pytest.fixture
 def make_default_cache(tmp_path, rng) -> Callable:
-    def fn(with_random: bool = False, mode="both"):
+    def fn(with_random: bool = False, mode="both", save_proba: bool = False):
         path: Path = tmp_path / str(uuid4()) / ".cache"
         path.mkdir(parents=True)
-        cache: EmbeddingCache = EmbeddingCache(path, save_interval=1, save_mode=mode)
+        cache: EmbeddingCache = EmbeddingCache(
+            path, save_interval=1, save_mode=mode, save_proba=save_proba
+        )
         words = [
             "forest",
             "crane",
@@ -64,7 +65,7 @@ def make_default_cache(tmp_path, rng) -> Callable:
                 word + "".join(rng.choice(list(ascii_letters), 5)) for word in words
             ]
             words.extend(new_words)
-        cache.save(words, fn=dummy_embed, batch_size=2)
+        cache.save(words, embed_fn=dummy_embed, batch_size=2)
         return cache, words
 
     return fn
@@ -105,7 +106,7 @@ def test_cache1(make_default_cache):
         "amber",
         "whisk",
     ]
-    cache.save(words2, fn=dummy_embed, batch_size=5)
+    cache.save(words2, embed_fn=dummy_embed, batch_size=5)
     assert (cache["harbor"] == torch.tensor([7, 0, 17])).all()
     assert (cache["linen"] == torch.tensor([11, 8, 13])).all()
     old_len = len(cache)
@@ -117,7 +118,7 @@ def test_cache1(make_default_cache):
         "amber",
         "whisk",
     ]
-    cache.save(dupes, fn=dummy_embed, batch_size=5)
+    cache.save(dupes, embed_fn=dummy_embed, batch_size=5)
     assert old_len == len(cache)
     print(cache.retrieve(pl.Series(["cascade", "meadow", "spice"]), level="seqs"))
 
@@ -134,6 +135,20 @@ def test_cache2(make_default_cache):
     print(null_count)
     print(df.height * prop)
     assert pytest.approx(null_count, abs=3) == df.height * prop
+
+
+@pytest.mark.parametrize("level", ["tokens", "seqs"])
+def test_cache2df(level, make_default_cache):
+    cache: EmbeddingCache
+    cache, words = make_default_cache(save_proba=True)
+    dset: LinkedDataset = cache.to_dataset(
+        df=pl.DataFrame({"words": words}), key_col="words", level=level
+    )
+    df = dset.to_pl()
+    adata = dset.to_anndata()
+    if level == "seqs":
+        assert df.height == len(words)
+        assert adata.shape[0] == len(words)
 
 
 def test_cache_combine(make_default_cache, tmp_path):

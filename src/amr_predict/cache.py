@@ -8,6 +8,7 @@ from pathlib import Path
 from shutil import copyfile
 from typing import Any, Callable, Literal, get_args, override
 
+import anndata as ad
 import duckdb
 import jaxtyping
 import numpy as np
@@ -24,7 +25,7 @@ from loguru import logger
 from numpy.random import Generator
 from torch import Tensor
 
-LEVELS = Literal["logits", "seqs", "tokens"]
+LEVELS = Literal["seqs", "tokens"]
 
 
 @define
@@ -66,7 +67,9 @@ class EmbeddingCache:
         key_length = len(keys)
         col = level.removesuffix("s")
         col_selector = f"t.{col}"
-        if level == "tokens":
+        if level == "tokens" and self.save_proba:
+            col_selector = f"t.{col}, t.token_idx, t.token_pr"
+        elif level == "tokens":
             col_selector = f"t.{col}, t.token_idx"
         key_df = pl.DataFrame({"key": keys})
         lf: pl.LazyFrame = duckdb.query(f"""
@@ -276,7 +279,9 @@ class EmbeddingCache:
         _, token, logits = next(embed_fn(first_batch))
         assert isinstance(token, jaxtyping.Float[Tensor, "a b"])
         if self.save_proba:
-            assert isinstance(logits, jaxtyping.Float[Tensor, "a"])
+            assert isinstance(
+                logits, jaxtyping.Float[Tensor, "a"]
+            ), f"Probabilities should be tensor floats, got {type(logits)}"
 
         if self.save_mode in ("seqs", "both"):
             schema["seq"] = pl.Array(dtype, token.shape[1])
@@ -421,7 +426,7 @@ class LinkedDataset(td.Dataset):
         self.meta = self.meta.filter(pl.col(self.text_key).is_in(keys))
         logger.info("Size after: ", self.meta.height)
 
-    def to_polars(self) -> pl.DataFrame:
+    def to_pl(self) -> pl.DataFrame:
         embeddings: pl.DataFrame = self.cache.retrieve(
             self.meta[self.text_key].unique(), level=self.level, as_array=True
         )
@@ -431,6 +436,12 @@ class LinkedDataset(td.Dataset):
         if self.level == "tokens":
             joined = joined.explode("token", "token_idx")
         return joined
+
+    def to_anndata(self) -> ad.Anndata:
+        df: pl.DataFrame = self.to_pl()
+        x_col = self.level.removesuffix("s")
+        x = df[x_col].to_numpy()
+        return ad.AnnData(X=x, obs=df.drop(x_col).to_pandas())
 
     @property
     def columns(self):
