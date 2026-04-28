@@ -6,11 +6,6 @@ import os
 singularity: "../../image.sif"
 
 
-# TODO: you might be able to get this working if you pass it in as a script on the shell
-# and no longer use the snakemake thing. Should be fine since you already can use
-# the config from the SnakeEnv object
-
-
 configfile: "env.yaml"
 
 
@@ -21,8 +16,11 @@ DATASETS = env.datasets
 
 os.environ["HF_HOME"] = env.huggingface
 
-EMBEDDING_RES = env.resources["gpu40"]
-EMBEDDING_RES["time"] = env.slurm_time_limit
+if not env.test:
+    EMBEDDING_RES = env.resources["gpu40"]
+    EMBEDDING_RES["time"] = env.slurm_time_limit
+else:
+    EMBEDDING_RES = {}
 
 
 def get_wc(wildcard: str):

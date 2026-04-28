@@ -243,6 +243,7 @@ class SnakeEnv:
     log_wandb: bool = True
     embedding_key: str = "x"
     embedding_max_lengths: dict = field(default={"esm": 2048, "seqLens": 512})
+    test: bool = False
 
     @property
     def datasets(self) -> Path:

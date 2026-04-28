@@ -1,0 +1,11 @@
+rerun-triggers: mtime
+cores: 1
+keep-incomplete: True
+delete-all-output: False
+delete-temp-output: False
+rerun-incomplete: True
+executor: slurm
+jobs: 2
+default-resources:
+  qos: cpu24h
+  mem: 15G
