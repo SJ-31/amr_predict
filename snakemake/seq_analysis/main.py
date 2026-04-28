@@ -4,6 +4,8 @@ import json
 import os
 import sys
 
+from lightning.pytorch.callbacks import ModelCheckpoint
+
 sys.path.append("/py_lib")
 
 from pathlib import Path
@@ -143,19 +145,21 @@ def account_for_max_length(
 def get_dset_indices(file) -> tuple[list, list, list]:
     """Read saved indices file and return a tuple of train, test, val indices"""
     with open(file, "r") as f:
-        obj = json.loads(f)
+        obj = json.load(f)
     return obj["train"], obj["test"], obj["val"]
 
 
 def load_embeddings(
     cache_completion_file: str,
-    dataset_path: Path,
     seqtype: str,
+    variation: str,
+    vmethod: str,
     level: Literal["tokens", "seqs"],
+    dataset_path: Path = ENV.datasets,
 ) -> LinkedDataset:
     cache_path: Path = Path(cache_completion_file).with_suffix("")
     cache = EmbeddingCache(dir=cache_path)
-    seqs: Path = dataset_path / f"sequence_{seqtype}"
+    seqs: Path = dataset_path / "sequences" / f"{seqtype}-{variation}-{vmethod}"
     seq_df: pl.DataFrame = load_from_disk(seqs).to_polars()
     dset = cache.to_dataset(df=seq_df, key_col="sequence", level=level, new_col="x")
     assert isinstance(dset, LinkedDataset)
@@ -188,7 +192,8 @@ def lookup_sae(spec: str, act_size: int) -> BaseNN:
 def get_activations():
     dset: LinkedDataset = load_embeddings(
         cache_completion_file=snakemake.input["embeddings"],
-        dataset_path=ENV.datasets,
+        variation="natural",
+        vmethod="0",
         level=PARAMS["level"],
         seqtype=PARAMS["seqtype"],
     )
@@ -219,18 +224,32 @@ def train_sae():
     train_kws = rconfig.trainer.to_kws()
     sae_name = PARAMS["sae"]
     run_name = f"{cache_path.stem}-seq_analysis-train_sae-{sae_name}"
+    outpath = Path(snakemake.output[0])
+    ckpt_dir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_checkpoints"
+    ckpt_callback = ModelCheckpoint(
+        dirpath=ckpt_dir,
+        every_n_epochs=5,
+        enable_version_counter=True,
+        verbose=True,
+    )
     if ENV.log_wandb:
-        train_kws["logger"] = WandbLogger(run_name, project="amr_predict")
+        logdir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_wandb"
+        train_kws["logger"] = WandbLogger(
+            run_name, project="amr_predict", save_dir=logdir
+        )
+        if logdir.exists():
+            ckpt_dir = "last"
     seq_level = PARAMS["level"]
     dset: LinkedDataset = load_embeddings(
         cache_completion_file=snakemake.input[0],
-        dataset_path=ENV.datasets,
+        variation="natural",
+        vmethod="0",
         seqtype=PARAMS["seqtype"],
         level=seq_level,
     )
     sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
     load_kws = rconfig.dataloader.to_kws()
-    trainer = L.Trainer(**train_kws)
+    trainer = L.Trainer(callbacks=[ckpt_callback], ckpt_path="last", **train_kws)
     train_idx, _, val_idx = get_dset_indices(snakemake.input[1])
     train_l = DataLoader(dset.select(train_idx), **load_kws)
     val_l = DataLoader(dset.select(val_idx), **load_kws)
