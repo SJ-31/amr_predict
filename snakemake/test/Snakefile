@@ -6,7 +6,7 @@ from env import SnakeEnv
 import os
 
 
-singularity: "/data/home/shannc/image.sif"
+singularity: "../../image.sif"
 
 
 # TODO: you might be able to get this working if you pass it in as a script on the shell
@@ -28,8 +28,7 @@ config["c"] = "baz"
 
 rule all:
     input:
-        "results/from_shell_rule.txt",
-        "results/from_script_rule.txt",
+        expand("results/from_{s}_rule.txt", s=["shell", "script", "script_cpu"]),
 
 
 rule shell_rule:
@@ -37,6 +36,18 @@ rule shell_rule:
         "results/from_shell_rule.txt",
     shell:
         "./shell.py -o {output}"
+
+
+# TODO: [2026-04-25 Sat] you wanna check if having snakemake in the container screws up scripts
+# it seems like it does, but maybe if your container doesn't have snakemake installed,
+# it will work...
+
+
+rule script_rule_cpu:
+    output:
+        "results/from_script_cpu_rule.txt",
+    script:
+        "script.py"
 
 
 rule script_rule:

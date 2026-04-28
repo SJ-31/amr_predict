@@ -3,23 +3,24 @@
 import os
 import sys
 
-# sys.path.append("/py_lib")
+sys.path.append("/py_lib")
 from pathlib import Path
 
 import torch
-from loguru import logger
 
-logger.info("PYTHONPATH {}", os.environ.get("PYTHONPATH", "Nothing"))
-logger.info("sys.path {}", sys.path)
-logger.info("cuda available {}", torch.cuda.is_available())
+text = f"""
+PYTHONPATH {os.environ.get("PYTHONPATH", "Nothing")}
+sys.path {sys.path}
+cuda available {torch.cuda.is_available()}
+"""
 
+from typing import TYPE_CHECKING
 
-try:
-    from snakemake.script import snakemake as smk
-except ImportError:
-    smk = type("snakemake", (), {"rule": None, "config": {}, "log": [0]})
-logger.info("smk config {}", smk.config)
+if TYPE_CHECKING:
+    from snakemake.iocontainers import snakemake
+
+text = text + f"\nsmk config {snakemake.config}"
 
 from amr_predict.cache import EmbeddingCache, LinkedDataset
 
-Path(smk.output[0]).write_text("hello world")
+Path(snakemake.output[0]).write_text(text)
