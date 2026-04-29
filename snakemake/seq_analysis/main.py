@@ -94,6 +94,8 @@ def account_for_max_length(
 
     Parameters
     ----------
+    seq_col : str
+        Column in `dset` holding the sequences
     cache : EmbeddingCache | None
         When provided, aggregate split subsequences back into their original sequence by
         the specified method in `agg`
@@ -154,6 +156,7 @@ def load_embeddings(
     seqtype: str,
     variation: str,
     vmethod: str,
+    embedding_method: str,
     level: Literal["tokens", "seqs"],
     dataset_path: Path = ENV.datasets,
 ) -> LinkedDataset:
@@ -161,6 +164,8 @@ def load_embeddings(
     cache = EmbeddingCache(dir=cache_path)
     seqs: Path = dataset_path / "sequences" / f"{seqtype}-{variation}-{vmethod}"
     seq_df: pl.DataFrame = load_from_disk(seqs).to_polars()
+    lm = ENV.embedding_methods[seqtype][embedding_method].model
+    seq_df = account_for_max_length(seq_df, max_len=embedding_size(lm), cache=cache)
     dset = cache.to_dataset(df=seq_df, key_col="sequence", level=level, new_col="x")
     assert isinstance(dset, LinkedDataset)
     return dset
@@ -245,15 +250,16 @@ def train_sae():
         variation="natural",
         vmethod="0",
         seqtype=PARAMS["seqtype"],
+        embedding_method=PARAMS["embedding_method"],
         level=seq_level,
     )
     sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
     load_kws = rconfig.dataloader.to_kws()
-    trainer = L.Trainer(callbacks=[ckpt_callback], ckpt_path="last", **train_kws)
+    trainer = L.Trainer(callbacks=[ckpt_callback], **train_kws)
     train_idx, _, val_idx = get_dset_indices(snakemake.input[1])
     train_l = DataLoader(dset.select(train_idx), **load_kws)
     val_l = DataLoader(dset.select(val_idx), **load_kws)
-    trainer.fit(sae, train_dataloaders=train_l, val_dataloaders=val_l)
+    trainer.fit(sae, train_dataloaders=train_l, val_dataloaders=val_l, ckpt_path="last")
     torch.save(sae.state_dict(), snakemake.output[0])
 
 
