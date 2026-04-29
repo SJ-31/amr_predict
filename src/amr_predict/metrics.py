@@ -527,14 +527,30 @@ def nn_proportions(
 
 @define
 class NeighborMetrics:
-    adata: ad.AnnData
+    """Helper class for running analyses on embeddings in NN space
+
+    Parameters
+    ----------
+    anno_sep : str
+        Separator delimiting individual annotations
+    subsample : float | None
+        Proportion of samples from the dataset to use as reference points for metric
+        calculations
+        If set to None, don't subsample and use every sample as a reference point
+
+    n_random : int
+        - Number of resamples for permutation test
+        -
+    """
+
+    adata: ad.AnnData  # TODO: convert this to LinkedDataset if needed for storage
     category_cols: Sequence[str]
     anno_cols: Sequence[str]
     anno_sep: str = ";"
-    random_sample: float = field(
-        default=-1.0,
+    subsample: float | None = field(
+        default=None,
         validator=validators.or_(
-            validators.in_([-1.0]), validators.and_(validators.gt(0), validators.lt(1))
+            validators.in_([None]), validators.and_(validators.gt(0), validators.lt(1))
         ),
     )
     seed: int | None = None
@@ -543,14 +559,19 @@ class NeighborMetrics:
         default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
     )
     n_neighbors: int = 5
-    n_random: int = 10_000
+    nn_kws: dict = field(factory=dict)
+    n_resample: int = 10_000
     nn: NearestNeighbors = field(
         default=Factory(
             lambda self: NearestNeighbors(n_neighbors=self.n_neighbors), takes_self=True
         )
     )
+    n: int = field(
+        init=False, default=Factory(lambda self: self.adata.shape[0], takes_self=True)
+    )
     neighbors: np.ndarray = field(init=False)
     distances: np.ndarray = field(init=False)
+    encoders: dict[str, LabelEncoder] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
         logger.info("Kneighbor computation started")
@@ -559,62 +580,87 @@ class NeighborMetrics:
         self.distances, self.neighbors = self.nn.kneighbors()
 
     def _to_sample(self) -> np.ndarray:
-        if self.random_sample == -1:
-            return np.array(range(self.adata.shape[0]))
-        n = self.random_sample * self.adata.shape[0]
-        return self.rng.choice()
+        if self.subsample is None:
+            return np.array(range(self.n))
+        n = round(self.subsample * self.n)
+        return self.rng.choice(range(self.n), size=n)
 
-    def _random_neighbors(self, x: pd.Series | np.ndarray) -> np.ndarray:
+    def _random_neighbors(
+        self, x: pd.Series | np.ndarray, n: int | None = None
+    ) -> Tensor:
+        n = n or self.n_resample
         if isinstance(x, pd.Series):
-            c1 = x.sample(
-                self.n_random, replace=True, random_state=self.rng
-            ).values.reshape(-1, 1)
-            nn = [
-                x.sample(self.n_neighbors, random_state=self.rng)
-                for _ in range(self.n_random)
-            ]
+            c1 = x.sample(n, replace=True, random_state=self.rng).values.reshape(-1, 1)
+            nn = np.vstack(
+                [
+                    x.sample(self.n_neighbors, random_state=self.rng).values
+                    for _ in range(n)
+                ]
+            )
         else:
             indices = range(x.shape[0])
-            c1 = x[self.rng.choice(indices, self.n_random, replace=True), :]
+            c1 = x[self.rng.choice(indices, n, replace=True), :].reshape(
+                -1, 1, x.shape[1]
+            )
             nn = [
-                x[self.rng.choice(indices, self.n_neighbors), :]
-                for _ in range(self.n_random)
+                np.array(x[self.rng.choice(indices, self.n_neighbors), :])
+                for _ in range(n)
             ]
-        return np.hstack([c1, nn])
+        return torch.from_numpy(np.hstack([c1, nn]))
 
-    def neighbor_proportion(self, x: np.ndarray) -> float:
-        return (x[:, 0].reshape(-1, 1) == x[:, 1:]).sum(axis=1) / self.n_neighbors
+    def _neighbor_prop(self, x: np.ndarray) -> float:
+        """
+        Test statistic returning the difference between observed and random neighborhood
+        annotation/category proportions
 
-    # @staticmethod
-    # def
+        The higher, the better
+        """
+        sum_axis = 1
+        if len(x.shape) == 3:  # first axis becomes the permutations
+            ref_points = x[:, :, 0].reshape(-1, 1)
+            neighbors = x[:, :, 1:].reshape(-1, x.shape[-1] - 1)
+        elif len(x.shape) == 2:
+            ref_points = x[:, 0].reshape(-1, 1)
+            neighbors = x[:, 1:]
+        else:
+            ref_points = x[0]
+            neighbors = x[1:]
+            sum_axis = -1
+        return (ref_points == neighbors).sum(axis=sum_axis) / self.n_neighbors
 
-    def _compute_category_metrics(self, indices, neighbors, category_col: str) -> None:
-        cats = self.adata.obs[category_col]
+    def _compute_category_metrics(
+        self, indices, category_col: str
+    ) -> tuple[McTestResult, McTestResult]:
+        encoder = LabelEncoder()
+        self.encoders[category_col] = encoder
+        cats = pd.Series(encoder.fit_transform(self.adata.obs[category_col]))
         neighbors = self.neighbors[indices, :]
-        category_mat: np.ndarray = np.hstack(
-            [
-                cats[indices].values.reshape(-1, 1),
-                np.vstack([cats.iloc[n] for n in neighbors]),
-            ]
+        category_mat: np.ndarray = torch.from_numpy(
+            np.hstack(
+                [
+                    cats[indices].values.reshape(-1, 1),
+                    np.vstack([cats[n] for n in neighbors]),
+                ]
+            )
         )  # Array of shape: (samples, 1 + n_neighbors)
-        random_neighbors = self._random_neighbors()
-        # TODO: add the calculation for the labels
-
-        n_prop_result = permutation_test(
-            (category_mat, random_neighbors),
-            statistic=self.neighbor_proportion,
-            n_resamples=self.n_random,
+        n_prop_result = generalized_mc_test(
+            category_mat,
+            statistic=self._neighbor_prop,
+            rvs=lambda: self._random_neighbors(cats),
             vectorized=True,
+            alternative="greater",
         )
-        impurity_result = permutation_test(
-            (category_mat, random_neighbors),
+        impurity_result = generalized_mc_test(
+            category_mat,
             statistic=gini_impurity,
-            n_resamples=self.n_random,
+            rvs=lambda x: self._random_neighbors(cats, x),
+            n_resample=self.n_resample,
+            alternative="less",  # Lower impurity the better
+            vectorized=False,
         )
-        # TODO:
-        return
+        return n_prop_result, impurity_result
 
-    def _compute_anno_metrics(self, indices, anno_col: str):
+    def _compute_anno_metrics(self, indices, anno_col: str) -> McTestResult:
         binary_annots: np.ndarray = expand_annotations(
             self.adata.obs[anno_col], self.anno_sep
         )
@@ -622,34 +668,47 @@ class NeighborMetrics:
         neighbors = self.neighbors[indices, :]
         anno_mat: np.ndarray = np.hstack(
             [
-                observed[indices, :],
-                np.vstack([binary_annots.iloc[n, :] for n in neighbors]),
+                observed[indices, :].reshape(-1, 1, observed.shape[1]),
+                np.vstack([[binary_annots[n, :]] for n in neighbors]),
             ]
         )
-        random_neighbors = self._random_neighbors(binary_annots)
-        permutation_test(
-            (anno_mat, random_neighbors),
-            statistic=lambda x: np.mean(pdist(x, metric="jaccard")),
-            n_resamples=self.n_random,
+        res = generalized_mc_test(
+            data=torch.from_numpy(anno_mat),
+            rvs=lambda x: self._random_neighbors(binary_annots, x),
+            n_resample=self.n_resample,
+            statistic=lambda x: pdist(x, metric="jaccard").mean(),
+            vectorized=False,
         )
+        return res
 
-    def _compute_all(self):
+    def run(self) -> tuple[pl.DataFrame, dict]:
         sample_idx = self._to_sample()
-        tmp, impurity_tmp, null, impurity_null = {}, {}, {}, {}
-        for col in self.category_cols:
-            self._compute_category_metrics(sample_idx, category_col=col)
+        dfs = []
+        distributions = {
+            "gini_impurity": {},
+            "neighbor_proportion": {},
+            "mean_jaccard_distance": {},
+        }
+        for col in itertools.chain(self.category_cols, self.anno_cols):
+            if col in self.category_cols:
+                gini, nn = self._compute_category_metrics(sample_idx, category_col=col)
+                df = pl.concat(
+                    [gini.to_pl(), nn.to_pl()], how="diagonal_relaxed"
+                ).with_columns(
+                    pl.Series(["gini_impurity", "neighbor_proportion"]).alias("metric"),
+                    pl.lit(col).alias("column"),
+                )
+                distributions["gini_impurity"][col] = gini.observed_dist
+                distributions["neighbor_proportion"][col] = nn.observed_dist
+            else:
+                res = self._compute_anno_metrics(sample_idx, anno_col=col)
 
-        index_df = pl.DataFrame({"sample": sample_idx})
-        prop: pl.DataFrame = pl.concat([index_df, pl.DataFrame(tmp)], how="horizontal")
-        gi: pl.DataFrame = pl.concat(
-            [index_df, pl.DataFrame(impurity_tmp)], how="horizontal"
-        )
-
-
-@define
-class TestObj:
-    observed: np.ndarray
-    null: np.ndarray
+                df = res.to_pl().with_columns(
+                    metric=pl.lit("mean_jaccard_distance"), column=pl.lit(col)
+                )
+                distributions["mean_jaccard_distance"][col] = res.observed_dist
+            dfs.append(df)
+        return pl.concat(dfs, how="diagonal_relaxed"), distributions
 
 
 # * Neighbor-preserving score
