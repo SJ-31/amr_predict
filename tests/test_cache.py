@@ -138,17 +138,22 @@ def test_cache2(make_default_cache):
 
 
 @pytest.mark.parametrize("level", ["tokens", "seqs"])
-def test_cache2df(level, make_default_cache):
+def test_cache2df(level, make_default_cache, rng):
     cache: EmbeddingCache
     cache, words = make_default_cache(save_proba=True)
     dset: LinkedDataset = cache.to_dataset(
         df=pl.DataFrame({"words": words}), key_col="words", level=level
     )
     df = dset.to_pl()
+    indices = rng.choice(list(range(df.height))[-10:], size=10)
     adata = dset.to_anndata()
     if level == "seqs":
         assert df.height == len(words)
         assert adata.shape[0] == len(words)
+    retrieved = dset[indices]
+    chosen = df[indices]["words"].unique()
+    selected = dset.select(indices)
+    assert (chosen.sort() == selected["words"].unique().sort()).all()
 
 
 def test_cache_combine(make_default_cache, tmp_path):

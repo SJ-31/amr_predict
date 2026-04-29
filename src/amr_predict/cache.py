@@ -62,15 +62,21 @@ class EmbeddingCache:
 
     @beartype
     def retrieve(
-        self, keys: pl.Series, level: LEVELS, as_array: bool = True
+        self,
+        keys: pl.Series,
+        level: LEVELS,
+        as_array: bool = True,
+        only_ids: bool = False,
     ) -> pl.DataFrame:
         key_length = len(keys)
         col = level.removesuffix("s")
         col_selector = f"t.{col}"
         if level == "tokens" and self.save_proba:
             col_selector = f"t.{col}, t.token_idx, t.token_pr"
-        elif level == "tokens":
+        elif level == "tokens" and not only_ids:
             col_selector = f"t.{col}, t.token_idx"
+        elif level == "tokens":
+            col_selector = "t.token_idx"
         key_df = pl.DataFrame({"key": keys})
         lf: pl.LazyFrame = duckdb.query(f"""
         SELECT DISTINCT ON (t.key) t.key, {col_selector}
@@ -426,14 +432,14 @@ class LinkedDataset(td.Dataset):
         self.meta = self.meta.filter(pl.col(self.text_key).is_in(keys))
         logger.info("Size after: ", self.meta.height)
 
-    def to_pl(self) -> pl.DataFrame:
+    def to_pl(self, explode_tokens: bool = True) -> pl.DataFrame:
         embeddings: pl.DataFrame = self.cache.retrieve(
             self.meta[self.text_key].unique(), level=self.level, as_array=True
         )
         joined = self.meta.join(
             embeddings, left_on=self.text_key, right_on="key", how="left"
         )
-        if self.level == "tokens":
+        if self.level == "tokens" and explode_tokens:
             joined = joined.explode("token", "token_idx")
         return joined
 
@@ -446,6 +452,20 @@ class LinkedDataset(td.Dataset):
     @property
     def columns(self):
         return self.meta.columns + [self.x_key]
+
+    def _from_token_level_ids(self, indices):
+        emb = self.cache.retrieve(
+            self.meta[self.text_key].unique(),
+            level="tokens",
+            only_ids=True,
+            as_array=False,
+        )
+        tmp = (
+            self.meta.join(emb, left_on=self.text_key, right_on="key", how="left")
+            .with_row_index()
+            .explode("token_idx")
+        )
+        return tmp[indices].select("index").unique()["index"].to_list()
 
     def _get_x(self, indices: Any | None = None) -> pl.DataFrame:
         df: pl.DataFrame = self.meta[indices] if indices is not None else self.meta
@@ -468,6 +488,8 @@ class LinkedDataset(td.Dataset):
         if isinstance(index, str):
             return self._get_col(index)
         level = self.level.removesuffix("s")
+        if self.level == "tokens":
+            index = self._from_token_level_ids(index)
         df = self._get_x(index)
         if self.level == "tokens":
             df = df.explode("token", "token_idx")
@@ -489,6 +511,8 @@ class LinkedDataset(td.Dataset):
         ]
 
     def select(self, indices) -> LinkedDataset:
+        if self.level == "tokens":
+            indices = self._from_token_level_ids(indices)
         return LinkedDataset(
             meta=self.meta[indices],
             cache=self.cache,
