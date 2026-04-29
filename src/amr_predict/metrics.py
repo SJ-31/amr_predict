@@ -1,7 +1,9 @@
 #!/usr/bin/env ipython
 
-from collections.abc import Sequence
+import itertools
+from collections.abc import Callable, Sequence
 from functools import reduce
+from typing import Literal
 
 import anndata as ad
 import lightning as L
@@ -14,10 +16,11 @@ import torch.nn as nn
 import torchmetrics.functional.classification as tmet
 from amr_predict.utils import expand_annotations, iter_cols, vecdist
 from attrs import Factory, define, field, validators
+from beartype import beartype
 from loguru import logger
 from numpy.random import Generator
 from scipy.spatial.distance import pdist
-from scipy.stats import ecdf, permutation_test
+from scipy.stats import ecdf
 from sklearn.metrics.pairwise import paired_distances
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import LabelEncoder
@@ -284,10 +287,75 @@ def format_cms(metric_dcts: list[dict], encoder: sp.LabelEncoder | None = None):
     return {"label_metrics": [], "average": []}
 
 
-def gini_impurity(x: np.ndarray) -> float:
-    _, counts = np.unique(x, return_counts=True)
+def gini_impurity(x: np.ndarray | Tensor) -> float:
+    if isinstance(x, np.ndarray):
+        _, counts = np.unique(x, return_counts=True)
+        rel_freq = counts / counts.sum()
+        return np.sum(rel_freq * (1 - rel_freq))
+    _, counts = torch.unique(x, return_counts=True)
     rel_freq = counts / counts.sum()
-    return np.sum(rel_freq * (1 - rel_freq))
+    return torch.sum(rel_freq * (1 - rel_freq)).item()
+
+
+@define
+class McTestResult:
+    observed_dist: np.ndarray
+    rvs_dist: np.ndarray
+    p_values: np.ndarray
+    alternative: str
+    p_adj: float
+
+    def to_pl(self) -> pl.DataFrame:
+        return pl.DataFrame({"p_adj": self.p_adj, "alternative": self.alternative})
+
+
+@beartype
+def generalized_mc_test(
+    data: Tensor,
+    statistic: Callable[[Tensor], Tensor],
+    rvs: Callable[[int | None], Tensor],
+    alternative: Literal["less", "greater", "two-sided"] = "two-sided",
+    vectorized: bool = False,
+    n_resample: int | None = None,
+    obs_dim: int = 0,
+) -> McTestResult:
+    """Perform a generalized Monte Carlo test for test statistics on single observations
+
+    The resulting p-values are combined
+    by the ... method, which assumes no dependency structure
+    """
+    if vectorized:
+        null_distribution = statistic(rvs()).numpy()
+        observed = statistic(data).numpy()
+    elif n_resample is None:
+        raise ValueError("Number of resamplings must be provided if not vectorized")
+    else:
+        null_distribution = np.array(
+            [statistic(rv) for rv in torch.unbind(rvs(n_resample), dim=obs_dim)]
+        )
+        observed = np.array([statistic(d) for d in torch.unbind(data, dim=obs_dim)])
+    dist_ecdf = ecdf(null_distribution)
+    proba = dist_ecdf.cdf.evaluate(observed)
+    # Right-tailed test for proportion i.e. probability of observing
+    #   proportion p > `observed_prop` under the null, as the higher the proportion the better
+    if alternative == "less":
+        p_value = proba
+    elif alternative == "greater":
+        p_value = 1 - proba
+    elif alternative == "two-sided":
+        p_value = np.min(np.vstack([proba, 1 - proba]), axis=0) * 2
+    p_value[p_value == 0] = 1e-10
+    # Combine using Bonferroni method
+    # TODO: can use something more powerful, see the function "harmonic_mean_pvalue" in
+    # test_metrics
+    p_adj = min(len(p_value) * min(p_value), 1)
+    return McTestResult(
+        p_values=p_value,
+        p_adj=p_adj,
+        alternative=alternative,
+        observed_dist=observed,
+        rvs_dist=null_distribution,
+    )
 
 
 def nn_proportions(
