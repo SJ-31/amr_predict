@@ -73,7 +73,7 @@ rule write_training_indices:
         seqtype=get_wc("seqtype"),
         level=get_wc("level"),
     output:
-        f"{OUTDIR}/training_indices/{{level}}-{{seqtype}}.json",
+        f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
     script:
         "main.py"
 

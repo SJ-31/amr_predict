@@ -220,7 +220,7 @@ class SnakeEnv:
     metadata: Metadata
     sequence_variants: SequenceVariants
     resources: dict = field(validator=instance_of(dict))
-    saes: dict[Literal["custom", "pretrained"], dict[str, SaeCfg]] = field(
+    saes: dict[Literal["custom", "pretrained"], dict[str, SaeCfg] | None] = field(
         validator=instance_of(dict)
     )
     fastas: dict[ae.SeqTypes, list[FastaSpec]] = field(
@@ -286,12 +286,13 @@ class SnakeEnv:
                     for sae in custom_saes:
                         out.append(f"{acts_prefix}_seqs/{mname}-{p.value}-{sae}")
 
-            for sae, spec in self.saes["pretrained"].items():
-                out.append(
-                    self.datasets
-                    / f"activations_{st.value}_{spec.level.value}"
-                    / f"{spec.embedding}-_-{sae}"
-                )
+            if self.saes["pretrained"]:
+                for sae, spec in self.saes["pretrained"].items():
+                    out.append(
+                        self.datasets
+                        / f"activations_{st.value}_{spec.level.value}"
+                        / f"{spec.embedding}-_-{sae}"
+                    )
         return out
 
     @classmethod
