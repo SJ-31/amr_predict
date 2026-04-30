@@ -17,12 +17,12 @@ import polars as pl
 import sklearn.model_selection as ms
 import torch
 import yaml
-from amr_predict.cache import EmbeddingCache, LinkedDataset
+from amr_predict.cache import EmbeddingCache, LinkedDataset, expand_max_len
 from amr_predict.embedding import EmbeddingModels, ModelEmbedder, embedding_size
-from amr_predict.enums import SeqTypes
+from amr_predict.enums import BasicPoolings, SeqTypes
 from amr_predict.evaluation import pami_wrapper, to_binary_form
 from amr_predict.models import BaseNN
-from amr_predict.pooling import BasicPoolings
+from amr_predict.pooling import pool_tensor
 from amr_predict.random import Perturber, Randomizer
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
@@ -43,6 +43,7 @@ from env import SnakeEnv
 if TYPE_CHECKING:
     from snakemake.iocontainers import snakemake
 
+logger.add(sys.stdout, format="{extra}")
 
 ENV: SnakeEnv = SnakeEnv.new(snakemake.config)
 
@@ -76,72 +77,6 @@ def read_fasta(file: str, header_style: Literal["uniprot"]) -> pl.DataFrame:
         logger.warning(f"Fasta file {file} has duplicate ids")
         df = df.unique("id")
     return df
-
-
-def account_for_max_length(
-    dset: pl.DataFrame,
-    max_len: int,
-    seq_col: str = "sequence",
-    token_level: bool = False,
-    embedding_col: str = "x",
-    id_col: str = "id",
-    cache: EmbeddingCache | None = None,
-    agg: BasicPoolings = BasicPoolings.MEAN,
-) -> pl.DataFrame:
-    """
-    Split sequences in `dset` into subsequences of length `max_len` so that
-    they can be processed by the GLM
-
-    Parameters
-    ----------
-    seq_col : str
-        Column in `dset` holding the sequences
-    cache : EmbeddingCache | None
-        When provided, aggregate split subsequences back into their original sequence by
-        the specified method in `agg`
-    """
-    subseq_id_col = f"{id_col}_subseq"
-
-    expanded: pl.DataFrame = (
-        dset.with_columns(pl.col(seq_col).str.len_chars().alias("length"))
-        .with_columns(
-            pl.int_ranges(end="length", step=max_len).alias("slice_start"),
-        )
-        .with_columns(
-            pl.int_ranges(end=pl.col("slice_start").list.len()).alias(subseq_id_col),
-        )
-        .explode("slice_start", subseq_id_col)
-        .with_columns(
-            pl.concat_str(id_col, "id_subseq", separator=".").alias(subseq_id_col),
-            pl.col(seq_col).str.slice("slice_start", length=max_len).alias(seq_col),
-        )
-    )
-    if cache is None:
-        return expanded.select(subseq_id_col, seq_col)
-    retrieved: pl.DataFrame = cache.retrieve(expanded[seq_col])
-    expanded = expanded.join(
-        retrieved, left_on=seq_col, right_on="key", how="inner", validate="m:1"
-    )
-    if not token_level:
-        expanded = (
-            expanded.group_by(id_col)
-            .agg(
-                pl.when(agg == BasicPoolings.MAX)
-                .then(pl.col("seq").max())
-                .when(agg == BasicPoolings.SUM)
-                .then(pl.col("seq").mean())
-                .otherwise(pl.col("seq").sum()),
-                pl.len().alias("n_subseq"),
-            )
-            .rename({"seq": embedding_col})
-        )
-    else:
-        expanded = (
-            expanded.group_by(id_col)
-            .agg(pl.col("token").arr.explode())
-            .rename({"token": embedding_col})
-        )
-    return expanded.select(id_col, embedding_col)
 
 
 def get_dset_indices(file) -> tuple[list, list, list]:

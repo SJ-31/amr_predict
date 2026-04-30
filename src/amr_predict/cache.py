@@ -28,6 +28,33 @@ from torch import Tensor
 LEVELS = Literal["seqs", "tokens"]
 
 
+def expand_max_len(
+    dset: pl.DataFrame,
+    max_len: int,
+    seq_col: str = "sequence",
+    id_col: str = "id",
+    keep_cols: bool = False,
+) -> pl.DataFrame:
+    subseq_id_col = f"{id_col}_subseq"
+    expanded: pl.DataFrame = (
+        dset.with_columns(pl.col(seq_col).str.len_chars().alias("length"))
+        .with_columns(
+            pl.int_ranges(end="length", step=max_len).alias("slice_start"),
+        )
+        .with_columns(
+            pl.int_ranges(end=pl.col("slice_start").list.len()).alias(subseq_id_col),
+        )
+        .explode("slice_start", subseq_id_col)
+        .with_columns(
+            pl.concat_str(id_col, "id_subseq", separator=".").alias(subseq_id_col),
+            pl.col(seq_col).str.slice("slice_start", length=max_len).alias(seq_col),
+        )
+    )
+    if not keep_cols:
+        return expanded.select(id_col, subseq_id_col, seq_col)
+    return expanded.drop("slice_start")
+
+
 @define
 class EmbeddingCache:
     """Cache for batched text embeddings
