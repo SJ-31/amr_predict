@@ -1,29 +1,27 @@
 #!/usr/bin/env ipython
 from __future__ import annotations
 
-import itertools
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import reduce
 from itertools import batched
 from pathlib import Path
-from shutil import copyfile
-from string import ascii_uppercase
-from typing import Any, Literal, TypeAlias, override
+from typing import Any, Literal, TypeAlias
 
 import anndata as ad
-import duckdb
+import jaxtyping
 import numpy as np
 import pandas as pd
 import polars as pl
-import polars.selectors as cs
 import skbio as sb
 import torch
 import torch.utils.data as td
+from beartype import beartype
 from datasets import DatasetDict, Features, Value, concatenate_datasets
 from datasets.arrow_dataset import Dataset
 from datasets.load import load_from_disk
 from loguru import logger
+from numpy.random import Generator
 from skbio import DNA
 from torch import Tensor
 
@@ -39,7 +37,73 @@ logger.disable("amr_predict")
 TASK_TYPES: TypeAlias = Literal["classification", "regression", "reconstruction"]
 
 
-def sample_pairs(
+def expand_annotations(col: pl.Series | pd.Series, split: str = ";") -> np.ndarray:
+    """
+    Expand a series of string annotations e.g. ["anno1;anno2", "anno35;anno9;anno10", ...]
+    into a binary matrix of samples x annotations
+    """
+    if isinstance(col, pd.Series):
+        col = pl.from_pandas(col)
+    return (
+        col.str.split(split)
+        .to_frame()
+        .with_row_index()
+        .explode(col.name)
+        .with_columns(val=pl.lit(1))
+        .pivot(on=col.name, index="index", values="val", aggregate_function="first")
+        .fill_null(0)
+        .drop("index")
+        .to_numpy()
+    )
+
+
+@beartype
+def resample_pairs(
+    x: jaxtyping.Shaped[Any, "a"] | Sequence,
+    n: int = 1000,
+    rng: int | Generator | None = None,
+    only_indices: bool = True,
+) -> jaxtyping.Integer[np.ndarray, "a b"] | list[tuple]:
+    """
+    Generate `n` random pairs from `x`
+
+    Parameters
+    ----------
+    only_indices : bool
+        If true, return an array of indices with shape (n, 2) containing indices for
+        pairs in `x`. Otherwise, return a list of tuples containing paired elements of x
+    """
+    rng = rng if rng is not None else np.random.default_rng(rng)
+    seen: set = set()
+    count: int = len(x)
+    pair_count: int = 0
+    repeat_allowed = n >= count**2
+    acc = []
+    while pair_count < n:
+        to_add = []
+        first_half = rng.choice(range(count), size=count // 2)
+        sec_half = rng.permuted(list(set(range(count)) - set(first_half)))[
+            : len(first_half)
+        ]
+        together = np.hstack([first_half.reshape(-1, 1), sec_half.reshape(-1, 1)])
+        for i, (f, s) in enumerate(zip(first_half, sec_half)):
+            pair = (f, s)
+            if pair not in seen or repeat_allowed:
+                seen.add(pair)
+                pair_count += 1
+                to_add.append(i)
+                if not only_indices:
+                    acc.append((x[f], x[s]))
+            if pair_count >= n:
+                break
+        if only_indices:
+            acc.append(together[to_add, :])
+    if only_indices:
+        return np.vstack(acc)
+    return acc
+
+
+def sample_pairs_by_col(
     df: pd.DataFrame,
     var: str,
     n_pairs_per: int = 20,
