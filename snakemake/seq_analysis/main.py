@@ -86,22 +86,31 @@ def get_dset_indices(file) -> tuple[list, list, list]:
     return obj["train"], obj["test"], obj["val"]
 
 
+@beartype
 def load_embeddings(
     cache_completion_file: str,
-    seqtype: str,
     variation: str,
     vmethod: str,
-    embedding_method: str,
-    level: Literal["tokens", "seqs"],
+    embedding_method: str = PARAMS.get("embedding_method"),
+    seqtype: Literal["aa", "nuc"] = PARAMS.get("seqtype"),
+    level: Literal["tokens", "seqs"] = PARAMS.get("level"),
     dataset_path: Path = ENV.datasets,
+    pooling: str = PARAMS.get("pooling", "").upper(),
 ) -> LinkedDataset:
     cache_path: Path = Path(cache_completion_file).with_suffix("")
     cache = EmbeddingCache(dir=cache_path)
     seqs: Path = dataset_path / "sequences" / f"{seqtype}-{variation}-{vmethod}"
     seq_df: pl.DataFrame = load_from_disk(seqs).to_polars()
-    lm = ENV.embedding_methods[seqtype][embedding_method].model
-    seq_df = account_for_max_length(seq_df, max_len=embedding_size(lm), cache=cache)
-    dset = cache.to_dataset(df=seq_df, key_col="sequence", level=level, new_col="x")
+    lm = ENV.embedding_methods[SeqTypes[seqtype.upper()]][embedding_method].model
+    pooling = BasicPoolings[pooling] if level == "seqs" else None
+    dset = cache.to_dataset(
+        df=seq_df,
+        key_col="sequence",
+        level=level,
+        new_col="x",
+        max_len=embedding_size(lm),
+        subseq_agg=pooling,
+    )
     assert isinstance(dset, LinkedDataset)
     return dset
 
@@ -134,8 +143,6 @@ def get_activations():
         cache_completion_file=snakemake.input["embeddings"],
         variation="natural",
         vmethod="0",
-        level=PARAMS["level"],
-        seqtype=PARAMS["seqtype"],
     )
     if not snakemake.input["sae"]:
         return from_pretrained()
@@ -153,9 +160,19 @@ def write_training_indices():
     train_idx, test_idx = ms.train_test_split(
         sample_df["index"], **asdict(ENV.write_training_indices)
     )
+    logger.info("Train indices {}", train_idx)
     train_idx, val_idx = ms.train_test_split(train_idx, random_state=ENV.rng)
+    logger.info("Test indices {}", test_idx)
+    logger.info("Val indices {}", val_idx)
     with open(snakemake.output[0], "w") as f:
-        json.dump({"train": train_idx, "val": val_idx, "test": test_idx}, f)
+        json.dump(
+            {
+                "train": train_idx.to_list(),
+                "val": val_idx.to_list(),
+                "test": test_idx.to_list(),
+            },
+            f,
+        )
 
 
 def train_sae():
@@ -179,14 +196,8 @@ def train_sae():
         )
         if logdir.exists():
             ckpt_dir = "last"
-    seq_level = PARAMS["level"]
     dset: LinkedDataset = load_embeddings(
-        cache_completion_file=snakemake.input[0],
-        variation="natural",
-        vmethod="0",
-        seqtype=PARAMS["seqtype"],
-        embedding_method=PARAMS["embedding_method"],
-        level=seq_level,
+        cache_completion_file=snakemake.input[0], variation="natural", vmethod="0"
     )
     sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
     load_kws = rconfig.dataloader.to_kws()
@@ -284,11 +295,10 @@ def label_cooccurrence():
 
 def get_embeddings():
     df: pl.DataFrame = load_from_disk(snakemake.input[0]).to_polars()
-    seqtype = SeqTypes[PARAMS["seqtype"].upper()]
-    spec = ENV.embedding_methods[seqtype][PARAMS["embedding_method"]]
+    spec = ENV.embedding_methods[seqtype_from_params()][PARAMS["embedding_method"]]
     model: EmbeddingModels = spec.model
     max_length = embedding_size(model)
-    df = account_for_max_length(df, max_len=max_length, seq_col="sequence", id_col="id")
+    df = expand_max_len(df, max_len=max_length, seq_col="sequence")
     kws: dict = spec.kws
     out = Path(snakemake.output[0])
     cache_path = out.with_suffix("")
@@ -297,6 +307,7 @@ def get_embeddings():
     kws["workdir"] = cache_path
     kws["huggingface"] = ENV.huggingface
     kws["save_mode"] = PARAMS["level"]
+    kws["save_proba"] = PARAMS["level"] == "tokens"
     embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
     embedder.embed(dataset=Dataset.from_polars(df))
     out.write_text("completed")

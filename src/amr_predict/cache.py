@@ -443,7 +443,7 @@ class LinkedDataset(td.Dataset):
     x_key: str = "embedding"
     text_key: str = "sequence"
     max_len: int | None = None
-    subseq_agg: BasicPoolings = BasicPoolings.MEAN
+    subseq_agg: BasicPoolings | None = BasicPoolings.MEAN
 
     @property
     def shape(self):
