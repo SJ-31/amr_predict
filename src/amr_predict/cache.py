@@ -440,6 +440,8 @@ class LinkedDataset(td.Dataset):
     level: LEVELS = field(default="seqs", validator=validators.in_(get_args(LEVELS)))
     x_key: str = "embedding"
     text_key: str = "sequence"
+    max_len: int | None = None
+    subseq_agg: BasicPoolings = BasicPoolings.MEAN
 
     @property
     def shape(self):
@@ -457,6 +459,48 @@ class LinkedDataset(td.Dataset):
             .sum()
         )
         return n_row, n_col
+
+    def _retrieve_with_max_len(self, df: pl.DataFrame | None = None):
+        """
+        Filter out entries that have lengths greater than max length, and aggregate
+        the embeddings of their subsequences
+        This method assumes that the cache was generated while accounting for the given
+        max length
+        """
+        df = df if df is not None else self.meta
+        retrieve_kws = {"level": self.level, "as_array": True, "key_col": self.text_key}
+        if (
+            self.level == "seqs"
+            and self.max_len
+            and (
+                expand_indices := df.select(
+                    pl.arg_where(pl.col(self.text_key).str.len_chars() >= self.max_len)
+                ).to_series()
+            )
+        ):
+            df = df[~expand_indices]
+            kept_cols = df.columns
+            expanded: pl.DataFrame | None = expand_max_len(
+                df[expand_indices].with_row_index("id"),
+                max_len=self.max_len,
+                seq_col=self.text_key,
+                id_col="id",
+                keep_cols=True,
+            ).drop("id_subseq")
+            cache_lookup = self.cache.retrieve(expanded, **retrieve_kws)
+            tmp = []
+            for _, g in cache_lookup.group_by("id"):
+                emb: torch.Tensor = g.select("seq").to_torch()
+                emb = pool_tensor(emb, method=self.subseq_agg).reshape((1, -1))
+                df = g.select(kept_cols).slice(0).with_columns(seq=pl.lit(emb))
+                tmp.append(df)
+            expanded = pl.concat(tmp)
+        else:
+            expanded = None
+        embeddings = self.cache.retrieve(df, **retrieve_kws)
+        if expanded is not None:
+            embeddings = pl.concat([embeddings, expanded])
+        return embeddings
 
     def sample(self, by: str | None = None, **kws) -> None:
         """Reduce the number of keys in the dataset"""
@@ -483,12 +527,7 @@ class LinkedDataset(td.Dataset):
         logger.info("Size after: ", self.meta.height)
 
     def to_pl(self, explode_tokens: bool = True) -> pl.DataFrame:
-        embeddings: pl.DataFrame = self.cache.retrieve(
-            self.meta[self.text_key].unique(), level=self.level, as_array=True
-        )
-        joined = self.meta.join(
-            embeddings, left_on=self.text_key, right_on="key", how="left"
-        )
+        joined: pl.DataFrame = self._retrieve_with_max_len()
         if self.level == "tokens" and explode_tokens:
             joined = joined.explode("token", "token_idx")
         return joined
@@ -519,12 +558,7 @@ class LinkedDataset(td.Dataset):
 
     def _get_x(self, indices: Any | None = None) -> pl.DataFrame:
         df: pl.DataFrame = self.meta[indices] if indices is not None else self.meta
-        x_df: pl.DataFrame = self.cache.retrieve(
-            df[self.text_key].unique(), level=self.level, as_array=True
-        )
-        joined = df.join(
-            x_df, left_on=self.text_key, right_on="key", how="left", validate="m:1"
-        )
+        joined: pl.DataFrame = self._retrieve_with_max_len(df)
         return joined
 
     def _get_col(self, col) -> Tensor | pl.Series:
