@@ -32,6 +32,7 @@ def expand_max_len(
     dset: pl.DataFrame,
     max_len: int,
     seq_col: str = "sequence",
+    new_seq_col: str | None = None,
     id_col: str = "id",
     keep_cols: bool = False,
 ) -> pl.DataFrame:
@@ -45,6 +46,7 @@ def expand_max_len(
         Column in `dset` holding the sequences
     """
     subseq_id_col = f"{id_col}_subseq"
+    new_seq_col = new_seq_col or seq_col
     expanded: pl.DataFrame = (
         dset.with_columns(pl.col(seq_col).str.len_chars().alias("length"))
         .with_columns(
@@ -55,8 +57,8 @@ def expand_max_len(
         )
         .explode("slice_start", subseq_id_col)
         .with_columns(
-            pl.concat_str(id_col, "id_subseq", separator=".").alias(subseq_id_col),
-            pl.col(seq_col).str.slice("slice_start", length=max_len).alias(seq_col),
+            pl.concat_str(id_col, subseq_id_col, separator=".").alias(subseq_id_col),
+            pl.col(seq_col).str.slice("slice_start", length=max_len).alias(new_seq_col),
         )
     )
     if not keep_cols:
@@ -460,7 +462,7 @@ class LinkedDataset(td.Dataset):
         )
         return n_row, n_col
 
-    def _retrieve_with_max_len(self, df: pl.DataFrame | None = None):
+    def _retrieve_with_max_len(self, df: pl.DataFrame | None = None) -> pl.DataFrame:
         """
         Filter out entries that have lengths greater than max length, and aggregate
         the embeddings of their subsequences
@@ -472,35 +474,42 @@ class LinkedDataset(td.Dataset):
         if (
             self.level == "seqs"
             and self.max_len
-            and (
+            and not (
                 expand_indices := df.select(
                     pl.arg_where(pl.col(self.text_key).str.len_chars() >= self.max_len)
                 ).to_series()
-            )
+            ).is_empty()
         ):
-            df = df[~expand_indices]
-            kept_cols = df.columns
             expanded: pl.DataFrame | None = expand_max_len(
-                df[expand_indices].with_row_index("id"),
+                df[expand_indices].with_row_index("__id"),
                 max_len=self.max_len,
                 seq_col=self.text_key,
-                id_col="id",
+                new_seq_col="__key",
+                id_col="__id",
                 keep_cols=True,
-            ).drop("id_subseq")
-            cache_lookup = self.cache.retrieve(expanded, **retrieve_kws)
+            ).drop("__id_subseq")
+            cache_lookup = self.cache.retrieve(
+                expanded, **(retrieve_kws | {"key_col": "__key"})
+            )
+            df = df.filter(~pl.row_index().is_in(expand_indices))
+            kept_cols = df.columns
             tmp = []
-            for _, g in cache_lookup.group_by("id"):
+            for _, g in cache_lookup.group_by("__id"):
                 emb: torch.Tensor = g.select("seq").to_torch()
                 emb = pool_tensor(emb, method=self.subseq_agg).reshape((1, -1))
-                df = g.select(kept_cols).slice(0).with_columns(seq=pl.lit(emb))
-                tmp.append(df)
+                cur_df = g.select(kept_cols).head(n=1).with_columns(seq=emb)
+                tmp.append(cur_df)
             expanded = pl.concat(tmp)
         else:
             expanded = None
-        embeddings = self.cache.retrieve(df, **retrieve_kws)
-        if expanded is not None:
-            embeddings = pl.concat([embeddings, expanded])
-        return embeddings
+        if not df.is_empty():
+            embeddings = self.cache.retrieve(df, **retrieve_kws)
+            if expanded is not None:
+                embeddings = pl.concat([embeddings, expanded])
+            return embeddings
+        elif expanded is not None and not expanded.is_empty():
+            return expanded
+        return pl.DataFrame()
 
     def sample(self, by: str | None = None, **kws) -> None:
         """Reduce the number of keys in the dataset"""

@@ -19,7 +19,7 @@ def env():
     with open(here("tests", "env.toml"), "rb") as f:
         env: dict = tomllib.load(f)
 
-    with open(here("snakemake", "env.yaml"), "rb") as f:
+    with open(here("snakemake", "amr", "env.yaml"), "rb") as f:
         env.update(yaml.safe_load(f))
     td = here("tests", "data")
     env["ast_metadata"]["file"] = here("data", "meta", "ncbi_all_samples.tsv")

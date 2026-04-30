@@ -9,10 +9,16 @@ import numpy as np
 import polars as pl
 import pytest
 import torch
-from amr_predict.cache import EmbeddingCache, LinkedDataset
+from amr_predict.cache import EmbeddingCache, LinkedDataset, expand_max_len
 from datasets import Dataset
+from loguru import logger
 from pyhere import here
 from torch.utils.data import DataLoader
+
+logger.enable("amr_predict")
+
+
+rand = pl.DataFrame({"a": np.random.randint(9, size=10)})
 
 
 def dummy_embed(texts):
@@ -20,7 +26,11 @@ def dummy_embed(texts):
     mapping = dict(zip(ascii_letters, range(len(ascii_letters))))
 
     def embed(text):
-        return torch.tensor([mapping[text[i]] for i in range(ncol)]).to(torch.float32)
+        if len(text) >= ncol:
+            return torch.tensor([mapping[text[i]] for i in range(ncol)]).to(
+                torch.float32
+            )
+        return torch.randn(3)
 
     for t in texts:
         yield (
@@ -37,7 +47,12 @@ def rng():
 
 @pytest.fixture
 def make_default_cache(tmp_path, rng) -> Callable:
-    def fn(with_random: bool = False, mode="both", save_proba: bool = False):
+    def fn(
+        with_random: bool = False,
+        mode="both",
+        save_proba: bool = False,
+        max_len: int | None = None,
+    ):
         path: Path = tmp_path / str(uuid4()) / ".cache"
         path.mkdir(parents=True)
         cache: EmbeddingCache = EmbeddingCache(
@@ -65,7 +80,12 @@ def make_default_cache(tmp_path, rng) -> Callable:
                 word + "".join(rng.choice(list(ascii_letters), 5)) for word in words
             ]
             words.extend(new_words)
-        cache.save(words, embed_fn=dummy_embed, batch_size=2)
+        if not max_len:
+            cache.save(words, embed_fn=dummy_embed, batch_size=2)
+        else:
+            df = pl.DataFrame({"words": words}).with_row_index("id")
+            df = expand_max_len(df, max_len=max_len, seq_col="words")
+            cache.save(df["words"], embed_fn=dummy_embed, batch_size=2)
         return cache, words
 
     return fn
@@ -75,6 +95,19 @@ def test_cache1_only_tk(make_default_cache):
     cache: EmbeddingCache
     cache, words = make_default_cache(mode="tokens")
     print(cache.to_pl().collect())
+
+
+def test_max_len(make_default_cache):
+    cache: EmbeddingCache
+    cache, words = make_default_cache(mode="seqs", max_len=3)
+    df = pl.DataFrame({"key": words, "id": range(len(words))})
+    ds = LinkedDataset(meta=df, cache=cache, text_key="key", x_key="x", max_len=3)
+    full_cache = cache.to_pl(as_array=True).collect()
+    assert full_cache.height >= len(words)
+    logger.info("cache {}", full_cache)
+    assert ds[:]["x"].shape[0] == len(words)
+    logger.info("df {}", ds.to_pl())
+    assert (ds.to_pl()["key"].sort() == pl.Series(words).sort()).all()
 
 
 def test_cache1(make_default_cache):
