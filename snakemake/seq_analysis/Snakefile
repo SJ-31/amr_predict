@@ -13,6 +13,7 @@ env = SnakeEnv.new(config)
 
 OUTDIR = env.outdir
 DATASETS = env.datasets
+NN = env.outdir / "nearest_neighbors"
 
 os.environ["HF_HOME"] = env.huggingface
 
@@ -30,55 +31,58 @@ def get_wc(wildcard: str):
     return f
 
 
+out_list, named_out = env.get_outputs()
+
+
 rule all:
     input:
-        *env.get_outputs(),
+        *out_list,
 
 
-rule make_seq_dataset:
+# TODO: record this pattern of using a base rule and inheritance if it works
+rule base:
     params:
         seqtype=get_wc("seqtype"),
+        level=get_wc("level"),
         method=get_wc("method"),
         variation=get_wc("variation"),
+        sae=get_wc("sae"),
+        embedding_method=get_wc("embedding_method"),
+        pooling=get_wc("pooling"),
+    script:
+        "main.py"
+
+
+# Total number of datasets is 2 * n_seqtypes *
+# (n_variations * n_types_variation) * n_embedding_methods * n_pooling
+
+
+use rule base as make_seq_dataset with:
     output:
+        directory(f"{DATASETS}/sequences/{{seqtype}}-{{variation}}-{{method}}"),
         # Variation: random, natural, perturbed
         # Seqtypes: aa, nuc
         # `Method` refers to perturbation or randomization method. It's '0' for natural
         # sequences
-        directory(f"{DATASETS}/sequences/{{seqtype}}-{{variation}}-{{method}}"),
-    script:
-        "main.py"
 
 
-rule get_embeddings:  # NOTE: this saves them as an embedding cache
+use rule base as get_embeddings with:  # NOTE: this saves them as an embedding cache
     input:
         rules.make_seq_dataset.output,
-    params:
-        seqtype=get_wc("seqtype"),
-        level=get_wc("level"),
-        embedding_method=get_wc("embedding_method"),
-        pooling=get_wc("pooling"),
     resources:
         **EMBEDDING_RES,
     output:
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{variation}}-{{method}}/{{embedding_method}}-{{pooling}}.completed",
-    script:
-        "main.py"
 
 
-rule write_training_indices:
+use rule base as write_training_indices with:
     input:
         f"{DATASETS}/sequences/{{seqtype}}-natural-0",
-    params:
-        seqtype=get_wc("seqtype"),
-        level=get_wc("level"),
     output:
         f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
-    script:
-        "main.py"
 
 
-rule label_cooccurrence:
+use rule base as label_cooccurrence with:
     input:
         env.metadata.file,
     params:
@@ -88,8 +92,6 @@ rule label_cooccurrence:
     output:
         f"{OUTDIR}/label_cooccurrence.csv",
         f"{OUTDIR}/cooccurrence_stats.yaml",
-    script:
-        "main.py"
 
 
 # rule evaluation:
@@ -105,27 +107,19 @@ rule label_cooccurrence:
 #         "main.py"
 
 
-rule train_sae:
+use rule base as train_sae with:
     input:  # NOTE: Only train with natural sequences for now
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
         f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
-    params:
-        seqtype=get_wc("seqtype"),
-        sae=get_wc("sae"),
-        embedding_method=get_wc("embedding_method"),
-        level=get_wc("level"),
-        pooling=get_wc("pooling"),
     output:
         f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pt",
-    script:
-        "main.py"
 
 
 def is_pretrained(wc):
-    return wc.get("sae") in env.saes["pretrained"]
+    return wc.get("sae") in (env.saes["pretrained"] or [])
 
 
-rule get_activations:
+use rule base as get_activations with:
     input:
         embeddings=branch(
             is_pretrained,
@@ -139,19 +133,26 @@ rule get_activations:
             / f"saes_{wc['seqtype']}_{wc['level']}"
             / f"{wc['embedding_method']}-{wc['pooling']}-{wc['sae']}.pt",
         ),
-    params:
-        seqtype=get_wc("seqtype"),
-        sae=get_wc("sae"),
-        level=get_wc("level"),
-        embedding_method=get_wc("embedding_method"),
-        pooling=get_wc("pooling"),
     output:
         directory(
             f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}"
         ),
 
 
-# rule neighbor_metrics:
+use rule base as nearest_neighbors with:
+    input:
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
+    output:
+        f"{NN}/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}.csv",
+        directory(f"{NN}/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}"),
+
+
+# rule compare_neighbor_metrics:
+#     input:
+#         named_out["nearest_neighbors"],
+#     output:
+#         self.outdir / "analyses/nearest_neighbors/per_method.csv",
+#         self.outdir / "analyses/nearest_neighbors/method_comparison.csv",
 # rule sae_metrics:
 # This rule should also get activation metrics
 # TODO: report metrics on train set, including L0, MSE loss etc.
