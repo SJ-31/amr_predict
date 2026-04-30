@@ -35,6 +35,15 @@ def expand_max_len(
     id_col: str = "id",
     keep_cols: bool = False,
 ) -> pl.DataFrame:
+    """
+    Split sequences in `dset` into subsequences of length `max_len` so that
+    they can be processed by the GLM
+
+    Parameters
+    ----------
+    seq_col : str
+        Column in `dset` holding the sequences
+    """
     subseq_id_col = f"{id_col}_subseq"
     expanded: pl.DataFrame = (
         dset.with_columns(pl.col(seq_col).str.len_chars().alias("length"))
@@ -90,11 +99,21 @@ class EmbeddingCache:
     @beartype
     def retrieve(
         self,
-        keys: pl.Series,
+        keys: pl.Series | pl.DataFrame,
         level: LEVELS,
         as_array: bool = True,
         only_ids: bool = False,
+        key_col: str | None = None,
     ) -> pl.DataFrame:
+        if key_col is None and isinstance(keys, pl.DataFrame):
+            raise ValueError("Key column must be provided if passing a dataframe")
+        elif isinstance(keys, pl.DataFrame):
+            join_back: pl.DataFrame | None = keys
+            keys = keys[key_col].unique()  # unique here because we expect to join
+            # with the passed df later
+        else:
+            join_back = None
+        key_df = pl.DataFrame({"key": keys})
         key_length = len(keys)
         col = level.removesuffix("s")
         col_selector = f"t.{col}"
@@ -104,7 +123,6 @@ class EmbeddingCache:
             col_selector = f"t.{col}, t.token_idx"
         elif level == "tokens":
             col_selector = "t.token_idx"
-        key_df = pl.DataFrame({"key": keys})
         lf: pl.LazyFrame = duckdb.query(f"""
         SELECT DISTINCT ON (t.key) t.key, {col_selector}
         FROM '{self._glob()}' t
@@ -127,8 +145,12 @@ class EmbeddingCache:
                     f"{len(not_in)} of the requested keys are missing from the cache\n{not_in}"
                 )
             lookup: dict = dict(zip(collected["key"], collected[col]))
-            return pl.DataFrame({"key": keys, col: [lookup[k] for k in keys]})
-        return collected
+            collected = pl.DataFrame({"key": keys, col: [lookup[k] for k in keys]})
+        if join_back is None:
+            return collected
+        return join_back.join(
+            collected, left_on=key_col, right_on="key", how="left", validate="m:1"
+        )
 
     def _mask_in_df(
         self, df: pl.LazyFrame, column: str, mask_prop: float, height: int
@@ -373,6 +395,7 @@ class EmbeddingCache:
         new_col: str = "embedding",
         drop_null_columns: bool = True,
         hf: bool = False,
+        **kws,
     ) -> Dataset | td.Dataset:
         if drop_null_columns:
             not_nulls = [s.name for s in df if not (s.null_count() == df.height)]
@@ -390,7 +413,7 @@ class EmbeddingCache:
             # be zero-copy
             return dset
         return LinkedDataset(
-            meta=df, text_key=key_col, cache=self, level=level, x_key=new_col
+            meta=df, text_key=key_col, cache=self, level=level, x_key=new_col, **kws
         )
 
 
