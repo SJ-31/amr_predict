@@ -57,6 +57,8 @@ def pool_tensor(x: Tensor, method: BasicPoolings, **kws) -> Tensor:
         return x.max(dim=0).values
     elif method == BasicPoolings.SIMILARITY:
         return _pool_similarity(x, **kws)
+    # elif method == BasicPoolings.CLS:
+
     raise NotImplementedError
 
 

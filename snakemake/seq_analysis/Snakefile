@@ -27,13 +27,13 @@ else:
 
 def get_wc(wildcard: str):
     def f(wc):
-        return wc.get(wildcard)
+        return wc.get(wildcard, "")
 
     return f
 
 
 out_list, named_out = env.get_outputs()
-time_prefix = time.strftime("%Y-%M-%d_%H:%M")
+time_prefix = time.strftime("%Y-%m-%d:%H:%M")
 logdir = f"logs{'_test' if env.test else ''}/{time_prefix}"
 Path(logdir).mkdir(parents=True, exist_ok=True)
 
@@ -133,8 +133,9 @@ use rule base as get_activations with:
         embeddings=branch(
             is_pretrained,
             then=f"{DATASETS}/sequences/{{seqtype}}-natural-0",
-            otherwise=f"{DATASETS}/sequences/{{seqtype}}-natural-0",
+            otherwise=f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
         ),
+        indices=f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
         sae=branch(
             is_pretrained,
             then=None,

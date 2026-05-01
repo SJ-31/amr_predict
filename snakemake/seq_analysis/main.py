@@ -153,8 +153,17 @@ def get_activations():
     )
     if not snakemake.input["sae"]:
         return from_pretrained()
-    # TODO: unfinished
-    pass
+        # TODO: unfinished
+    else:
+        sae = lookup_sae(PARAMS["sae"], act_size=dset[0]["x"].shape[1])
+        train_idx, test_idx, val_idx = get_dset_indices(snakemake.input["indices"])
+        sae.eval()
+        sae.load_state_dict(torch.load(snakemake.input["sae"]))
+        test_portion = dset.select(test_idx)
+        activations = sae.predict_step(test_portion["x"][:])
+        samples = test_portion.meta["id"]
+        act_dset = Dataset.from_dict({"id": samples, "activation": activations})
+        act_dset.save_to_disk(snakemake.output[0])
 
 
 def write_training_indices():
@@ -199,7 +208,7 @@ def train_sae():
     if ENV.log_wandb:
         logdir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_wandb"
         train_kws["logger"] = WandbLogger(
-            run_name, project="amr_predict", save_dir=logdir
+            run_name, project=ENV.wandb_project, save_dir=logdir
         )
         if logdir.exists():
             ckpt_dir = "last"
@@ -227,9 +236,17 @@ def pooling_comparison(dataset: str):
     metadata = dset.meta
 
 
+def seqtype_from_params() -> SeqTypes:
+    return SeqTypes[PARAMS["seqtype"].upper()]
+
+
+def pooling_from_params() -> BasicPoolings:
+    return BasicPoolings[PARAMS["pooling"].upper()]
+
+
 def make_seq_dataset():
     dfs: pl.DataFrame = []
-    seqtype = SeqTypes[PARAMS["seqtype"].upper()]
+    seqtype = seqtype_from_params()
     for spec in ENV.fastas[seqtype]:
         dfs.append(read_fasta(spec.file, spec.header_style))
     combined = pl.concat(dfs)
@@ -239,6 +256,8 @@ def make_seq_dataset():
             dups: pl.DataFrame = combined.filter(combined[col].is_duplicated())
             dups.write_csv(ENV.outdir / f"duplicated_{col}_{seqtype.value}.csv")
             combined = combined.unique(col)
+    if ENV.test:
+        combined = combined.sample(n=1000)
     if PARAMS["variation"] == "randomized":
         lookup = ENV.sequence_variants.random[PARAMS["method"]]
         rnd = Randomizer(method=lookup.method, seqtype=seqtype, **lookup.kws)
@@ -315,7 +334,7 @@ def get_embeddings():
     kws["huggingface"] = ENV.huggingface
     kws["save_mode"] = PARAMS["level"]
     kws["pooling"] = pooling_from_params() if PARAMS["level"] == "seqs" else None
-    kws["pooling_kws"] = spec.poolings[PARAMS["pooling"]] or {}
+    kws["pooling_kws"] = spec.poolings[pooling_from_params()] or {}
     kws["save_proba"] = PARAMS["level"] == "tokens"
     embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
     embedder.embed(dataset=Dataset.from_polars(df))
