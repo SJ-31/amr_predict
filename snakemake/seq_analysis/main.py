@@ -314,6 +314,8 @@ def get_embeddings():
     kws["workdir"] = cache_path
     kws["huggingface"] = ENV.huggingface
     kws["save_mode"] = PARAMS["level"]
+    kws["pooling"] = pooling_from_params() if PARAMS["level"] == "seqs" else None
+    kws["pooling_kws"] = spec.poolings[PARAMS["pooling"]] or {}
     kws["save_proba"] = PARAMS["level"] == "tokens"
     embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
     embedder.embed(dataset=Dataset.from_polars(df))
@@ -322,5 +324,9 @@ def get_embeddings():
 
 # * Entry
 
-if rule_fn := globals().get(snakemake.rule):
-    rule_fn()
+with logger.contextualize(
+    rule=snakemake.rule,
+    outs=[f"{Path(o).parent.name}/{Path(o).name}" for o in snakemake.output],
+):
+    if rule_fn := globals().get(snakemake.rule):
+        rule_fn()

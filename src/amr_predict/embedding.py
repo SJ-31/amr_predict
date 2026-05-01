@@ -70,7 +70,8 @@ class ModelEmbedder:
     rng: int | None = None
     save_proba: bool = False
     save_interval: int = 10
-    pooling: BasicPoolings = BasicPoolings.MEAN
+    pooling: BasicPoolings | None = None
+    pooling_kws: dict = field(factory=dict)
     only_cache: bool = True
     choose_hidden: bool = field(
         init=False, default=Factory(lambda self: self.hidden_layer < 0, takes_self=True)
@@ -86,6 +87,7 @@ class ModelEmbedder:
                 save_interval=self.save_interval,
                 token_amount=self.token_amount,
                 pooling=self.pooling,
+                pooling_kws=self.pooling_kws,
             ),
             takes_self=True,
         )
