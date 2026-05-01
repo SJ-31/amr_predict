@@ -476,7 +476,7 @@ class LinkedDataset(td.Dataset):
             and self.max_len
             and not (
                 expand_indices := df.select(
-                    pl.arg_where(pl.col(self.text_key).str.len_chars() >= self.max_len)
+                    pl.arg_where(pl.col(self.text_key).str.len_chars() > self.max_len)
                 ).to_series()
             ).is_empty()
         ):
@@ -533,7 +533,6 @@ class LinkedDataset(td.Dataset):
         logger.info("Size before removing missing keys: {}", self.meta.height)
         keys = set(self.cache.keys())
         self.meta = self.meta.filter(pl.col(self.text_key).is_in(keys))
-        logger.info("Size after: ", self.meta.height)
 
     def to_pl(self, explode_tokens: bool = True) -> pl.DataFrame:
         joined: pl.DataFrame = self._retrieve_with_max_len()
@@ -552,18 +551,18 @@ class LinkedDataset(td.Dataset):
         return self.meta.columns + [self.x_key]
 
     def _from_token_level_ids(self, indices):
-        emb = self.cache.retrieve(
-            self.meta[self.text_key].unique(),
-            level="tokens",
-            only_ids=True,
-            as_array=False,
-        )
-        tmp = (
-            self.meta.join(emb, left_on=self.text_key, right_on="key", how="left")
+        emb = (
+            self.cache.retrieve(
+                self.meta,
+                level="tokens",
+                only_ids=True,
+                as_array=False,
+                key_col=self.text_key,
+            )
             .with_row_index()
             .explode("token_idx")
         )
-        return tmp[indices].select("index").unique()["index"].to_list()
+        return emb[indices]["index"].unique().to_list()
 
     def _get_x(self, indices: Any | None = None) -> pl.DataFrame:
         df: pl.DataFrame = self.meta[indices] if indices is not None else self.meta
@@ -612,6 +611,8 @@ class LinkedDataset(td.Dataset):
             level=self.level,
             x_key=self.x_key,
             text_key=self.text_key,
+            max_len=self.max_len,
+            subseq_agg=self.subseq_agg,
         )
 
     def _modify_columns(self, columns: Sequence, keep: bool) -> LinkedDataset:
