@@ -478,8 +478,7 @@ class LinkedDataset(td.Dataset):
         df = df if df is not None else self.meta
         retrieve_kws = {"level": self.level, "as_array": True, "key_col": self.text_key}
         if (
-            self.level == "seqs"
-            and self.max_len
+            self.max_len
             and not (
                 expand_indices := df.select(
                     pl.arg_where(pl.col(self.text_key).str.len_chars() > self.max_len)
@@ -493,19 +492,29 @@ class LinkedDataset(td.Dataset):
                 new_seq_col="__key",
                 id_col="__id",
                 keep_cols=True,
-            ).drop("__id_subseq")
+            )
             cache_lookup = self.cache.retrieve(
                 expanded, **(retrieve_kws | {"key_col": "__key"})
             )
             df = df.filter(~pl.row_index().is_in(expand_indices))
             kept_cols = df.columns
-            tmp = []
-            for _, g in cache_lookup.group_by("__id"):
-                emb: torch.Tensor = g.select("seq").to_torch()
-                emb = pool_tensor(emb, method=self.subseq_agg).reshape((1, -1))
-                cur_df = g.select(kept_cols).head(n=1).with_columns(seq=emb)
-                tmp.append(cur_df)
-            expanded = pl.concat(tmp)
+            if self.level == "seqs":  # Pool subsequences
+                tmp = []
+                for _, g in cache_lookup.group_by("__id"):
+                    emb: torch.Tensor = g.select("seq").to_torch()
+                    emb = pool_tensor(emb, method=self.subseq_agg).reshape((1, -1))
+                    cur_df = g.select(kept_cols).head(n=1).with_columns(seq=emb)
+                    tmp.append(cur_df)
+                expanded = pl.concat(tmp)
+            else:  # Adjust token indices
+                kept_cols.extend(["token", "token_idx"])
+                if "token_pr" in cache_lookup.columns:
+                    kept_cols.append("token_pr")
+                expanded = cache_lookup.with_columns(
+                    (
+                        pl.col("token_idx") + (pl.col("__id_subseq") * self.max_len)
+                    ).alias("token_idx")
+                ).select(kept_cols)
         else:
             expanded = None
         if not df.is_empty():
@@ -557,17 +566,7 @@ class LinkedDataset(td.Dataset):
         return self.meta.columns + [self.x_key]
 
     def _from_token_level_ids(self, indices):
-        emb = (
-            self.cache.retrieve(
-                self.meta,
-                level="tokens",
-                only_ids=True,
-                as_array=False,
-                key_col=self.text_key,
-            )
-            .with_row_index()
-            .explode("token_idx")
-        )
+        emb = self._retrieve_with_max_len().with_row_index().explode("token_idx")
         return emb[indices]["index"].unique().to_list()
 
     def _get_x(self, indices: Any | None = None) -> pl.DataFrame:
