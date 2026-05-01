@@ -4,6 +4,7 @@ import json
 import os
 import sys
 
+import numpy as np
 from lightning.pytorch.callbacks import ModelCheckpoint
 
 sys.path.append("/py_lib")
@@ -43,19 +44,25 @@ from env import SnakeEnv
 if TYPE_CHECKING:
     from snakemake.iocontainers import snakemake
 
-logger.add(sys.stdout, format="{extra}")
-
 ENV: SnakeEnv = SnakeEnv.new(snakemake.config)
-
 PARAMS: dict = snakemake.params
-
 SCOL = ENV.metadata.sample_col
 LABEL_SEP = ENV.metadata.label_sep
 LCOL = ENV.metadata.label_col
-
-
 os.environ["HF_HOME"] = ENV.huggingface
 
+logger.remove(0)
+logger.enable("amr_predict")
+logger.add(
+    PARAMS["log"],
+    format=(
+        "[<red>{time:HH:mm:ss}</red>] "
+        "<yellow>{level}</yellow>: "
+        "<cyan>{message}</cyan>"
+        "  {extra}"
+    ),
+    level="TRACE",
+)
 # * Utility functions
 
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 from env import SnakeEnv
 import os
 
@@ -32,6 +33,9 @@ def get_wc(wildcard: str):
 
 
 out_list, named_out = env.get_outputs()
+time_prefix = time.strftime("%Y-%M-%d_%H:%M")
+logdir = f"logs{'_test' if env.test else ''}/{time_prefix}"
+Path(logdir).mkdir(parents=True, exist_ok=True)
 
 
 rule all:
@@ -48,6 +52,7 @@ rule base:
         variation=get_wc("variation"),
         sae=get_wc("sae"),
         embedding_method=get_wc("embedding_method"),
+        log=f"{logdir}/main.log",
         pooling=get_wc("pooling"),
     script:
         "main.py"
@@ -71,6 +76,8 @@ use rule base as get_embeddings with:  # NOTE: this saves them as an embedding c
         rules.make_seq_dataset.output,
     resources:
         **EMBEDDING_RES,
+    params:
+        log=f"{logdir}/embeddings.log",
     output:
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{variation}}-{{method}}/{{embedding_method}}-{{pooling}}.completed",
 
@@ -111,6 +118,8 @@ use rule base as train_sae with:
     input:  # NOTE: Only train with natural sequences for now
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
         f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
+    params:
+        log=f"{logdir}/sae_training.log",
     output:
         f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pt",
 
