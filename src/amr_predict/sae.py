@@ -79,6 +79,14 @@ class BatchTopK(BaseNN):
             ) * self.threshold + learning_rate * min_positive
 
     @override
+    def validation_step(self, batch, batch_idx):
+        x = batch[self.x_key]
+        output = self.m.forward(x)
+        loss = output["loss"]
+        self.log("val_loss", loss)
+        return loss
+
+    @override
     def training_step(self, batch, batch_idx):
         x = batch[self.x_key]
         output = self.m.forward(x)

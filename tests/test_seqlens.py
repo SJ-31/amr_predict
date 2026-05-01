@@ -1,11 +1,13 @@
 #!/usr/bin/env ipython
 
 import os
+from collections.abc import Sequence
 
 import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
+from transformers.modeling_outputs import MaskedLMOutput
 
 os.environ["HF_HOME"] = (
     "/data/project/stemcell/shannc/repos/amr_predict/cache/huggingface"
