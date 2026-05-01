@@ -37,9 +37,13 @@ class Randomizer:
 
     def _generate_random(self, seq: str, p: np.ndarray | None = None) -> str:
         if p is None:
-            generated = np.random.choice(self.choices, size=len(seq), replace=True)
+            generated = np.random.choice(
+                self.token_choices, size=len(seq), replace=True
+            )
         else:
-            generated = np.random.choice(self.choices, size=len(seq), replace=True, p=p)
+            generated = np.random.choice(
+                self.token_choices, size=len(seq), replace=True, p=p
+            )
         return "".join(generated)
 
     def _permute_sequence(self, seq: str) -> str:
@@ -56,19 +60,21 @@ class Randomizer:
             )
         elif self.method == ae.RandomizationMethods.DENOVO:
             if self.with_distribution:
-                dist = {
-                    c: f
-                    for c, f in (
-                        dataset.with_columns(pl.col(seq_col).str.split(""))
-                        .explode(seq_col)[seq_col]
-                        .value_counts(normalize=True, name="fraction")
-                    ).iter_rows()
-                }
-                p = [dist[char] for char in self.token_choices]
+                counts = (
+                    dataset.with_columns(pl.col(seq_col).str.split(""))
+                    .explode(seq_col)[seq_col]
+                    .value_counts()
+                )
+                counts = counts.with_columns(pl.col("count") / pl.col("count").sum())
+                assert counts["count"].sum() == 1, "Counts should sum to 1..."
+                dist = {c: f for c, f in counts.iter_rows()}
+                p = np.array([dist[char] for char in self.token_choices])
             else:
                 p = None
             return dataset.with_columns(
-                pl.col(seq_col).map_elements(lambda x: self._generate_random(x, p))
+                pl.col(seq_col).map_elements(
+                    lambda x: self._generate_random(x, p), return_dtype=pl.String
+                )
             )
         raise NotImplementedError()
 
@@ -87,6 +93,7 @@ class Perturber:
     def __attrs_init_subclass__(cls):
         if cls.method is not None:
             Perturber._registry[cls.method.name] = cls
+            Perturber._registry[cls.method] = cls
 
     def perturb(self, dataset: pl.DataFrame, seq_col: str = "sequence") -> pl.DataFrame:
         return dataset.with_columns(
