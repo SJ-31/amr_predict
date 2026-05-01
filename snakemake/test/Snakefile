@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from env import SnakeEnv
 import os
+import time
 
 
 singularity: "../../image.sif"
@@ -28,7 +29,9 @@ config["c"] = "baz"
 
 rule all:
     input:
+        "results/aggregated.txt",
         expand("results/from_{s}_rule.txt", s=["shell", "script", "script_cpu"]),
+        expand("results/from_log_rule/{p}.txt", p=range(20)),
 
 
 rule shell_rule:
@@ -57,3 +60,43 @@ rule script_rule:
         "results/from_script_rule.txt",
     script:
         "script.py"
+
+
+logfile = time.strftime("%Y-%M-%d_%H:%M_main.log")
+
+
+rule trying_to_log:
+    params:
+        log=logfile,
+    output:
+        "results/from_log_rule/{pat}.txt",
+    script:
+        "try_logging.py"
+
+
+checkpoint make_randoms:
+    output:
+        directory("results/rand"),
+    shell:
+        "hexdump -n 16 -v -e '/1 \"%02X\"' /dev/urandom > {output}"
+
+
+# You can also inject wildcards into the rule make_randoms
+# Best used if the checkpoint produces a directory
+
+
+def collect_randoms(wc):  # wildcards 'wc' are obtained from the CALLING rule,
+    # not the checkpoint
+    outs = []
+    for rand in range(9):
+        outs.append(checkpoints.make_randoms.get(pat=rand).output[0])
+    return outs
+
+
+rule aggregate_randoms:
+    input:
+        collect_randoms,
+    output:
+        "results/aggregated.txt",
+    shell:
+        "cat {input} > {output}"
