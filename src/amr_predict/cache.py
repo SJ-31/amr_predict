@@ -57,7 +57,6 @@ def expand_max_len(
         )
         .explode("slice_start", subseq_id_col)
         .with_columns(
-            pl.concat_str(id_col, subseq_id_col, separator=".").alias(subseq_id_col),
             pl.col(seq_col).str.slice("slice_start", length=max_len).alias(new_seq_col),
         )
     )
@@ -88,7 +87,12 @@ class EmbeddingCache:
     )
     save_interval: int = 10
     seen: set = field(init=False, factory=set)
-    pooling: BasicPoolings = BasicPoolings.MEAN
+    pooling: BasicPoolings | None = field(
+        default=None,
+        validator=lambda inst, attr, val: (val is None and inst.save_mode == "tokens")
+        or isinstance(val, BasicPoolings),
+    )
+    pooling_kws: dict = field(factory=dict)
     storage: Tensor = field(init=False, factory=lambda: torch.tensor([]))
 
     def __attrs_post_init__(self):
@@ -361,7 +365,9 @@ class EmbeddingCache:
                 for k, t, l in gen:
                     tmp["key"].append(k)
                     if self.save_mode in ("seqs", "both"):
-                        tmp["seq"].append(pool_tensor(t, method=self.pooling))
+                        tmp["seq"].append(
+                            pool_tensor(t, method=self.pooling, **self.pooling_kws)
+                        )
                     if self.save_mode in ("tokens", "both"):
                         tokens, indices = self._maybe_sample_tokens(t)
                         tmp["token"].append(tokens)
