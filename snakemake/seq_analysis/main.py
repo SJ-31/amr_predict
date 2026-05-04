@@ -207,7 +207,9 @@ def train_sae():
     rconfig = ENV.train_sae
     train_kws = rconfig.trainer.to_kws()
     sae_name = PARAMS["sae"]
-    run_name = f"{cache_path.stem}-seq_analysis-train_sae-{sae_name}"
+    run_name = (
+        f"{cache_path.stem}-{PARAMS['level']}-{PARAMS['seqtype']}-train_sae-{sae_name}"
+    )
     outpath = Path(snakemake.output[0])
     ckpt_dir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_checkpoints"
     ckpt_callback = ModelCheckpoint(
