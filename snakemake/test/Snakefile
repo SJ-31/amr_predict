@@ -10,11 +10,6 @@ import time
 singularity: "../../image.sif"
 
 
-# TODO: you might be able to get this working if you pass it in as a script on the shell
-# and no longer use the snakemake thing. Should be fine since you already can use
-# the config from the SnakeEnv object
-
-
 configfile: "env.yaml"
 
 
@@ -39,11 +34,6 @@ rule shell_rule:
         "results/from_shell_rule.txt",
     shell:
         "./shell.py -o {output}"
-
-
-# TODO: [2026-04-25 Sat] you wanna check if having snakemake in the container screws up scripts
-# it seems like it does, but maybe if your container doesn't have snakemake installed,
-# it will work...
 
 
 rule script_rule_cpu:
@@ -76,9 +66,9 @@ rule trying_to_log:
 
 checkpoint make_randoms:
     output:
-        directory("results/rand"),
+        "results/rand/{out}.txt",
     shell:
-        "hexdump -n 16 -v -e '/1 \"%02X\"' /dev/urandom > {output}"
+        "hexdump -n 16 -v -e '/1 \"%02X\"' /dev/urandom > {out}"
 
 
 # You can also inject wildcards into the rule make_randoms
@@ -87,10 +77,10 @@ checkpoint make_randoms:
 
 def collect_randoms(wc):  # wildcards 'wc' are obtained from the CALLING rule,
     # not the checkpoint
-    outs = []
-    for rand in range(9):
-        outs.append(checkpoints.make_randoms.get(pat=rand).output[0])
-    return outs
+    ckpt_out = checkpoints.make_randoms.get().output[0]
+    files = glob_wildcards("results/rand/{out}.txt").out
+    print(ckpt_out)
+    return ckpt_out
 
 
 rule aggregate_randoms:

@@ -2,6 +2,7 @@
 
 import json
 import os
+import pickle
 import sys
 
 import numpy as np
@@ -88,8 +89,8 @@ def read_fasta(file: str, header_style: Literal["uniprot"]) -> pl.DataFrame:
 
 def get_dset_indices(file) -> tuple[list, list, list]:
     """Read saved indices file and return a tuple of train, test, val indices"""
-    with open(file, "r") as f:
-        obj = json.load(f)
+    with open(file, "rb") as f:
+        obj = pickle.load(f)
     return obj["train"], obj["test"], obj["val"]
 
 
@@ -166,29 +167,39 @@ def get_activations():
         act_dset.save_to_disk(snakemake.output[0])
 
 
-def write_training_indices():
-    sample_df: pl.DataFrame = load_from_disk(snakemake.input[0]).to_polars()
-    if PARAMS["level"] == "tokens":
-        sample_df = sample_df.with_columns(pl.col("sequence").str.split("")).explode(
-            "sequence"
+def write_training_indices(token_level: bool):
+    if token_level:
+        train_idx, test_idx = ms.train_test_split(
+            range(
+                load_embeddings(
+                    cache_completion_file=snakemake.input[0],
+                    variation="natural",
+                    vmethod="0",
+                ).shape[0]
+            ),
+            **asdict(ENV.write_training_indices),
         )
-    sample_df = sample_df.with_columns(pl.row_index())
-    train_idx, test_idx = ms.train_test_split(
-        sample_df["index"], **asdict(ENV.write_training_indices)
-    )
-    logger.info("Train indices {}", train_idx)
+    else:
+        sample_df: pl.DataFrame = load_from_disk(snakemake.input[0]).to_polars()
+        sample_df = sample_df.with_columns(pl.row_index())
+        train_idx, test_idx = ms.train_test_split(
+            sample_df["index"], **asdict(ENV.write_training_indices)
+        )
     train_idx, val_idx = ms.train_test_split(train_idx, random_state=ENV.rng)
-    logger.info("Test indices {}", test_idx)
-    logger.info("Val indices {}", val_idx)
-    with open(snakemake.output[0], "w") as f:
-        json.dump(
-            {
-                "train": train_idx.to_list(),
-                "val": val_idx.to_list(),
-                "test": test_idx.to_list(),
-            },
-            f,
-        )
+    if not isinstance(train_idx, np.ndarray):
+        train_idx = np.array(train_idx)
+        val_idx = np.array(val_idx)
+        test_idx = np.array(test_idx)
+    with open(snakemake.output[0], "wb") as f:
+        pickle.dump({"train": train_idx, "val": val_idx, "test": test_idx}, f)
+
+
+def write_token_training_indices():
+    write_training_indices(True)
+
+
+def write_seq_training_indices():
+    write_training_indices()
 
 
 def train_sae():

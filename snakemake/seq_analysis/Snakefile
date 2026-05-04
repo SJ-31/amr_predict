@@ -82,11 +82,22 @@ use rule base as get_embeddings with:  # NOTE: this saves them as an embedding c
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{variation}}-{{method}}/{{embedding_method}}-{{pooling}}.completed",
 
 
-use rule base as write_training_indices with:
+use rule base as write_seq_training_indices with:
     input:
         f"{DATASETS}/sequences/{{seqtype}}-natural-0",
     output:
-        f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
+        f"{OUTDIR}/training_indices/seqs_{{seqtype}}.pkl",
+
+
+# Token training indices must depend on the embedding method because each one
+# has different max lengths (affecting the number of tokens generated)
+use rule base as write_token_training_indices with:
+    input:
+        f"{DATASETS}/embedded_{{seqtype}}_tokens/natural-0/{{embedding_method}}-0.completed",
+    params:
+        level="tokens",
+    output:
+        f"{OUTDIR}/training_indices/tokens_{{seqtype}}-{{embedding_method}}.pkl",
 
 
 use rule base as label_cooccurrence with:
@@ -117,7 +128,11 @@ use rule base as label_cooccurrence with:
 use rule base as train_sae with:
     input:  # NOTE: Only train with natural sequences for now
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
-        f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
+        branch(
+            lambda wc: wc.get("level") == "tokens",
+            f"{OUTDIR}/training_indices/tokens_{{seqtype}}-{{embedding_method}}.pkl",
+            f"{OUTDIR}/training_indices/seqs_{{seqtype}}.pkl",
+        ),
     params:
         log=f"{logdir}/sae_training.log",
     output:
@@ -135,7 +150,11 @@ use rule base as get_activations with:
             then=f"{DATASETS}/sequences/{{seqtype}}-natural-0",
             otherwise=f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
         ),
-        indices=f"{OUTDIR}/training_indices/{{level}}_{{seqtype}}.json",
+        indices=branch(
+            lambda wc: wc.get("level") == "tokens",
+            f"{OUTDIR}/training_indices/tokens_{{seqtype}}-{{embedding_method}}.pkl",
+            f"{OUTDIR}/training_indices/seqs_{{seqtype}}.pkl",
+        ),
         sae=branch(
             is_pretrained,
             then=None,
