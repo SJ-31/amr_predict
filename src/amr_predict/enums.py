@@ -10,6 +10,12 @@ class RandomizationMethods(Enum):
     DENOVO = "denovo"
 
 
+class SeqCovariates(Enum):
+    functional_similarity = "functional_similarity"
+    sequence_similarity = "sequence_similarity"
+    taxonomic_similarity = "taxonomic_similarity"
+
+
 @define
 class PerturbationCfg:
     species: str = "h_sapiens"

@@ -538,12 +538,12 @@ class NeighborMetrics:
         calculations
         If set to None, don't subsample and use every sample as a reference point
 
-    n_random : int
+    n_resample : int
         - Number of resamples for permutation test
         -
     """
 
-    adata: ad.AnnData  # TODO: convert this to LinkedDataset if needed for storage
+    dset: LinkedDataset
     category_cols: Sequence[str]
     anno_cols: Sequence[str]
     anno_sep: str = ";"
@@ -563,11 +563,14 @@ class NeighborMetrics:
     n_resample: int = 10_000
     nn: NearestNeighbors = field(
         default=Factory(
-            lambda self: NearestNeighbors(n_neighbors=self.n_neighbors), takes_self=True
+            lambda self: NearestNeighbors(
+                **(self.nn_kws | {"n_neighbors": self.n_neighbors})
+            ),
+            takes_self=True,
         )
     )
     n: int = field(
-        init=False, default=Factory(lambda self: self.adata.shape[0], takes_self=True)
+        init=False, default=Factory(lambda self: self.dset.shape[0], takes_self=True)
     )
     neighbors: np.ndarray = field(init=False)
     distances: np.ndarray = field(init=False)
@@ -575,7 +578,7 @@ class NeighborMetrics:
 
     def __attrs_post_init__(self):
         logger.info("Kneighbor computation started")
-        self.nn.fit(self.adata.X)
+        self.nn.fit(self.dset[self.dset.x_key][:])
         logger.success("Kneighbors fitted")
         self.distances, self.neighbors = self.nn.kneighbors()
 
@@ -633,7 +636,7 @@ class NeighborMetrics:
     ) -> tuple[McTestResult, McTestResult]:
         encoder = LabelEncoder()
         self.encoders[category_col] = encoder
-        cats = pd.Series(encoder.fit_transform(self.adata.obs[category_col]))
+        cats = pl.Series(encoder.fit_transform(self.dset.metadata[category_col]))
         neighbors = self.neighbors[indices, :]
         category_mat: np.ndarray = torch.from_numpy(
             np.hstack(
@@ -662,14 +665,17 @@ class NeighborMetrics:
 
     def _compute_anno_metrics(self, indices, anno_col: str) -> McTestResult:
         binary_annots: np.ndarray = expand_annotations(
-            self.adata.obs[anno_col], self.anno_sep
+            self.dset[anno_col], self.anno_sep
         )
+        logger.debug("anno col {}", self.dset[anno_col])
+        logger.debug("n {}", self.n)
+        logger.debug("shape {}", self.dset.shape)
         observed = binary_annots[indices, :]
-        neighbors = self.neighbors[indices, :]
+        neighbors = self.neighbors[indices, :]  # shape of n x n_neighbors
         anno_mat: np.ndarray = np.hstack(
             [
-                observed[indices, :].reshape(-1, 1, observed.shape[1]),
-                np.vstack([[binary_annots[n, :]] for n in neighbors]),
+                observed.reshape(-1, 1, observed.shape[1]),
+                np.vstack([[binary_annots[n_idx, :]] for n_idx in neighbors]),
             ]
         )
         res = generalized_mc_test(
@@ -681,7 +687,7 @@ class NeighborMetrics:
         )
         return res
 
-    def run(self) -> tuple[pl.DataFrame, dict]:
+    def run(self) -> tuple[pl.DataFrame, dict[str, jaxtyping.Shaped[Any, "a"]]]:
         sample_idx = self._to_sample()
         dfs = []
         distributions = {
