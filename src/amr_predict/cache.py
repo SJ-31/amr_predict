@@ -564,8 +564,12 @@ class LinkedDataset(td.Dataset):
     def _get_col(self, col) -> Tensor | pl.Series:
         if col == self.x_key:
             collected = self._get_x(None)
+            if self.level == "tokens":
+                collected = collected.explode("token", "token_idx")
             return collected[self.level.removesuffix("s")].to_torch()
-        return self.meta[col]
+        if self.level != "tokens":
+            return self.meta[col]
+        return self.to_pl(True)[col]
 
     @override
     def __getitem__(self, index) -> dict | Tensor | pl.Series:
