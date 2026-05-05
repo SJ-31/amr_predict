@@ -9,6 +9,7 @@ import dnachisel as dc
 import numpy as np
 import polars as pl
 from attrs import Factory, define, field
+from loguru import logger
 from numpy.random import Generator
 
 
@@ -64,11 +65,16 @@ class Randomizer:
                     dataset.with_columns(pl.col(seq_col).str.split(""))
                     .explode(seq_col)[seq_col]
                     .value_counts()
+                    .with_columns(pl.col("count").round_sig_figs(3))
+                    # For numerical stability
+                    .filter(pl.col(seq_col).is_in(self.token_choices))
                 )
                 counts = counts.with_columns(pl.col("count") / pl.col("count").sum())
-                assert counts["count"].sum() == 1, "Counts should sum to 1..."
-                dist = {c: f for c, f in counts.iter_rows()}
-                p = np.array([dist[char] for char in self.token_choices])
+                indices = np.array(
+                    [counts[seq_col].index_of(c) for c in self.token_choices]
+                )
+                p = counts["count"][indices]
+                assert p.sum() == 1, f"Counts should sum to 1..., got {p.sum()} instead"
             else:
                 p = None
             return dataset.with_columns(
