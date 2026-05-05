@@ -453,20 +453,7 @@ class LinkedDataset(td.Dataset):
 
     @property
     def shape(self):
-        n_col = self.meta.shape[1] + 1
-        if self.level != "tokens":
-            return self.meta.shape[0], n_col
-        key_df = pl.DataFrame({"key": self.meta[self.text_key]})
-        n_row = (
-            duckdb.query(f"""
-        SELECT DISTINCT ON (t.key) t.key, LEN(t.token)
-        FROM '{self.cache._glob()}' t
-        INNER JOIN key_df k on k.key = t.key
-        """)
-            .pl()["len(t.token)"]
-            .sum()
-        )
-        return n_row, n_col
+        return self._retrieve_with_max_len().shape
 
     def _retrieve_with_max_len(self, df: pl.DataFrame | None = None) -> pl.DataFrame:
         """
