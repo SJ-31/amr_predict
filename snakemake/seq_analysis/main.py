@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import json
 import os
 import pickle
 import sys
@@ -24,7 +23,6 @@ from amr_predict.embedding import EmbeddingModels, ModelEmbedder, embedding_size
 from amr_predict.enums import BasicPoolings, SeqTypes
 from amr_predict.evaluation import pami_wrapper, to_binary_form
 from amr_predict.models import BaseNN
-from amr_predict.pooling import pool_tensor
 from amr_predict.random import Perturber, Randomizer
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
@@ -34,7 +32,6 @@ from beartype import beartype
 from Bio import SeqIO
 from datasets import load_from_disk
 from datasets.arrow_dataset import Dataset
-from datasets.packaged_modules import text
 from lightning.pytorch.loggers import WandbLogger
 from loguru import logger
 from scipy.cluster.hierarchy import cut_tree
@@ -65,6 +62,14 @@ logger.add(
     level="TRACE",
 )
 # * Utility functions
+
+
+def seqtype_from_params() -> SeqTypes:
+    return SeqTypes[PARAMS["seqtype"].upper()]
+
+
+def pooling_from_params() -> BasicPoolings:
+    return BasicPoolings[PARAMS["pooling"].upper()]
 
 
 @beartype
@@ -161,8 +166,9 @@ def get_activations():
         sae.eval()
         sae.load_state_dict(torch.load(snakemake.input["sae"]))
         test_portion = dset.select(test_idx)
-        activations = sae.predict_step(test_portion["x"][:])
-        samples = test_portion.meta["id"]
+        predict_on = test_portion["x"][:]
+        activations = sae.predict_step(predict_on)
+        samples = test_portion["id"][:]
         act_dset = Dataset.from_dict({"id": samples, "activation": activations})
         act_dset.save_to_disk(snakemake.output[0])
 
@@ -199,7 +205,7 @@ def write_token_training_indices():
 
 
 def write_seq_training_indices():
-    write_training_indices()
+    write_training_indices(False)
 
 
 def train_sae():
