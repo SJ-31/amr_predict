@@ -724,6 +724,7 @@ class NeighborMetrics:
     n_neighbors: int = 8
     nn_kws: dict = field(factory=dict)
     n_resample: int = 10_000
+    sampled_idx: np.ndarray = field(init=False, default=None)
     nn: NearestNeighbors = field(
         default=Factory(
             lambda self: NearestNeighbors(
@@ -740,16 +741,15 @@ class NeighborMetrics:
     encoders: dict[str, LabelEncoder] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
-        logger.info("Kneighbor computation started")
-        self.nn.fit(self.dset[self.dset.x_key][:])
-        logger.success("Kneighbors fitted")
-        self.distances, self.neighbors = self.nn.kneighbors()
-
-    def _to_sample(self) -> np.ndarray:
         if self.subsample is None:
             return np.array(range(self.n))
         n = round(self.subsample * self.n)
-        return self.rng.choice(range(self.n), size=n)
+        self.sampled_idx = self.rng.choice(range(self.n), size=n)
+
+        logger.info("Kneighbor computation started")
+        self.nn.fit(self.dset[self.dset.x_key][self.sampled_idx])
+        logger.success("Kneighbors fitted")
+        self.distances, self.neighbors = self.nn.kneighbors()
 
     def _random_neighbors(
         self, x: pl.Series | np.ndarray, n: int | None = None
@@ -861,7 +861,6 @@ class NeighborMetrics:
     def run(
         self, with_randomization: bool = False
     ) -> tuple[pl.DataFrame, dict[str, jaxtyping.Shaped[Any, "a"]]]:
-        sample_idx = self._to_sample()
         dfs = []
         distributions = {
             "gini_impurity": {},
@@ -874,7 +873,7 @@ class NeighborMetrics:
                     continue
                 if col in self.category_cols:
                     gini, nn = self._compute_category_metrics(
-                        sample_idx, category_col=col, randomize=do_random
+                        self.sample_idx, category_col=col, randomize=do_random
                     )
                     df = pl.concat(
                         [gini.to_pl(), nn.to_pl()], how="diagonal_relaxed"
@@ -888,7 +887,7 @@ class NeighborMetrics:
                     distributions["neighbor_proportion"][col] = nn.observed_dist
                 else:
                     res = self._compute_anno_metrics(
-                        sample_idx, anno_col=col, randomize=do_random
+                        self.sample_idx, anno_col=col, randomize=do_random
                     )
 
                     df = res.to_pl().with_columns(
