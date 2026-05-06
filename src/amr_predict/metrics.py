@@ -742,10 +742,10 @@ class NeighborMetrics:
 
     def __attrs_post_init__(self):
         if self.subsample is None:
-            return np.array(range(self.n))
-        n = round(self.subsample * self.n)
-        self.sampled_idx = self.rng.choice(range(self.n), size=n)
-
+            self.sampled_idx = np.array(range(self.n))
+        else:
+            n = round(self.subsample * self.n)
+            self.sampled_idx = self.rng.choice(range(self.n), size=n)
         logger.info("Kneighbor computation started")
         self.nn.fit(self.dset[self.dset.x_key][self.sampled_idx])
         logger.success("Kneighbors fitted")
@@ -873,7 +873,7 @@ class NeighborMetrics:
                     continue
                 if col in self.category_cols:
                     gini, nn = self._compute_category_metrics(
-                        self.sample_idx, category_col=col, randomize=do_random
+                        self.sampled_idx, category_col=col, randomize=do_random
                     )
                     df = pl.concat(
                         [gini.to_pl(), nn.to_pl()], how="diagonal_relaxed"
@@ -887,7 +887,7 @@ class NeighborMetrics:
                     distributions["neighbor_proportion"][col] = nn.observed_dist
                 else:
                     res = self._compute_anno_metrics(
-                        self.sample_idx, anno_col=col, randomize=do_random
+                        self.sampled_idx, anno_col=col, randomize=do_random
                     )
 
                     df = res.to_pl().with_columns(
