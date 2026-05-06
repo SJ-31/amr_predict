@@ -611,14 +611,18 @@ class NeighborMetrics:
         return self.rng.choice(range(self.n), size=n)
 
     def _random_neighbors(
-        self, x: pd.Series | np.ndarray, n: int | None = None
+        self, x: pl.Series | np.ndarray, n: int | None = None
     ) -> Tensor:
         n = n or self.n_resample
-        if isinstance(x, pd.Series):
-            c1 = x.sample(n, replace=True, random_state=self.rng).values.reshape(-1, 1)
+        if isinstance(x, pl.Series):
+            c1 = (
+                x.sample(n, with_replacement=True, seed=self.seed)
+                .to_numpy()
+                .reshape(-1, 1)
+            )
             nn = np.vstack(
                 [
-                    x.sample(self.n_neighbors, random_state=self.rng).values
+                    x.sample(self.n_neighbors, seed=self.seed).to_numpy()
                     for _ in range(n)
                 ]
             )
@@ -658,14 +662,14 @@ class NeighborMetrics:
     ) -> tuple[McTestResult, McTestResult]:
         encoder = LabelEncoder()
         self.encoders[category_col] = encoder
-        cats = pl.Series(encoder.fit_transform(self.dset.metadata[category_col]))
+        cats = pl.Series(encoder.fit_transform(self.dset[category_col]))
         if randomize:
             cats = cats.shuffle(seed=self.seed)
         neighbors = self.neighbors[indices, :]
         category_mat: np.ndarray = torch.from_numpy(
             np.hstack(
                 [
-                    cats[indices].values.reshape(-1, 1),
+                    cats[indices].to_numpy().reshape(-1, 1),
                     np.vstack([cats[n] for n in neighbors]),
                 ]
             )
