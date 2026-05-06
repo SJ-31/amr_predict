@@ -654,11 +654,13 @@ class NeighborMetrics:
         return (ref_points == neighbors).sum(axis=sum_axis) / self.n_neighbors
 
     def _compute_category_metrics(
-        self, indices, category_col: str
+        self, indices, category_col: str, randomize: bool = False
     ) -> tuple[McTestResult, McTestResult]:
         encoder = LabelEncoder()
         self.encoders[category_col] = encoder
         cats = pl.Series(encoder.fit_transform(self.dset.metadata[category_col]))
+        if randomize:
+            cats = cats.shuffle(seed=self.seed)
         neighbors = self.neighbors[indices, :]
         category_mat: np.ndarray = torch.from_numpy(
             np.hstack(
@@ -685,13 +687,15 @@ class NeighborMetrics:
         )
         return n_prop_result, impurity_result
 
-    def _compute_anno_metrics(self, indices, anno_col: str) -> McTestResult:
+    def _compute_anno_metrics(
+        self, indices, anno_col: str, randomize: bool = False
+    ) -> McTestResult:
         binary_annots: np.ndarray = expand_annotations(
-            self.dset[anno_col], self.anno_sep
+            self.dset[anno_col].shuffle(seed=self.seed)
+            if randomize
+            else self.dset[anno_col],
+            self.anno_sep,
         )
-        logger.debug("anno col {}", self.dset[anno_col])
-        logger.debug("n {}", self.n)
-        logger.debug("shape {}", self.dset.shape)
         observed = binary_annots[indices, :]
         neighbors = self.neighbors[indices, :]  # shape of n x n_neighbors
         anno_mat: np.ndarray = np.hstack(
@@ -709,7 +713,9 @@ class NeighborMetrics:
         )
         return res
 
-    def run(self) -> tuple[pl.DataFrame, dict[str, jaxtyping.Shaped[Any, "a"]]]:
+    def run(
+        self, with_randomization: bool = False
+    ) -> tuple[pl.DataFrame, dict[str, jaxtyping.Shaped[Any, "a"]]]:
         sample_idx = self._to_sample()
         dfs = []
         distributions = {
@@ -718,24 +724,35 @@ class NeighborMetrics:
             "mean_jaccard_distance": {},
         }
         for col in itertools.chain(self.category_cols, self.anno_cols):
-            if col in self.category_cols:
-                gini, nn = self._compute_category_metrics(sample_idx, category_col=col)
-                df = pl.concat(
-                    [gini.to_pl(), nn.to_pl()], how="diagonal_relaxed"
-                ).with_columns(
-                    pl.Series(["gini_impurity", "neighbor_proportion"]).alias("metric"),
-                    pl.lit(col).alias("column"),
-                )
-                distributions["gini_impurity"][col] = gini.observed_dist
-                distributions["neighbor_proportion"][col] = nn.observed_dist
-            else:
-                res = self._compute_anno_metrics(sample_idx, anno_col=col)
+            for do_random in (False, True):
+                if not with_randomization and do_random:
+                    continue
+                if col in self.category_cols:
+                    gini, nn = self._compute_category_metrics(
+                        sample_idx, category_col=col, randomize=do_random
+                    )
+                    df = pl.concat(
+                        [gini.to_pl(), nn.to_pl()], how="diagonal_relaxed"
+                    ).with_columns(
+                        pl.Series(["gini_impurity", "neighbor_proportion"]).alias(
+                            "metric"
+                        ),
+                        pl.lit(col).alias("column"),
+                    )
+                    distributions["gini_impurity"][col] = gini.observed_dist
+                    distributions["neighbor_proportion"][col] = nn.observed_dist
+                else:
+                    res = self._compute_anno_metrics(
+                        sample_idx, anno_col=col, randomize=do_random
+                    )
 
-                df = res.to_pl().with_columns(
-                    metric=pl.lit("mean_jaccard_distance"), column=pl.lit(col)
-                )
-                distributions["mean_jaccard_distance"][col] = res.observed_dist
-            dfs.append(df)
+                    df = res.to_pl().with_columns(
+                        metric=pl.lit("mean_jaccard_distance"), column=pl.lit(col)
+                    )
+                    distributions["mean_jaccard_distance"][col] = res.observed_dist
+                if with_randomization:
+                    df = df.with_columns(pl.lit(do_random).alias("randomized"))
+                dfs.append(df)
         return pl.concat(dfs, how="diagonal_relaxed"), distributions
 
 
