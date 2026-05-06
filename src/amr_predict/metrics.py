@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
 
 import itertools
+from collections import Counter
 from collections.abc import Callable, Sequence
 from functools import reduce
 from pathlib import Path
@@ -361,6 +362,66 @@ class McTestResult:
         return pl.DataFrame({f: getattr(self, f) for f in wanted_fields})
 
 
+def mc_multinomial_test(
+    observations: Sequence,
+    n: int,
+    all_categories: Sequence,
+    multiple_test: bool = False,
+    n_resample: int = 10_000,
+    seed: None | int | Generator = None,
+    log: bool = True,
+) -> McTestResult:
+    """Multinomial Monte Carlo test
+
+    Parameters
+    ----------
+    n_resample : int
+        Number of random draws used for to make the MC null
+
+    Returns
+    -------
+    Tuple of p-values and adjusted combined p-value (Bonferroni correction)
+    if a multiple test
+
+    Notes
+    -----
+    The test statistic is the probability of an observation under
+    the multinomial distribution
+
+    This test can be used in place of Chi square when observed counts are
+    small e.g. to if the label distribution of a
+    very small subsample from a dataset follows the
+    label distribution in the entire dataset
+    """
+    # TODO: make a note of this approach in `hypothesis testing`
+    freq = pl.Series(all_categories).value_counts(normalize=True).sort("")
+    names = freq[""].to_list()
+    mnl = stats.multinomial(n=n, p=freq["proportion"], seed=seed)
+
+    def sort_obs(obs: Sequence) -> np.ndarray:
+        counted = Counter(obs)
+        return np.array([counted.get(n, 0) for n in names])
+
+    if multiple_test:
+        ordered = np.vstack([sort_obs(o) for o in observations])
+    else:
+        ordered = np.array([sort_obs(observations)])
+
+    observed_pr = mnl.logpmf(ordered) if log else mnl.pmf(ordered)
+    randoms = mnl.rvs(size=n_resample)
+    null_dist = mnl.logpmf(randoms) if log else mnl.pmf(ordered)
+    ecdf = stats.ecdf(null_dist)
+    p_values = ecdf.cdf.evaluate(observed_pr)
+
+    return McTestResult(
+        p_values=p_values,
+        observed_dist=observed_pr,
+        rvs_dist=null_dist,
+        alternative="less",
+        p_adj=min(len(p_values) * min(p_values), 1),
+    )
+
+
 @beartype
 def generalized_mc_test(
     data: Tensor,
@@ -390,9 +451,11 @@ def generalized_mc_test(
     proba = dist_ecdf.cdf.evaluate(observed)
     # Right-tailed test for proportion i.e. probability of observing
     #   proportion p > `observed_prop` under the null, as the higher the proportion the better
-    if alternative == "less":
+    if alternative == "less":  # percentage of null leq observed test
+        # statistic
         p_value = proba
-    elif alternative == "greater":
+    elif alternative == "greater":  # percentage of null geq observed
+        # test statistic
         p_value = 1 - proba
     elif alternative == "two-sided":
         p_value = np.min(np.vstack([proba, 1 - proba]), axis=0) * 2
@@ -800,7 +863,7 @@ class NeighborMetrics:
 
     def _compute_category_metrics(
         self, indices, category_col: str, randomize: bool = False
-    ) -> tuple[McTestResult, McTestResult]:
+    ) -> tuple[McTestResult, McTestResult, McTestResult]:
         encoder = LabelEncoder()
         self.encoders[category_col] = encoder
         cats = pl.Series(encoder.fit_transform(self.dset[category_col]))
@@ -822,6 +885,14 @@ class NeighborMetrics:
             vectorized=True,
             alternative="greater",
         )
+        n_prop_result_mnl = mc_multinomial_test(
+            category_mat,
+            n=self.n_neighbors + 1,
+            all_categories=cats,
+            n_resample=self.n_resample,
+            seed=self.seed,
+            log=True,
+        )
         impurity_result = generalized_mc_test(
             category_mat,
             statistic=gini_impurity,
@@ -830,7 +901,7 @@ class NeighborMetrics:
             alternative="less",  # Lower impurity the better
             vectorized=False,
         )
-        return n_prop_result, impurity_result
+        return n_prop_result, n_prop_result_mnl, impurity_result
 
     def _compute_anno_metrics(
         self, indices, anno_col: str, randomize: bool = False
@@ -872,15 +943,20 @@ class NeighborMetrics:
                 if not with_randomization and do_random:
                     continue
                 if col in self.category_cols:
-                    gini, nn = self._compute_category_metrics(
+                    nn, nn_mnl, gini = self._compute_category_metrics(
                         self.sampled_idx, category_col=col, randomize=do_random
                     )
                     df = pl.concat(
-                        [gini.to_pl(), nn.to_pl()], how="diagonal_relaxed"
+                        [gini.to_pl(), nn_mnl.to_pl(), nn.to_pl()],
+                        how="diagonal_relaxed",
                     ).with_columns(
-                        pl.Series(["gini_impurity", "neighbor_proportion"]).alias(
-                            "metric"
-                        ),
+                        pl.Series(
+                            [
+                                "gini_impurity",
+                                "neighbor_proportion_multinomial_test",
+                                "neighbor_proportion",
+                            ]
+                        ).alias("metric"),
                         pl.lit(col).alias("column"),
                     )
                     distributions["gini_impurity"][col] = gini.observed_dist
