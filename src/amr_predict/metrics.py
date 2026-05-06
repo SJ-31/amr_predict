@@ -3,22 +3,30 @@
 import itertools
 from collections.abc import Callable, Sequence
 from functools import reduce
-from typing import Literal
+from pathlib import Path
+from typing import Any, Literal
 
+import amr_predict.enums as ae
 import anndata as ad
+import jaxtyping
 import lightning as L
 import numpy as np
 import pandas as pd
 import polars as pl
+import skbio.sequence as sks
+import skbio.sequence.distance as ssd
 import sklearn.preprocessing as sp
 import torch
 import torch.nn as nn
 import torchmetrics.functional.classification as tmet
-from amr_predict.utils import expand_annotations, iter_cols, vecdist
+from amr_predict.cache import LinkedDataset
+from amr_predict.taxonomy import TaxonomyTree
+from amr_predict.utils import expand_annotations, iter_cols, resample_pairs, vecdist
 from attrs import Factory, define, field, validators
 from beartype import beartype
 from loguru import logger
 from numpy.random import Generator
+from scipy import stats
 from scipy.spatial.distance import pdist
 from scipy.stats import ecdf
 from sklearn.metrics.pairwise import paired_distances
@@ -32,6 +40,15 @@ from torchmetrics.functional.regression.pearson import pearson_corrcoef
 from torchmetrics.functional.regression.spearman import spearman_corrcoef
 
 logger.disable("amr_predict")
+
+
+SEQ_DISTANCE_METRICS: dict[str, Callable] = {
+    "hamming": ssd.hamming,
+    # "pdist": ssd.pdist,
+    "paralin": ssd.paralin,
+    "kmer": ssd.kmer_distance,
+    "logdet": ssd.logdet,
+}
 
 
 def multitask_acc(
@@ -558,6 +575,117 @@ def nn_proportions(
             )
         result.update(nulls)
     return result
+
+
+@define
+class EmbeddingCorrelations:
+    dset: LinkedDataset
+    columns: dict[str, ae.SeqCovariates]
+    embedding_distance: Literal["cosine", "euclidean", "manhattan"]
+    sequence_distance: str = field(
+        default="kmer", validator=validators.in_(SEQ_DISTANCE_METRICS.keys())
+    )
+    anno_sep: str = ";"
+    seed: int | None = None
+    n_resample: int = 10_000
+    tree_file: Path | str | None = None
+    n: int = field(
+        init=False, default=Factory(lambda self: self.dset.shape[0], takes_self=True)
+    )
+    tree: TaxonomyTree | None = field(
+        init=False,
+        default=Factory(
+            lambda self: TaxonomyTree(self.tree_file)
+            if (
+                self.tree_file
+                and ae.SeqCovariates.taxonomic_similarity in self.columns.values()
+            )
+            else None,
+            takes_self=True,
+        ),
+    )
+    seq_kws: dict[str, dict] = field(
+        factory=lambda: {"kmer": {"k": 5}},
+        validator=validators.deep_mapping(
+            key_validator=validators.in_(SEQ_DISTANCE_METRICS)
+        ),
+    )
+
+    def _dist_sequence(self, col: str, idx1, idx2) -> np.ndarray:
+        first, sec = self.dset[col][idx1], self.dset[col][idx2]
+        fn = SEQ_DISTANCE_METRICS[self.sequence_distance]
+        kws = self.seq_kws[self.sequence_distance]
+        result = [
+            sks.Sequence(f).distance(
+                sks.Sequence(s), metric=lambda x, y: fn(x, y, **kws)
+            )
+            for f, s in zip(first, sec)
+        ]
+        return np.array(result)
+
+    def _dist_taxonomic(self, col: str, idx1, idx2) -> np.ndarray:
+        first, sec = self.dset[col][idx1], self.dset[col][idx2]
+        if self.tree is None:
+            raise ValueError(
+                "Must provide NCBI taxonomy dump file to use taxonomic distance"
+            )
+        return np.array([self.tree.dist(f, s) for f, s in zip(first, sec)])
+
+    # TODO: Can also include a simplified measure of structural similarity
+    # for proteins e.g. biochemical properties, predictions with PyMOL??
+
+    def _dist_functional(self, col: str, idx1, idx2) -> np.ndarray:
+        expanded = expand_annotations(self.dset[col], split=self.anno_sep)
+        first, sec = expanded[idx1, :], expanded[idx2, :]
+
+        # Elementwise jaccard distance (vectorized)
+        numer = np.logical_xor(first, sec).sum(axis=1)
+        denom = numer + (first & sec).sum(axis=1)
+        return numer / denom
+
+    def _run(self) -> tuple[pl.DataFrame, dict]:
+        """
+        Compute correlation in batches
+        """
+        pairs: np.ndarray = resample_pairs(
+            x=list(range(self.n)), n=self.n_resample, rng=self.seed
+        )
+        p1, p2 = pairs[:, 0], pairs[:, 1]
+        emb_dist = vecdist(
+            self.dset[p1]["x"].numpy(),
+            self.dset[p2]["x"].numpy(),
+            metric=self.embedding_distance,
+        )
+        dists = {"embedding": emb_dist}  # For visualization
+        correlations: dict = {}
+        for col, covar in self.columns.items():
+            if covar == ae.SeqCovariates.functional_similarity:
+                cov_dist = self._dist_functional(col, p1, p2)
+            elif covar == ae.SeqCovariates.sequence_similarity:
+                cov_dist = self._dist_sequence(col, p1, p2)
+            elif covar == ae.SeqCovariates.taxonomic_similarity:
+                cov_dist = self._dist_taxonomic(col, p1, p2)
+            else:
+                raise NotImplementedError()
+            dists[col] = cov_dist
+            correlations[col] = stats.spearmanr(emb_dist, cov_dist)
+        return pl.DataFrame(correlations).with_columns(
+            pl.Series(["statistic", "p_value"]).alias("metric")
+        ), dists
+
+    def run(self, rounds: int = 1) -> tuple[pl.DataFrame, dict]:
+        if rounds == 1:
+            return self._run()
+        dfs, dists = [], {}
+        for i in range(rounds):
+            df, dist = self._run()
+            dfs.append(df.with_columns(pl.lit(i + 1).alias("round")))
+            if not dists:
+                dists.update(dist)
+            else:
+                for k, v in dist.items():
+                    dists[k] = np.concat(dists[k], v)
+        return pl.concat(dfs), dists
 
 
 @define

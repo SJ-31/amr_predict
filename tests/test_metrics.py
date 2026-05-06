@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
-from amr_predict.metrics import NeighborMetrics, generalized_mc_test
+from amr_predict.enums import SeqCovariates
+from amr_predict.metrics import (
+    EmbeddingCorrelations,
+    NeighborMetrics,
+    generalized_mc_test,
+)
 from numpy.random import Generator
 
 
@@ -35,8 +40,24 @@ def test_neighbor_metrics_rand(random_linked_dset):
         dset=random_linked_dset(n=10_000),
         category_cols=["c1", "c2"],
         anno_cols=["a1"],
-        n_resample=10000,
-        n_neighbors=4,
+        n_resample=100_000,
+        n_neighbors=10,
+    )
+    df, dist = met.run(with_randomization=True)
+    print(df)
+    df.write_csv("./neighbor_metrics_rand.csv")
+    assert (df["p_adj"] == 1).all()
+
+
+def test_corr_rand(random_linked_dset):
+    met = EmbeddingCorrelations(
+        dset=random_linked_dset(n=1000),
+        embedding_distance="cosine",
+        columns={
+            "a1": SeqCovariates.functional_similarity,
+            "s1": SeqCovariates.sequence_similarity,
+        },
+        n_resample=1000,
     )
     df = met.run()
     print(df)
