@@ -299,14 +299,36 @@ def gini_impurity(x: np.ndarray | Tensor) -> float:
 
 @define
 class McTestResult:
-    observed_dist: np.ndarray
-    rvs_dist: np.ndarray
-    p_values: np.ndarray
+    observed_dist: jaxtyping.Shaped[Any, "a"]
+    rvs_dist: jaxtyping.Shaped[Any, "a"]
+    p_values: jaxtyping.Shaped[Any, "a"]
     alternative: str
     p_adj: float
+    mean: float = field(
+        init=False,
+        default=Factory(lambda self: self.observed_dist.mean(), takes_self=True),
+    )
+    std: float = field(
+        init=False,
+        default=Factory(lambda self: self.observed_dist.std(), takes_self=True),
+    )
+    median: float = field(
+        init=False,
+        default=Factory(
+            lambda self: self.observed_dist.median()
+            if isinstance(self.observed_dist, torch.Tensor)
+            else np.median(self.observed_dist),
+            takes_self=True,
+        ),
+    )
+    iqr: float = field(
+        init=False,
+        default=Factory(lambda self: stats.iqr(self.observed_dist), takes_self=True),
+    )
 
     def to_pl(self) -> pl.DataFrame:
-        return pl.DataFrame({"p_adj": self.p_adj, "alternative": self.alternative})
+        wanted_fields = ("p_adj", "alternative", "mean", "std", "median", "iqr")
+        return pl.DataFrame({f: getattr(self, f) for f in wanted_fields})
 
 
 @beartype
