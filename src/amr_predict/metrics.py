@@ -304,30 +304,43 @@ class McTestResult:
     p_values: jaxtyping.Shaped[Any, "a"]
     alternative: str
     p_adj: float
-    mean: float = field(
-        init=False,
-        default=Factory(lambda self: self.observed_dist.mean(), takes_self=True),
-    )
-    std: float = field(
-        init=False,
-        default=Factory(lambda self: self.observed_dist.std(), takes_self=True),
-    )
-    median: float = field(
-        init=False,
-        default=Factory(
-            lambda self: self.observed_dist.median()
-            if isinstance(self.observed_dist, torch.Tensor)
-            else np.median(self.observed_dist),
-            takes_self=True,
-        ),
-    )
-    iqr: float = field(
-        init=False,
-        default=Factory(lambda self: stats.iqr(self.observed_dist), takes_self=True),
-    )
+
+    mean_null: float = field(default=None, init=False)
+    std_null: float = field(default=None, init=False)
+    median_null: float = field(default=None, init=False)
+    iqr_null: float = field(default=None, init=False)
+
+    mean: float = field(init=False, default=None)
+    std: float = field(init=False, default=None)
+    median: float = field(init=False, default=None)
+    iqr: float = field(init=False, default=None)
+
+    def __attrs_post_init__(self):
+        for use_null in (True, False):
+            for field in ("mean", "std", "median", "iqr"):
+                name = f"{field}_null" if use_null else field
+                dist = self.rvs_dist if use_null else self.observed_dist
+                if field == "mean":
+                    val = dist.mean()
+                elif field == "std":
+                    val = dist.std()
+                elif field == "iqr":
+                    val = stats.iqr(dist)
+                elif field == "median":
+                    val = (
+                        dist.median()
+                        if isinstance(dist, torch.Tensor)
+                        else np.median(dist)
+                    )
+                setattr(self, name, val)
 
     def to_pl(self) -> pl.DataFrame:
-        wanted_fields = ("p_adj", "alternative", "mean", "std", "median", "iqr")
+        stat_fields = ("mean", "std", "median", "iqr")
+        wanted_fields = (
+            ("p_adj", "alternative")
+            + stat_fields
+            + tuple([f"{f}_null" for f in stat_fields])
+        )
         return pl.DataFrame({f: getattr(self, f) for f in wanted_fields})
 
 
@@ -580,7 +593,7 @@ class NeighborMetrics:
         init=False,
         default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
     )
-    n_neighbors: int = 5
+    n_neighbors: int = 8
     nn_kws: dict = field(factory=dict)
     n_resample: int = 10_000
     nn: NearestNeighbors = field(
