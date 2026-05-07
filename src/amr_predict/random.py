@@ -10,7 +10,6 @@ import dnachisel as dc
 import numpy as np
 import polars as pl
 from attrs import Factory, define, field, validators
-from loguru import logger
 from numpy.random import Generator
 from skbio.sequence import SubstitutionMatrix
 
