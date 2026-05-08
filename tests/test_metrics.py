@@ -68,6 +68,29 @@ def test_multinomial(rng):
     assert b.p_adj <= 0.05
 
 
+def test_category_mat(rng):
+    n = 100
+    choices = np.array(range(n))
+    cats = rng.choice(["a", "b", "c", "d", "e"], size=n, replace=True)
+    indices = rng.choice(choices, size=5)
+    n_neighors = 8
+
+    neighbors = np.array(
+        [rng.choice(choices, size=n_neighors, replace=False) for _ in range(n)]
+    )
+    assert neighbors.shape[1] == n_neighors
+
+    enc, mat, coded_cats = NeighborMetrics._get_category_matrix(
+        cats, neighbors, indices
+    )
+    logger.info("cats {}", cats)
+    logger.info("neighbors {}", neighbors)
+    logger.info("mat {}, coded {}", mat, coded_cats)
+    assert (coded_cats[indices] == mat[:, 0].numpy()).all()
+    for i in range(n_neighors):
+        assert (coded_cats[neighbors[indices, i]] == mat[:, i + 1].numpy()).all()
+
+
 def test_neighbor_metrics_rand(random_linked_dset):
     met = NeighborMetrics(
         dset=random_linked_dset(n=5000),

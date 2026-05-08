@@ -861,23 +861,41 @@ class NeighborMetrics:
             sum_axis = -1
         return (ref_points == neighbors).sum(axis=sum_axis) / self.n_neighbors
 
+    @beartype
+    @staticmethod
+    def _get_category_matrix(
+        categories,
+        neighbors: jaxtyping.Shaped[Any, "a b"],
+        indices: jaxtyping.Shaped[Any, "a"],
+        randomize: bool = False,
+        seed: int | None = None,
+    ) -> tuple[LabelEncoder, Tensor, Tensor]:
+        encoder = LabelEncoder()
+        cats = pl.Series(encoder.fit_transform(categories))
+        neighbor_subset = neighbors[indices, :]
+        if randomize:
+            cats = cats.shuffle(seed=seed)
+        category_mat: Tensor = torch.hstack(
+            [
+                torch.tensor(cats[indices]).reshape(-1, 1),
+                torch.vstack([torch.tensor(cats[n]) for n in neighbor_subset]),
+            ]
+        )
+        # Array of shape: (samples, 1 + n_neighbors)
+        return encoder, category_mat, cats.to_torch()
+
     def _compute_category_metrics(
         self, indices, category_col: str, randomize: bool = False
     ) -> tuple[McTestResult, McTestResult, McTestResult]:
-        encoder = LabelEncoder()
+        _, neighbors = self.nn.kneighbors(self.dset[self.dset.x_key][indices])
+        encoder, category_mat, cats = self._get_category_matrix(
+            self.dset[category_col],
+            neighbors,
+            indices,
+            randomize=randomize,
+            seed=self.seed,
+        )
         self.encoders[category_col] = encoder
-        cats = pl.Series(encoder.fit_transform(self.dset[category_col]))
-        if randomize:
-            cats = cats.shuffle(seed=self.seed)
-        neighbors = self.neighbors[indices, :]
-        category_mat: np.ndarray = torch.from_numpy(
-            np.hstack(
-                [
-                    cats[indices].to_numpy().reshape(-1, 1),
-                    np.vstack([cats[n] for n in neighbors]),
-                ]
-            )
-        )  # Array of shape: (samples, 1 + n_neighbors)
         n_prop_result = generalized_mc_test(
             category_mat,
             statistic=self._neighbor_prop,
