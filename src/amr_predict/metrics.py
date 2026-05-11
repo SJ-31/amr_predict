@@ -994,6 +994,207 @@ class NeighborMetrics:
         return pl.concat(dfs, how="diagonal_relaxed"), distributions
 
 
+# * Perturbation metrics
+
+
+@define
+class PerturbationMetrics:
+    id_col: str
+    embedding_distance: Literal["cosine", "euclidean", "manhattan"]
+    natural: LinkedDataset
+    perturbed: LinkedDataset
+    random: LinkedDataset
+    level: Literal["seqs", "tokens"] = "seqs"
+    seed: int | None = None
+    random_is_pairable: bool = False
+    rng: Generator = field(
+        init=False,
+        default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
+    )
+    classifier_name: str = "LogisticRegression"
+    classifier: BaseEstimator = field(
+        init=False, default=Factory(lambda self: self.classfier_name, takes_self=True)
+    )
+    cv: int = 5
+    n_distance_resampling: int = 5
+    classifier_kws: dict = field(factory=dict)
+    subsample_prop: dict | None = field(
+        factory=lambda: {"natural": 0.8, "perturbed": 0.8, "random": 0.8},
+        validator=validators.deep_mapping(
+            key_validator=validators.in_(
+                ["natural", "perturbed", "random"],
+                value_validator=validators.instance_of(float),
+            )
+        ),
+    )
+    idx_df: pl.DataFrame = field(init=False, default=None)
+
+    @classifier.default
+    def _classifier_dispatch(self) -> BaseEstimator:
+        if self.classfier_name == "RandomForest":
+            return RandomForestClassifier(**self.classifier_kws)
+        raise NotImplementedError()
+
+    def _get_idx_df(self, dset) -> pl.DataFrame:
+        df = dset.to_pl().select(self.id_col).with_row_index()
+        if self.level == "tokens":
+            df = df.unique(self.id_col)
+        return df
+
+    def __attrs_post_init__(self):
+        if self.subsample_prop:
+            for k, v in self.subsample_prop.items():
+                dset: LinkedDataset = getattr(self, k)
+                sampled = dset.sample(fraction=v, seed=self.seed)
+                setattr(self, k, sampled)
+
+        n_df = self._get_idx_df(self.natural).rename({"index": "natural"})
+        p_df = self._get_idx_df(self.perturbed).rename({"index": "perturbed"})
+        shared = n_df.join(p_df, on=self.id_col, how="inner")
+        if self.random_is_pairable:
+            r_df = self._get_idx_df(self.random).rename({"index": "random"})
+            shared = shared.join(r_df, on=self.id_col, how="inner")
+        else:
+            shared = shared.with_columns(
+                pl.Series(
+                    self.rng.choice(range(len(self.random), size=shared.height))
+                ).alias("random")
+            )
+        self.idx_df = shared
+
+    def establish_baseline(
+        self, split_kws: dict | None = None, n_repeats: int = 5
+    ) -> pl.DataFrame:
+        result = {"round": [], "mcc": []}
+        indices = np.array(range(self.natural.shape))
+        for i in range(n_repeats):
+            labels = self.rng.choice([0, 1], size=self.natural.shape, replace=True)
+            train_idx, test_idx = ms.train_test_split(indices, **(split_kws or {}))
+            train = self.natural[train_idx][self.natural.x_key].numpy()
+            test = self.natural[test_idx][self.natural.x_key].numpy()
+            self.classifier.fit(train, y=labels[train])
+            pred = self.classifier.predict(test)
+            result["round"].append(i)
+            result["mcc"].append(matthews_corrcoef(y_true=labels[test], y_pred=pred))
+        return pl.DataFrame(result)
+
+    def _combine_dsets_balanced(
+        self, d1: LinkedDataset, d2: LinkedDataset
+    ) -> tuple[np.ndarray, int]:
+        d1_len, d2_len = len(d1), len(d2)
+        if d1_len > d2_len:
+            d1 = d1[self.rng.choice(range(d1_len, size=d2_len))]
+            half_len = d2_len
+        else:
+            d2 = d1[self.rng.choice(range(d2_len, size=d1_len))]
+            half_len = d1_len
+        return np.vstack([d1[d1.x_key].numpy(), d2[d2.x_key].numpy()]), half_len
+
+    def _distance_correlation(self) -> pl.DataFrame:
+        """Compare the distributions of embedding distances under
+        perturbation and randomization
+
+        Notes
+        -----
+        When possible, the method pairs up sequences for
+        distance computation.
+
+        It uses a paired test instead because the calculation
+        of each distance distribution
+        uses the initial ids from the natural sequences
+        """
+        dists = {}
+        result = {"distances_x": [], "distances_y": [], "statistic": [], "p_value": []}
+        idx1 = self.idx_df["natural"]
+        for pair_name, to_compare in zip(
+            ["natural-random", "natural-perturbed", "natural-natural"],
+            [self.random, self.perturbed, self.natural],
+        ):
+            _, compare_name = pair_name.split("-")
+            idx2 = (
+                self.idx_df[compare_name]
+                if compare_name != "natural"
+                else self.rng.choice(range(len(self.natural)), size=len(idx1))
+            )
+            dists[pair_name] = vecdist(
+                self.natural[idx1][self.natural.x_key],
+                to_compare[idx2][to_compare.x_key],
+                metric=self.embedding_distance,
+            )
+        for x, y in [
+            ("natural-random", "natural-natural"),
+            ("natural-perturbed", "natural-natural"),
+            ("natural-perturbed", "natural-random"),
+        ]:
+            test = stats.wilcoxon(x=dists[x], y=dists[y])
+            result["distances_x"].append(x)
+            result["distances_y"].append(y)
+            result["statistic"].append(test.statistic)
+            result["p_value"].append(test.pvalue)
+        return pl.DataFrame(result)
+
+    def _measure_classifiability(self):
+        result = {"group": [], "mcc": []}
+        for group, dset_pair in zip(
+            ["cv_natural_w_perturbed", "cv_natural_w_random"],
+            [(self.natural, self.perturbed), (self.natural, self.random)],
+        ):
+            x, half_len = self._combine_dsets_balanced(d1=dset_pair[0], d2=dset_pair[1])
+            cv_results: dict = ms.cross_validate(
+                self.classifier,
+                X=x,
+                y=[0] * half_len + [1] * half_len,
+                scoring=make_scorer(matthews_corrcoef),
+                cv=self.cv,
+                estimator=group == "cv_natural_w_random",
+                return_estimator=True,
+            )
+            scores = cv_results["test_score"]
+            result["group"].extend([group] * len(scores))
+            result["mcc"].extend(scores)
+            if group == "cv_natural_w_random":
+                x_test = self.perturbed[self.perturbed.x_key][:]
+                len_test = len(x_test)
+                for est in cv_results["estimators"]:
+                    pred = est.predict(x_test)
+                    result["group"].append("cv_natural_w_random_on_perturbed")
+                    result["mcc"].append(
+                        matthews_corrcoef(y_true=[0] * len_test, y_pred=pred)
+                    )
+        return pl.DataFrame(result)
+
+    # def _random_neighbor_score(self) ->
+
+
+def random_neighbor_score(
+    natural: LinkedDataset,
+    random: LinkedDataset,
+    n_neighbors: int = 10,
+    prop: float = 0.8,
+    iterations: int = 10,
+    seed: int | None = None,
+    nn_kws: dict | None = None,
+) -> float:
+    def _run_once() -> float:
+        n_subsampled = natural.sample(fraction=prop, seed=seed)
+        r_subsampled = random.sample(fraction=prop, seed=seed)
+        # 1 for random, 0 for natural
+        labels = [0] * len(n_subsampled) + [1] * len(r_subsampled)
+        nn: NearestNeighbors = NearestNeighbors(
+            **(nn_kws or {"n_neighbors": n_neighbors})
+        )
+        x = [
+            n_subsampled[n_subsampled.x_key].numpy(),
+            r_subsampled[r_subsampled.x_key].numpy(),
+        ]
+        nn.fit(np.vstack(x))
+        neighbors = nn.kneighbors(n_subsampled[n_subsampled.x_key].numpy())
+        dist = np.array([(labels[nn] == 1).sum() / n_neighbors for nn in neighbors])
+        return dist.mean()
+
+    return np.array([_run_once() for _ in range(iterations)]).mean()
+
+
 # * Neighbor-preserving score
 def seq_nn(x: np.ndarray, **kws) -> NearestNeighbors:
     """
