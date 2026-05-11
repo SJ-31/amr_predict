@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from pathlib import Path
 from string import ascii_uppercase
-from typing import Literal, TypeAlias, get_args
+from typing import Callable, Literal, TypeAlias, get_args
 
 import mimesis
 import numpy as np
@@ -91,12 +91,13 @@ def toy_dset(rng):
 
 
 @pytest.fixture
-def random_linked_dset(tmp_path, rng):
+def random_linked_dset(tmp_path, rng, custom_cols: dict[str, Callable] | None = None):
     from mimesis import Food, Text
 
     txt = Text()
     food = Food()
     fruits = food._dataset["fruits"][:10]
+    dna = list("ATCG")
 
     def fn(n: int = 1000, dim: int = 10) -> LinkedDataset:
         annots = list(set(txt.words(20)))
@@ -105,22 +106,28 @@ def random_linked_dset(tmp_path, rng):
 
         def embed_fn(values) -> tuple[str, torch.Tensor, torch.Tensor]:
             for val in values:
-                yield (val, torch.randn((len(val), dim)), torch.randn(len(val)))
+                yield (val, torch.randn((8, dim)), torch.randn(len(val)))
 
-        df = pl.DataFrame(
-            {
-                "id": range(n),
-                "word": txt.words(n),
-                "c1": [txt.color() for _ in range(n)],
-                "c2": rng.choice(fruits, size=n, replace=True),
-                "a1": [
-                    ";".join(
-                        rng.choice(annots, size=rng.integers(low=1, high=len(annots)))
-                    )
-                    for _ in range(n)
-                ],
-            }
-        )
+        dct = {
+            "id": range(n),
+            "word": txt.words(n),
+            "c1": [txt.color() for _ in range(n)],
+            "c2": rng.choice(fruits, size=n, replace=True),
+            "s1": [
+                "".join(
+                    rng.choice(dna, size=rng.integers(low=20, high=300), replace=True)
+                )
+                for _ in range(n)
+            ],
+            "a1": [
+                ";".join(rng.choice(annots, size=rng.integers(low=1, high=len(annots))))
+                for _ in range(n)
+            ],
+        }
+        if custom_cols is not None:
+            for name, col_gen in custom_cols.items():
+                dct[name] = col_gen(n)
+        df = pl.DataFrame(dct)
 
         cache = EmbeddingCache(
             dir=cache_path, rng=rng, pooling=BasicPoolings.MEAN, save_mode="seqs"

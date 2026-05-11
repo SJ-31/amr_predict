@@ -18,9 +18,5 @@
     "reportMissingTypeArgument": false,
     "reportMissingParameterType": false,
     "reportMissingTypeStubs": false,
-    "reportUntypedFunctionDecorator": false,
-    "extraPaths": [
-        "/home/shannc/Bio_SDD/miniforge3/envs/amr_predict/lib/python3.12/site-packages",
-        "src"
-    ]
+    "reportUntypedFunctionDecorator": false
 }

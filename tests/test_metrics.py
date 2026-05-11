@@ -40,6 +40,33 @@ def random_dset(rng: Generator) -> ad.AnnData:
     return ad.AnnData(X=x, obs=meta)
 
 
+def multinomial_setup(
+    rng: Generator,
+    n_categories: int = 9,
+    dist_size=10_000,
+    n: int = 5,
+    obs_limit: int | None = None,
+):
+    from mimesis import Text
+
+    txt = Text()
+    choices = txt._dataset[:n_categories]
+
+    dist = [rng.choice(choices) for _ in range(dist_size)]
+
+    def fn():
+        if not obs_limit:
+            obs = rng.choice(choices, size=n, replace=True)
+        else:
+            obs = rng.choice(choices[:obs_limit], size=n, replace=True)
+        return mc_multinomial_test(obs, n=n, all_categories=dist, seed=rng)
+
+    return fn
+
+
+# TODO: use this to check how sensitive it is
+
+
 def test_multinomial(rng):
     from mimesis import Text
 
@@ -96,12 +123,15 @@ def test_neighbor_metrics_rand(random_linked_dset):
         dset=random_linked_dset(n=5000),
         category_cols=["c1", "c2"],
         anno_cols=["a1"],
-        n_resample=100_000,
+        n_resample=10_000,
         n_neighbors=10,
     )
     df, dist = met.run(with_randomization=True)
     df.write_csv("./neighbor_metrics_rand.csv")
     assert (df["p_adj"] == 1).all()
+
+
+# TODO:  Parameters to check for neighbors: number of neighbors, number of categories
 
 
 def test_corr_rand(random_linked_dset):

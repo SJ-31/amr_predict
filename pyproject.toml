@@ -18,6 +18,7 @@ dependencies = [
   "attrs",
   "polars",
   "pytest",
+  "mimesis",
   "lightning",
   "pyhere",
   "rich-cli",
@@ -46,4 +47,6 @@ dependencies = [
 ]
 
 [tool.pyright]
-venvPath = "/home/shannc/Bio_SDD/miniforge3/envs/amr_predict"
+venvPath = '.'
+venv = ".venv"
+exclude = ['.venv']
