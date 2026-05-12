@@ -303,9 +303,12 @@ class SnakeEnv:
         out: list = [
             self.outdir / "label_cooccurrence.csv",
             self.outdir / "cooccurrence_stats.yaml",
-            self.outdir / "analyses/nearest_neighbors/per_method.csv",
-            # self.outdir / "analyses/correlations/per_method.csv",
-            self.outdir / "analyses/nearest_neighbors/method_comparison.csv",
+            self.outdir / "analyses/nn_all.csv",
+            self.outdir / "analyses/covariate_correlation_all.csv",
+            self.outdir / "analyses/nn_comparison.csv",
+            self.outdir / "analyses/classifiability.csv",
+            self.outdir / "analyses/random_neighbor_score.csv",
+            self.outdir / "analyses/distance_correlation.csv",
         ]
         custom_saes: dict = self.saes["custom"]
 
@@ -421,7 +424,7 @@ def expand_nested(
     res = []
 
     def rec(level: int, acc: str, k: str, v: dict | Sequence) -> list[str]:
-        s1 = level2sep.get(level - 1, "_")
+        s1 = level2sep.get(max(level - 1, 0), "_")
         s2 = level2sep.get(level, "_")
         pref = f"{acc}{s1}{k}" if acc else k
         if not isinstance(v, dict):

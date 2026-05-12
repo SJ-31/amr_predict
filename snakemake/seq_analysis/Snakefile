@@ -176,9 +176,11 @@ use rule base as embedding_metrics with:
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
     params:
         analysis=get_wc("analysis"),
+    wildcard_constraints:
+        analysis="nn|corr",
     output:
-        f"{env.outdir}/.{{analyses}}_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}.csv",
-        f"{env.outdir}/.{{analysis}}_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}.pkl",
+        f"{env.outdir}/analyses/.{{analysis}}_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}.csv",
+        f"{env.outdir}/analyses/.{{analysis}}_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}.pkl",
 
 
 use rule base as perturbation_metrics with:
@@ -189,7 +191,7 @@ use rule base as perturbation_metrics with:
     params:
         rand_method=get_wc("randomization_method"),
     output:  # hidden file to summarize later
-        f"{env.outdir}/.perturbation_tmp/{{seqtype}}_{{level}}/{{rand_method}}-{{method}}-{{embedding_method}}-{{pooling}}.pkl",
+        f"{env.outdir}/analyses/.perturbation_tmp/{{seqtype}}_{{level}}/{{rand_method}}-{{method}}-{{embedding_method}}-{{pooling}}.pkl",
 
 
 # * Summarize metric output
@@ -199,7 +201,7 @@ all_ptb = {
         ptb: {
             rnd: {
                 m: {p.value: [".pkl"] for p in mspec.poolings}
-                for m, mspec in self.embedding_methods[st].items()
+                for m, mspec in env.embedding_methods[st].items()
             }
             for rnd in env.sequence_variants.random.keys()
         }
@@ -214,7 +216,7 @@ use rule base as collect_perturbation_metrics with:
     input:
         expand_nested(
             all_ptb,
-            prefix=f"{env.outdir}/.perturbation_tmp",
+            prefix=f"{env.outdir}/analyses/.perturbation_tmp",
             _0="/",
             _1="-",
             _2="-",
@@ -232,24 +234,27 @@ all_emb_metrics = {
         m: {p.value: [".csv", ".pkl"] for p in mspec.poolings}
         for m, mspec in env.embedding_methods[st].items()
     }
-    | {
-        f"{st.value}_tokens": {
-            f"{m}_0": [".csv", ".pkl"] for m in env.embedding_methods
-        }
-    }
     for st in env.seqtypes
 }
+all_emb_metrics.update(
+    {
+        f"{st.value}_tokens": {
+            f"{m}": {"0": [".csv", ".pkl"]} for m in env.embedding_methods[st]
+        }
+        for st in env.seqtypes
+    }
+)
 
 
 use rule base as collect_embedding_metrics with:
     input:
         **{
             k: expand_nested(
-                embedding_metrics_out,
-                _0="/",
-                _1="",
-                _2="",
+                all_emb_metrics,
                 prefix=f"{env.outdir}/analyses/.{k}_tmp",
+                _0="/",
+                _1="-",
+                _2="",
             )
             for k in ("corr", "nn")
         },
