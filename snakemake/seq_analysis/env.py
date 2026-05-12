@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
@@ -10,8 +11,8 @@ import amr_predict.enums as ae
 import cattrs
 import yaml
 from attr.validators import instance_of
-from attrs import asdict, define, field, validators
-from snakemake.io import expand
+from attrs import Factory, asdict, define, field, validators
+from snakemake.io import expand, multiext
 from yte import process_yaml
 
 Levels = Enum("Levels", (("TOKENS", "tokens"), ("SEQS", "seqs")))
@@ -213,6 +214,39 @@ class SequenceVariants:
 
 
 @define
+class NeighborMetricsCfg:
+    category_cols: list[str] | None = None
+    anno_cols: list[str] | None = None
+    subsample: float | None = None
+    n_neighbors: int = 5
+    nn_kws: dict = field(factory=dict)
+    n_resample: int = 5_000
+    anno_sep: str = ";"
+
+
+@define
+class PerturbationMetricsCfg:
+    id_col: str = "id"
+    embedding_distance: Literal["cosine", "euclidean", "manhattan"] = "cosine"
+    classifier_name: str = "LogisticRegression"
+    cv: int = 5
+    n_distance_resampling: int = 5
+    rns_kws: dict = field(factory=lambda: {"prop": 1, "iterations": 20})
+    subsample_prop: dict | None = field(factory=dict)
+
+
+@define
+class EmbeddingCorrelationsCfg:
+    columns: dict[str, ae.SeqCovariates]
+    embedding_distance: Literal["cosine", "euclidean", "manhattan"]
+    sequence_distance: str = "hamming"
+    anno_sep: str = ";"
+    seed: int | None = None
+    n_resample: int = 10_000
+    tree_file: Path | str | None = None
+
+
+@define
 class SnakeEnv:
     huggingface: str
     rng: int
@@ -236,44 +270,61 @@ class SnakeEnv:
     train_sae: TrainSae
     write_training_indices: WriteTrainingIndices
     label_clustering: LabelClustering
+    neighbor_metrics: NeighborMetricsCfg | None
+    embedding_correlations: EmbeddingCorrelationsCfg | None
+    perturbation_metrics: PerturbationMetricsCfg | None
 
+    # Misc rule config
     slurm_time_limit: str = "18-00:00:00"
     co_occurence_min_support: float = 0.3
     save_token_proportion: float = 0.3
     log_wandb: bool = True
+    wandb_project: str | None = None
     embedding_key: str = "x"
     embedding_max_lengths: dict = field(default={"esm": 2048, "seqLens": 512})
     test: bool = False
+    seqtypes: list[ae.SeqTypes] = field(
+        init=False,
+        default=Factory(
+            lambda self: [
+                st
+                for st in ae.SeqTypes
+                if st in self.fastas and st in self.embedding_methods
+            ],
+            takes_self=True,
+        ),
+    )
 
     @property
     def datasets(self) -> Path:
         return self.outdir / "datasets"
 
-    def get_outputs(self) -> list:
-        out = [
+    def get_outputs(self) -> tuple[list, dict]:
+        out: list = [
             self.outdir / "label_cooccurrence.csv",
             self.outdir / "cooccurrence_stats.yaml",
+            self.outdir / "analyses/nearest_neighbors/per_method.csv",
+            # self.outdir / "analyses/correlations/per_method.csv",
+            self.outdir / "analyses/nearest_neighbors/method_comparison.csv",
         ]
         custom_saes: dict = self.saes["custom"]
-        for st in ae.SeqTypes:
-            if st not in self.embedding_methods or st not in self.fastas:
-                continue
+
+        for st in self.seqtypes:
             # TODO: the intermediate outputs (mainly embeddings) can be omitted
             # and left to snakemake wildcards to decide
             # The final outputs should be the analyses which will specify which
             # embeddings are required
-
             acts_prefix: str = f"{self.datasets}/activations_{st.value}"
             embedding_prefix: str = f"{self.datasets}/embedded_{st.value}"
 
             for mname, mspec in self.embedding_methods[st].items():
                 for s in custom_saes.keys():
                     out.append(f"{acts_prefix}_tokens/{mname}-0-{s}")
-
                 for p in mspec.poolings:
                     out.append(
                         f"{embedding_prefix}_seqs/natural-0/{mname}-{p.value}.completed"
                     )
+
                     for ptb, ptb_spec in self.sequence_variants.perturbed.items() or {}:
                         if ptb_spec.seqtype == st:
                             out.append(
@@ -293,6 +344,7 @@ class SnakeEnv:
                         / f"activations_{st.value}_{spec.level.value}"
                         / f"{spec.embedding}-_-{sae}"
                     )
+
         return out
 
     @classmethod
@@ -314,4 +366,79 @@ def test_cfg():
 
     file = here("snakemake", "seq_analysis", "env.yaml")
     cfg = SnakeEnv.new(str(file))
+    cfg.get_outputs()
     return cfg
+
+
+def expand_nested(
+    n1: dict | Sequence, n2: Sequence | None = None, prefix: str = "", **separators
+) -> list[str]:
+    """Flatten a nested dictionary of keys and values while respecting
+    the dictionary structure
+
+    Parameters
+    ----------
+    separators : kwargs
+        Separator characters to use at each nesting level, defined using the format
+        _<LEVEL> = SEPARATOR e.g. _2 = '/' to use a slash at level 2
+        Defaults to underscore at all levels if not provided
+    prefix : str
+        Initial prefix to place before files
+
+    Returns
+    -------
+
+    Suppose
+    combos = {
+    "a": [1, 2, 3],
+    "b": [5, 6],
+    "c": {"c.1": [100, 200], "c.2": [588, 963]},
+    }
+    expand_nested(combos, prefix = "pref") returns
+    [
+        "pref_a_1",
+        "pref_a_2",
+        "pref_a_3",
+        "pref_b_5",
+        "pref_b_6",
+        "pref_c_c.1_100",
+        "pref_c_c.1_200",
+        "pref_c_c.2_588",
+        "pref_c_c.2_963",
+    ]
+    """
+    if separators:
+        assert all(
+            [
+                k.startswith("_")
+                and len(k) > 1
+                and k.count("_") == 1
+                and k.split("_")[1].isdigit()
+                for k in separators
+            ]
+        ), "Separators must use the format _<LEVEL> = SEPARATOR"
+    level2sep: dict[int, str] = {int(k.split("_")[1]): v for k, v in separators.items()}
+    res = []
+
+    def rec(level: int, acc: str, k: str, v: dict | Sequence) -> list[str]:
+        s1 = level2sep.get(level - 1, "_")
+        s2 = level2sep.get(level, "_")
+        pref = f"{acc}{s1}{k}" if acc else k
+        if not isinstance(v, dict):
+            return [f"{pref}{s2}{item}" for item in v]
+        result = []
+        for child_key, child_items in v.items():
+            tmp = rec(level + 1, pref, child_key, child_items)
+            result.extend(tmp)
+        return result
+
+    if isinstance(n1, dict):
+        nesting = n1
+    elif isinstance(n1, Sequence) and isinstance(n2, Sequence):
+        assert len(n1) == len(n2), "Keys and values must be the same length"
+        nesting = dict(zip(n1, n2))
+    else:
+        raise ValueError("Argument not recognized")
+    for k, v in nesting.items():
+        res.extend(rec(0, acc=prefix, k=k, v=v))
+    return res
