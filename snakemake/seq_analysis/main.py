@@ -3,6 +3,7 @@
 import os
 import pickle
 import sys
+from collections import defaultdict
 
 import numpy as np
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
 
 ENV: SnakeEnv = SnakeEnv.new(snakemake.config)
 PARAMS: dict = snakemake.params
+INPUT = snakemake.input
 SCOL = ENV.metadata.sample_col
 LABEL_SEP = ENV.metadata.label_sep
 LCOL = ENV.metadata.label_col
@@ -109,6 +111,7 @@ def load_embeddings(
     level: Literal["tokens", "seqs"] = PARAMS.get("level"),
     dataset_path: Path = ENV.datasets,
     pooling: str = PARAMS.get("pooling", "").upper(),
+    with_metadata: bool = False,
 ) -> LinkedDataset:
     cache_path: Path = Path(cache_completion_file).with_suffix("")
     cache = EmbeddingCache(dir=cache_path)
@@ -116,6 +119,15 @@ def load_embeddings(
     seq_df: pl.DataFrame = load_from_disk(seqs).to_polars()
     lm = ENV.embedding_methods[SeqTypes[seqtype.upper()]][embedding_method].model
     pooling = BasicPoolings[pooling] if level == "seqs" else None
+    if with_metadata and ENV.metadata.file.exists():
+        seq_df = seq_df.join(
+            read_tabular(ENV.metadata.file),
+            how="left",
+            left_on="id",
+            right_on=ENV.metadata.sample_col,
+        )
+    elif with_metadata:
+        raise ValueError("No existing metadata file specified in env")
     dset = cache.to_dataset(
         df=seq_df,
         key_col="sequence",
@@ -153,18 +165,18 @@ def lookup_sae(spec: str, act_size: int) -> BaseNN:
 
 def get_activations():
     dset: LinkedDataset = load_embeddings(
-        cache_completion_file=snakemake.input["embeddings"],
+        cache_completion_file=INPUT["embeddings"],
         variation="natural",
         vmethod="0",
     )
-    if not snakemake.input["sae"]:
+    if not INPUT["sae"]:
         return from_pretrained()
         # TODO: unfinished
     else:
         sae = lookup_sae(PARAMS["sae"], act_size=dset[0]["x"].shape[1])
-        train_idx, test_idx, val_idx = get_dset_indices(snakemake.input["indices"])
+        train_idx, test_idx, val_idx = get_dset_indices(INPUT["indices"])
         sae.eval()
-        sae.load_state_dict(torch.load(snakemake.input["sae"]))
+        sae.load_state_dict(torch.load(INPUT["sae"]))
         test_portion = dset.select(test_idx)
         predict_on = test_portion["x"][:]
         activations = sae.predict_step(predict_on)
@@ -178,7 +190,7 @@ def write_training_indices(token_level: bool):
         train_idx, test_idx = ms.train_test_split(
             range(
                 load_embeddings(
-                    cache_completion_file=snakemake.input[0],
+                    cache_completion_file=INPUT[0],
                     variation="natural",
                     vmethod="0",
                 ).shape[0]
@@ -186,7 +198,7 @@ def write_training_indices(token_level: bool):
             **asdict(ENV.write_training_indices),
         )
     else:
-        sample_df: pl.DataFrame = load_from_disk(snakemake.input[0]).to_polars()
+        sample_df: pl.DataFrame = load_from_disk(INPUT[0]).to_polars()
         sample_df = sample_df.with_columns(pl.row_index())
         train_idx, test_idx = ms.train_test_split(
             sample_df["index"], **asdict(ENV.write_training_indices)
@@ -209,7 +221,7 @@ def write_seq_training_indices():
 
 
 def train_sae():
-    cache_path: Path = Path(snakemake.input[0]).with_suffix("")
+    cache_path: Path = Path(INPUT[0]).with_suffix("")
     rconfig = ENV.train_sae
     train_kws = rconfig.trainer.to_kws()
     sae_name = PARAMS["sae"]
@@ -232,35 +244,16 @@ def train_sae():
         if logdir.exists():
             ckpt_dir = "last"
     dset: LinkedDataset = load_embeddings(
-        cache_completion_file=snakemake.input[0], variation="natural", vmethod="0"
+        cache_completion_file=INPUT[0], variation="natural", vmethod="0"
     )
     sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
     load_kws = rconfig.dataloader.to_kws()
     trainer = L.Trainer(callbacks=[ckpt_callback], **train_kws)
-    train_idx, _, val_idx = get_dset_indices(snakemake.input[1])
+    train_idx, _, val_idx = get_dset_indices(INPUT[1])
     train_l = DataLoader(dset.select(train_idx), **load_kws)
     val_l = DataLoader(dset.select(val_idx), **load_kws)
     trainer.fit(sae, train_dataloaders=train_l, val_dataloaders=val_l, ckpt_path="last")
     torch.save(sae.state_dict(), snakemake.output[0])
-
-
-def pooling_comparison(dataset: str):
-    dset: LinkedDataset = load_embeddings(
-        snakemake.input[0],
-        dataset_path=ENV.datasets,
-        variation=PARAMS["variation"],
-        vmethod=PARAMS["vmethod"],
-        level=PARAMS["level"],
-    )
-    metadata = dset.meta
-
-
-def seqtype_from_params() -> SeqTypes:
-    return SeqTypes[PARAMS["seqtype"].upper()]
-
-
-def pooling_from_params() -> BasicPoolings:
-    return BasicPoolings[PARAMS["pooling"].upper()]
 
 
 def make_seq_dataset():
@@ -304,7 +297,7 @@ def label_cooccurrence():
         alg = cudaAprioriTID
     else:
         alg = FPGrowth
-    label_df: pl.DataFrame = read_tabular(snakemake.input[0]).unique()
+    label_df: pl.DataFrame = read_tabular(INPUT[0]).unique()
     frequent_patterns, pattern_stats = pami_wrapper(
         label_df,
         alg,
@@ -339,7 +332,7 @@ def label_cooccurrence():
 
 
 def get_embeddings():
-    df: pl.DataFrame = load_from_disk(snakemake.input[0]).to_polars()
+    df: pl.DataFrame = load_from_disk(INPUT[0]).to_polars()
     spec = ENV.embedding_methods[seqtype_from_params()][PARAMS["embedding_method"]]
     model: EmbeddingModels = spec.model
     max_length = embedding_size(model)
@@ -352,8 +345,12 @@ def get_embeddings():
     kws["workdir"] = cache_path
     kws["huggingface"] = ENV.huggingface
     kws["save_mode"] = PARAMS["level"]
-    kws["pooling"] = pooling_from_params() if PARAMS["level"] == "seqs" else None
-    kws["pooling_kws"] = spec.poolings[pooling_from_params()] or {}
+    if PARAMS["level"] == "seqs":
+        kws["pooling"] = pooling_from_params()
+        kws["pooling_kws"] = spec.poolings[pooling_from_params()] or {}
+    else:
+        kws["pooling"] = None
+        kws["pooling_kws"] = {}
     kws["save_proba"] = PARAMS["level"] == "tokens"
     embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
     embedder.embed(dataset=Dataset.from_polars(df))
