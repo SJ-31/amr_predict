@@ -187,7 +187,10 @@ use rule base as perturbation_metrics with:
         natural=f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
         perturbed=f"{DATASETS}/embedded_{{seqtype}}_{{level}}/perturbed-{{method}}/{{embedding_method}}-{{pooling}}.completed",
         random=f"{DATASETS}/embedded_{{seqtype}}_{{level}}/randomized-{{rand_method}}/{{embedding_method}}-{{pooling}}.completed",
-        seqs=f"{DATASETS}/sequences/{{seqtype}}-natural-0",
+        # Required for id and sequence
+        _seqs_n=f"{DATASETS}/sequences/{{seqtype}}-natural-0",
+        _seqs_p=f"{DATASETS}/sequences/{{seqtype}}-perturbed-{{method}}",
+        _seqs_r=f"{DATASETS}/sequences/{{seqtype}}-randomized-{{rand_method}}",
     params:
         rand_method=get_wc("randomization_method"),
     output:  # hidden file to summarize later
