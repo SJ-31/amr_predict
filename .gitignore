@@ -38,4 +38,3 @@ snakemake/lightning_logs
 *slurm_logs*
 *sif
 *.cache
-/pyproject.toml

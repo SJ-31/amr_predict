@@ -243,7 +243,16 @@ class EmbeddingCorrelationsCfg:
     anno_sep: str = ";"
     seed: int | None = None
     n_resample: int = 10_000
-    tree_file: Path | str | None = None
+    tree_file: Path | None = field(
+        default=None, converter=lambda x: Path(x) if x else x
+    )
+
+
+@define
+class FindBaseline:
+    classifiers: dict[str, dict | None]
+    n_repeats: int = 5
+    split_kws: dict | None = field(factory=dict)
 
 
 @define
@@ -273,6 +282,7 @@ class SnakeEnv:
     neighbor_metrics: NeighborMetricsCfg | None
     embedding_correlations: EmbeddingCorrelationsCfg | None
     perturbation_metrics: PerturbationMetricsCfg | None
+    find_baseline: FindBaseline | None
 
     # Misc rule config
     slurm_time_limit: str = "18-00:00:00"
