@@ -16,6 +16,7 @@ from amr_predict.enums import (
     EmbeddingModels,
     EsmModels,
     EsmSynthraModels,
+    OmniNaModels,
     SeqLensModels,
 )
 from attrs import Factory, define, field, validators
@@ -27,7 +28,13 @@ from esm.tokenization.sequence_tokenizer import EsmSequenceTokenizer
 from loguru import logger
 from torch import Tensor
 from torch.utils.data import DataLoader
-from transformers import AutoModelForMaskedLM, AutoTokenizer, DataCollatorWithPadding
+from transformers import (
+    AutoModel,
+    AutoModelForCausalLM,
+    AutoModelForMaskedLM,
+    AutoTokenizer,
+    DataCollatorWithPadding,
+)
 from transformers.modeling_outputs import MaskedLMOutput
 
 
@@ -49,6 +56,61 @@ def validate_model_group(model: EmbeddingModels, group: EnumType) -> bool:
         return True
     except KeyError:
         return False
+
+
+def automodel_embed(
+    sequences,
+    model: AutoModel | AutoModelForMaskedLM | AutoModelForCausalLM,
+    tokenizer: AutoTokenizer,
+    layer: int | None = None,
+    tokenizer_kws: dict | None = None,
+    embedding_key: str = "last_hidden_state",
+) -> Generator[
+    tuple[str, jaxtyping.Float[Tensor, "a b"], jaxtyping.Float[Tensor, "a"] | None]
+]:
+    """
+    Generic function to embed batches using a model from the Transformers library
+
+    Parameters
+    ----------
+    layer : int | None
+        Hidden layer/state to get embeddings from
+    embedding_key : str
+        Model attribute to get embeddings from if `layer` is None
+
+    """
+    tokenizer_kws = tokenizer_kws or {"padding": True, "return_tensors": "pt"}
+    inputs = tokenizer(sequences, **tokenizer_kws)
+    with torch.no_grad():
+        output = model(**inputs)
+    embeddings: Tensor = (
+        output.hidden_states[layer]
+        if layer is not None
+        else getattr(output, embedding_key)
+    )
+    if "attention_mask" in inputs:
+        mask = inputs["attention_mask"]
+        if (mask == 0).any() and embeddings.shape[:-1] == mask.shape:
+            embeddings = mask.unsqueeze(2) * embeddings
+    assert embeddings.shape[0] == len(
+        sequences
+    ), "First dimension of returned embeddings doesn't match batch size"
+    softmaxxed = torch.softmax(output.logits, dim=2)
+    for seq, embedding, prob_mat in zip(
+        sequences,
+        torch.unbind(embeddings, dim=0),
+        torch.unbind(softmaxxed, dim=0),
+    ):
+        toks = [
+            t
+            for t in tokenizer.tokenize(seq)
+            if t not in tokenizer.special_tokens_map.values()
+        ]
+        idx = tokenizer.convert_tokens_to_ids(toks)
+        proba = torch.tensor(
+            [prob_mat[i, token_idx] for i, token_idx in enumerate(idx)]
+        )
+        yield seq, embedding, proba
 
 
 @define
@@ -283,7 +345,7 @@ class EsmOfficial(ModelEmbedder):
             # shape of (1, sequence_len, vocab_size)
             all_proba = torch.softmax(logits, dim=1)
             proba = torch.tensor(
-                [all_proba[i, self.token2idx[p]] for i, p in enumerate(prot)]
+                [all_proba[i, self.token2idx.get(p, 0)] for i, p in enumerate(prot)]
             )
             # NOTE: See https://github.com/evolutionaryscale/esm/issues/252
             # for how to convert logits to tokens
@@ -326,47 +388,7 @@ class SeqLensEmbedder(ModelEmbedder):
     ) -> Generator[
         tuple[str, jaxtyping.Float[Tensor, "a b"], jaxtyping.Float[Tensor, "a"] | None]
     ]:
-        dataset = Dataset.from_dict({"sequence": list(sequences)})
-        dataset = dataset.add_column("seqlens_uid", list(range(len(dataset))))
-        to_remove = [c for c in dataset.column_names if c != "seqlens_uid"]
-        seqlens_uid2seq = dict(zip(dataset["seqlens_uid"], dataset["sequence"]))
-
-        data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
-        tokenized = dataset.map(
-            lambda x: self._tokenize(
-                x, tokenizer=self.tokenizer, text_key="sequence", max_length=512
-            ),
-            batched=True,
-            remove_columns=to_remove,
-        )
-        loader = DataLoader(
-            tokenized, batch_size=self.batch_size, collate_fn=data_collator
-        )
-        with torch.no_grad():
-            for batch in loader:
-                input_ids = batch["input_ids"].to(self.device)
-                # Indices of tokens in the dictionary
-                attention_mask = batch["attention_mask"].to(self.device)
-                output: MaskedLMOutput = self.m(
-                    input_ids=input_ids, attention_mask=attention_mask
-                )
-                attention_mask = attention_mask.to("cpu")
-                chosen_layer = output.hidden_states[self.hidden_layer]
-
-                expanded_mask = attention_mask.unsqueeze(-1).expand_as(chosen_layer)
-                hidden_layer = chosen_layer * expanded_mask
-
-                for i, (seqlens_uid, input_id, logits, hidden) in enumerate(
-                    zip(
-                        torch.unbind(batch["seqlens_uid"]),
-                        torch.unbind(batch["input_ids"]),
-                        torch.unbind(output.logits),
-                        torch.unbind(hidden_layer),
-                    )
-                ):
-                    seq = seqlens_uid2seq[seqlens_uid.cpu().item()]
-                    seq_proba = self.proba(input_id, logits, i == 0)
-                    yield seq, hidden, seq_proba
+        return automodel_embed(sequences, self.tokenizer, layer=self.hidden_layer)
 
 
 @define
