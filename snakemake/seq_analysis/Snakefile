@@ -172,6 +172,7 @@ use rule base as get_activations with:
 use rule base as embedding_metrics with:
     input:
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
+        f"{DATASETS}/sequences/{{seqtype}}-natural-0",
     params:
         analysis=get_wc("analysis"),
     wildcard_constraints:
@@ -186,6 +187,7 @@ use rule base as perturbation_metrics with:
         natural=f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
         perturbed=f"{DATASETS}/embedded_{{seqtype}}_{{level}}/perturbed-{{method}}/{{embedding_method}}-{{pooling}}.completed",
         random=f"{DATASETS}/embedded_{{seqtype}}_{{level}}/randomized-{{rand_method}}/{{embedding_method}}-{{pooling}}.completed",
+        seqs=f"{DATASETS}/sequences/{{seqtype}}-natural-0",
     params:
         rand_method=get_wc("randomization_method"),
     output:  # hidden file to summarize later
