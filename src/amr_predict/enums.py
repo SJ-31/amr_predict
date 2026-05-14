@@ -24,6 +24,7 @@ class PerturbationCfg:
 
 class Perturbations(Enum):
     CODON_OPTIMIZATION = "codon_optimization"
+    SUBSTITUTION_MATRIX = "substitution_matrix"
 
 
 SeqTypes = Enum("SeqTypes", (("AA", "aa"), ("NUC", "nuc")))
@@ -41,6 +42,12 @@ EsmSynthraModels = Enum(
         "esmc_300m_synthyra": "Synthyra/ESMplusplus_small",
     },
 )
+
+
+class OmniNaModels(Enum):
+    omniNA_66m = "XLS/OmniNA-66m"
+    omniNA_220m = "XLS/OmniNA-220m"
+    omniNA_1p7b = "XLS/OmniNA-1.7b"
 
 
 EsmModels = Enum(
@@ -68,5 +75,6 @@ EmbeddingModels = Enum(
         {i.name: i.value for i in EsmSynthraModels}
         | {i.name: i.value for i in SeqLensModels}
         | {i.name: i.value for i in EsmModels}
+        | {i.name: i.value for i in OmniNaModels}
     ),
 )

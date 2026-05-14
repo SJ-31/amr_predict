@@ -215,6 +215,11 @@ class ModelEmbedder:
             max_length=max_length,
         )
 
+    def hf_setup(self, model: AutoModel):
+        model.to(self.device)
+        model.config.output_hidden_states = True
+        torch.set_default_dtype(self.default_dtype)
+
 
 @define
 class Esm2Embedder(ModelEmbedder):
@@ -238,6 +243,30 @@ class Esm2Embedder(ModelEmbedder):
             )
             tokens: Tensor = token_embeddings if self.with_tokens else None
             yield prot, tokens.to("cpu"), Tensor()
+
+
+@define
+class OmniNA(ModelEmbedder):
+    model: EmbeddingModels = OmniNaModels.omniNA_220m
+    valid_models = tuple(OmniNaModels)
+    m: AutoModelForCausalLM = field(
+        init=False,
+        default=Factory(
+            lambda self: AutoModelForCausalLM.from_pretrained(self.model.value),
+            takes_self=True,
+        ),
+    )
+    tokenizer: AutoTokenizer = field(
+        init=False,
+        default=Factory(
+            lambda self: AutoTokenizer.from_pretrained(self.model.value),
+            takes_self=True,
+        ),
+    )
+
+    def __attrs_post_init__(self):
+        super().__attrs_post__init()
+        self.hf_setup(self.m)
 
 
 @define
@@ -379,9 +408,7 @@ class SeqLensEmbedder(ModelEmbedder):
 
     def __attrs_post_init__(self):
         super().__attrs_post_init__()
-        self.m.to(self.device)
-        self.m.config.output_hidden_states = True
-        torch.set_default_dtype(self.default_dtype)
+        self.hf_setup(self.m)
 
     def _embed_batch(
         self, sequences
