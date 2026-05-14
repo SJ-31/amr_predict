@@ -1,3 +1,5 @@
+* Project
+#+begin_src toml :tangle pyproject.toml
 [project]
 name = "amr_predict"
 version = "0.1.0"
@@ -45,8 +47,21 @@ dependencies = [
   "igraph",
   "scikit-learn",
 ]
+#+end_src
 
+* Pyright configuration
+#+name: conda
+#+begin_src emacs-lisp :var env="base" :results value
+(if-let* ((stdout (shell-command-to-string "conda env list"))
+          (lines (split-string stdout "\n"))
+          (target (-filter (lambda (x) (string-prefix-p env (string-trim x))) lines)))
+    (car (last (string-split (car target) " ")))
+  "Not found")
+#+end_src
+
+#+begin_src conf-toml :noweb yes :tangle pyproject.toml
 [tool.pyright]
-venvPath = '.'
-venv = ".venv"
-exclude = ['.venv']
+extraPaths = ["<<conda("amr_predict")>>/lib/python3.12/site-packages", "src"]
+exclude = ["**/__pycache__"]
+typeCheckingMode = "basic"
+#+end_src
