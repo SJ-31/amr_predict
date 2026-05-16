@@ -313,6 +313,42 @@ def label_cooccurrence():
         yaml.safe_dump(f, pattern_stats)
 
 
+def embedding_metrics():
+    analysis_group = PARAMS["analysis"]
+    assert analysis_group in {"nn", "corr"}
+    run_kws = {}
+    if analysis_group == "nn":
+        from amr_predict.metrics import NeighborMetrics
+
+        obj_fn = NeighborMetrics
+        kws = asdict(ENV.neighbor_metrics)
+        run_kws["with_randomization"] = True
+    else:
+        from amr_predict.metrics import EmbeddingCorrelations
+
+        obj_fn = EmbeddingCorrelations
+        kws = asdict(ENV.embedding_correlations)
+
+    dset = load_embeddings(
+        cache_completion_file=INPUT[0],
+        variation="natural",
+        vmethod="0",
+        with_metadata=True,
+    )
+    kws["seed"] = ENV.rng
+    obj = obj_fn(dset, **kws)
+    test_results, dist = obj.run(**run_kws)
+    metadata_expr = []
+    dist_dict = {"result": dist}
+    for item in ("seqtype", "level", "embedding_method", "pooling", "analysis"):
+        metadata_expr.append(pl.lit(PARAMS[item]).alias(item))
+        dist_dict[item] = PARAMS[item]
+    test_results = test_results.with_columns(*metadata_expr)
+    test_results.write_csv(snakemake.output[0])
+    with open(snakemake.output[1], "wb") as f:
+        pickle.dump(dist_dict, f)
+
+
 # def label_clustering():
 #     label_df = read_tabular(snakemake.input[0]).unique()
 #     binary = to_binary_form(label_df, sample_col=SCOL, label_col=LCOL, sep=LABEL_SEP)
