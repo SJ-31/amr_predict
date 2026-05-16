@@ -799,8 +799,6 @@ class NeighborMetrics:
     n: int = field(
         init=False, default=Factory(lambda self: self.dset.shape[0], takes_self=True)
     )
-    neighbors: np.ndarray = field(init=False)
-    distances: np.ndarray = field(init=False)
     encoders: dict[str, LabelEncoder] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
@@ -931,7 +929,8 @@ class NeighborMetrics:
             self.anno_sep,
         )
         observed = binary_annots[indices, :]
-        neighbors = self.neighbors[indices, :]  # shape of n x n_neighbors
+        _, neighbors = self.nn.kneighbors(self.dset[self.dset.x_key][indices])
+        # shape of n x n_neighbors
         anno_mat: np.ndarray = np.hstack(
             [
                 observed.reshape(-1, 1, observed.shape[1]),
@@ -1002,8 +1001,8 @@ class PerturbationMetrics:
     id_col: str
     embedding_distance: Literal["cosine", "euclidean", "manhattan"]
     natural: LinkedDataset
-    perturbed: LinkedDataset
-    random: LinkedDataset
+    perturbed: LinkedDataset | None
+    random: LinkedDataset | None
     level: Literal["seqs", "tokens"] = "seqs"
     seed: int | None = None
     random_is_pairable: bool = False
@@ -1012,19 +1011,18 @@ class PerturbationMetrics:
         default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
     )
     classifier_name: str = "LogisticRegression"
-    classifier: BaseEstimator = field(
-        init=False, default=Factory(lambda self: self.classfier_name, takes_self=True)
-    )
+    classifier: BaseEstimator = field(init=False)
     cv: int = 5
     n_distance_resampling: int = 5
     classifier_kws: dict = field(factory=dict)
+    rns_kws: dict = field(factory=lambda: {"prop": 1, "iterations": 20})
     subsample_prop: dict | None = field(
         factory=lambda: {"natural": 0.8, "perturbed": 0.8, "random": 0.8},
         validator=validators.deep_mapping(
             key_validator=validators.in_(
                 ["natural", "perturbed", "random"],
-                value_validator=validators.instance_of(float),
-            )
+            ),
+            value_validator=validators.instance_of(float),
         ),
     )
     idx_df: pl.DataFrame = field(init=False, default=None)
@@ -1032,7 +1030,17 @@ class PerturbationMetrics:
     @classifier.default
     def _classifier_dispatch(self) -> BaseEstimator:
         if self.classfier_name == "RandomForest":
+            from sklearn.ensemble import RandomForestClassifier
+
             return RandomForestClassifier(**self.classifier_kws)
+        elif self.classifier_name == "Lasso":
+            from sklearn.linear_model import LassoCV
+
+            return LassoCV(**self.classifier_kws)
+        elif self.classifier_name == "SVM":
+            from sklearn.svm import SVC
+
+            return SVC(**self.classifier_kws)
         raise NotImplementedError()
 
     def _get_idx_df(self, dset) -> pl.DataFrame:
@@ -1047,6 +1055,7 @@ class PerturbationMetrics:
                 dset: LinkedDataset = getattr(self, k)
                 sampled = dset.sample(fraction=v, seed=self.seed)
                 setattr(self, k, sampled)
+        self.rns_kws.update({"seed": self.seed})
 
         n_df = self._get_idx_df(self.natural).rename({"index": "natural"})
         p_df = self._get_idx_df(self.perturbed).rename({"index": "perturbed"})
@@ -1062,9 +1071,12 @@ class PerturbationMetrics:
             )
         self.idx_df = shared
 
-    def establish_baseline(
+    def find_baseline(
         self, split_kws: dict | None = None, n_repeats: int = 5
     ) -> pl.DataFrame:
+        """
+        Helper method to identify a baseline binary classifier (one that doesn't overfit to random labels)
+        """
         result = {"round": [], "mcc": []}
         indices = np.array(range(self.natural.shape))
         for i in range(n_repeats):
@@ -1134,6 +1146,10 @@ class PerturbationMetrics:
         return pl.DataFrame(result)
 
     def _measure_classifiability(self):
+        """
+        Compare perturbed, natural, and random embeddings by the ability of a binary
+        classifier to distinguish between them
+        """
         result = {"group": [], "mcc": []}
         for group, dset_pair in zip(
             ["cv_natural_w_perturbed", "cv_natural_w_random"],
