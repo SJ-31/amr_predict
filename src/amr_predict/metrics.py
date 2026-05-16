@@ -714,13 +714,15 @@ class EmbeddingCorrelations:
             x=list(range(self.n)), n=self.n_resample, rng=self.seed
         )
         p1, p2 = pairs[:, 0], pairs[:, 1]
+        if self.level == "tokens":
+            self.dset.return_all_tokens = False
         emb_dist = vecdist(
             self.dset[p1]["x"].numpy(),
             self.dset[p2]["x"].numpy(),
             metric=self.embedding_distance,
         )
         dists = {"embedding": emb_dist}  # For visualization
-        correlations: dict = {}
+        correlations: dict = {"covariate": [], "value": [], "metric": []}
         for col, covar in self.columns.items():
             if covar == ae.SeqCovariates.functional_similarity:
                 cov_dist = self._dist_functional(col, p1, p2)
@@ -731,10 +733,10 @@ class EmbeddingCorrelations:
             else:
                 raise NotImplementedError()
             dists[col] = cov_dist
-            correlations[col] = stats.spearmanr(emb_dist, cov_dist)
-        return pl.DataFrame(correlations).with_columns(
-            pl.Series(["statistic", "p_value"]).alias("metric")
-        ), dists
+            correlations["covariate"].extend([col, col])
+            correlations["value"].extend(stats.spearmanr(emb_dist, cov_dist))
+            correlations["metric"].extend(["statistic", "p_value"])
+        return pl.DataFrame(correlations), dists
 
     def run(self, rounds: int = 1) -> tuple[pl.DataFrame, dict]:
         if rounds == 1:
