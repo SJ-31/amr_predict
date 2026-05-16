@@ -105,7 +105,7 @@ class TaxonomyTree:
     rank_weights: dict = field(factory=lambda: {"species": 9})
 
     def species_or_lower(self, id: int) -> bool:
-        rank: str = self.G.nodes[id]["rank"]
+        rank: str = self.G.nodes[id].get("rank")
         return rank in {
             "species",
             "subspecies",
