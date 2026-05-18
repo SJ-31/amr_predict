@@ -677,7 +677,7 @@ class EmbeddingCorrelations:
     def _dist_sequence(self, col: str, idx1, idx2) -> np.ndarray:
         first, sec = self.dset[col][idx1], self.dset[col][idx2]
         fn = SEQ_DISTANCE_METRICS[self.sequence_distance]
-        kws = self.seq_kws[self.sequence_distance]
+        kws = self.seq_kws.get(self.sequence_distance, {})
         result = [
             sks.Sequence(f).distance(
                 sks.Sequence(s), metric=lambda x, y: fn(x, y, **kws)
@@ -753,6 +753,9 @@ class EmbeddingCorrelations:
         return pl.concat(dfs), dists
 
 
+# * Nearest neighbors
+
+
 @define
 class NeighborMetrics:
     """Helper class for running analyses on embeddings in NN space
@@ -812,34 +815,17 @@ class NeighborMetrics:
         logger.info("Kneighbor computation started")
         self.nn.fit(self.dset[self.dset.x_key][self.sampled_idx])
         logger.success("Kneighbors fitted")
-        self.distances, self.neighbors = self.nn.kneighbors()
 
-    def _random_neighbors(
-        self, x: pl.Series | np.ndarray, n: int | None = None
-    ) -> Tensor:
+    def _random_neighbors(self, x: np.ndarray, n: int | None = None) -> Tensor:
         n = n or self.n_resample
-        if isinstance(x, pl.Series):
-            c1 = (
-                x.sample(n, with_replacement=True, seed=self.seed)
-                .to_numpy()
-                .reshape(-1, 1)
-            )
-            nn = np.vstack(
-                [
-                    x.sample(self.n_neighbors, seed=self.seed).to_numpy()
-                    for _ in range(n)
-                ]
-            )
-        else:
-            indices = range(x.shape[0])
-            c1 = x[self.rng.choice(indices, n, replace=True), :].reshape(
-                -1, 1, x.shape[1]
-            )
-            nn = [
-                np.array(x[self.rng.choice(indices, self.n_neighbors), :])
-                for _ in range(n)
-            ]
-        return torch.from_numpy(np.hstack([c1, nn]))
+        indices = range(x.shape[0])
+        call = lambda: self.rng.choice(indices, self.n_neighbors + 1, replace=False)
+        if len(x.shape) == 1:
+            rands = [torch.tensor(x[call()]) for _ in range(n)]
+            return torch.vstack(rands)
+        nn = torch.stack([torch.tensor(x[call(), :]) for _ in range(n)])
+        assert len(nn.shape) == 3 and nn.shape[0] == n
+        return nn
 
     def _neighbor_prop(self, x: np.ndarray) -> float:
         """
@@ -1006,6 +992,7 @@ class PerturbationMetrics:
     perturbed: LinkedDataset | None
     random: LinkedDataset | None
     level: Literal["seqs", "tokens"] = "seqs"
+    classifier_kws: dict = field(factory=dict)
     seed: int | None = None
     random_is_pairable: bool = False
     rng: Generator = field(
@@ -1013,10 +1000,9 @@ class PerturbationMetrics:
         default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
     )
     classifier_name: str = "LogisticRegression"
+    n_distance_resampling: int = 5
     classifier: BaseEstimator = field(init=False)
     cv: int = 5
-    n_distance_resampling: int = 5
-    classifier_kws: dict = field(factory=dict)
     rns_kws: dict = field(factory=lambda: {"prop": 1, "iterations": 20})
     subsample_prop: dict | None = field(
         factory=lambda: {"natural": 0.8, "perturbed": 0.8, "random": 0.8},
