@@ -1040,24 +1040,26 @@ class PerturbationMetrics:
     def __attrs_post_init__(self):
         if self.subsample_prop:
             for k, v in self.subsample_prop.items():
-                dset: LinkedDataset = getattr(self, k)
-                sampled = dset.sample(fraction=v, seed=self.seed)
-                setattr(self, k, sampled)
+                dset: LinkedDataset | None = getattr(self, k)
+                if dset is not None:
+                    sampled = dset.sample(fraction=v, seed=self.seed)
+                    setattr(self, k, sampled)
         self.rns_kws.update({"seed": self.seed})
 
-        n_df = self._get_idx_df(self.natural).rename({"index": "natural"})
-        p_df = self._get_idx_df(self.perturbed).rename({"index": "perturbed"})
-        shared = n_df.join(p_df, on=self.id_col, how="inner")
-        if self.random_is_pairable:
-            r_df = self._get_idx_df(self.random).rename({"index": "random"})
-            shared = shared.join(r_df, on=self.id_col, how="inner")
-        else:
-            shared = shared.with_columns(
-                pl.Series(
-                    self.rng.choice(range(len(self.random), size=shared.height))
-                ).alias("random")
-            )
-        self.idx_df = shared
+        if self.perturbed is not None and self.random is not None:
+            n_df = self._get_idx_df(self.natural).rename({"index": "natural"})
+            p_df = self._get_idx_df(self.perturbed).rename({"index": "perturbed"})
+            shared = n_df.join(p_df, on=self.id_col, how="inner")
+            if self.random_is_pairable:
+                r_df = self._get_idx_df(self.random).rename({"index": "random"})
+                shared = shared.join(r_df, on=self.id_col, how="inner")
+            else:
+                shared = shared.with_columns(
+                    pl.Series(
+                        self.rng.choice(range(len(self.random)), size=shared.height)
+                    ).alias("random")
+                )
+            self.idx_df = shared
 
     def find_baseline(
         self, split_kws: dict | None = None, n_repeats: int = 5
