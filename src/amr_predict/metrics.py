@@ -1017,7 +1017,7 @@ class PerturbationMetrics:
 
     @classifier.default
     def _classifier_dispatch(self) -> BaseEstimator:
-        if self.classfier_name == "RandomForest":
+        if self.classifier_name == "RandomForest":
             from sklearn.ensemble import RandomForestClassifier
 
             return RandomForestClassifier(**self.classifier_kws)
@@ -1085,10 +1085,10 @@ class PerturbationMetrics:
     ) -> tuple[np.ndarray, int]:
         d1_len, d2_len = len(d1), len(d2)
         if d1_len > d2_len:
-            d1 = d1[self.rng.choice(range(d1_len, size=d2_len))]
+            d1 = d1.select(self.rng.choice(range(d1_len), size=d2_len))
             half_len = d2_len
         else:
-            d2 = d1[self.rng.choice(range(d2_len, size=d1_len))]
+            d2 = d2.select(self.rng.choice(range(d2_len), size=d1_len))
             half_len = d1_len
         return np.vstack([d1[d1.x_key].numpy(), d2[d2.x_key].numpy()]), half_len
 
@@ -1152,8 +1152,7 @@ class PerturbationMetrics:
                 y=[0] * half_len + [1] * half_len,
                 scoring=make_scorer(matthews_corrcoef),
                 cv=self.cv,
-                estimator=group == "cv_natural_w_random",
-                return_estimator=True,
+                return_estimator=group == "cv_natural_w_random",
             )
             scores = cv_results["test_score"]
             result["group"].extend([group] * len(scores))
@@ -1161,7 +1160,7 @@ class PerturbationMetrics:
             if group == "cv_natural_w_random":
                 x_test = self.perturbed[self.perturbed.x_key][:]
                 len_test = len(x_test)
-                for est in cv_results["estimators"]:
+                for est in cv_results["estimator"]:
                     pred = est.predict(x_test)
                     result["group"].append("cv_natural_w_random_on_perturbed")
                     result["mcc"].append(
