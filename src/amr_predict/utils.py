@@ -73,7 +73,7 @@ def resample_pairs(
         If true, return an array of indices with shape (n, 2) containing indices for
         pairs in `x`. Otherwise, return a list of tuples containing paired elements of x
     """
-    rng = rng if rng is not None else np.random.default_rng(rng)
+    rng = rng if isinstance(rng, Generator) else np.random.default_rng(rng)
     seen: set = set()
     count: int = len(x)
     pair_count: int = 0
@@ -521,14 +521,30 @@ def dataset2adata(dset: td.Dataset | Dataset, x_key: str = "embedding") -> ad.An
     return ad.AnnData(X=x, obs=obs)
 
 
+def _vecdist_pt(
+    x: Tensor, y: Tensor, metric: Literal["cosine", "euclidean", "manhattan"]
+):
+    if metric == "cosine":
+        cos = torch.nn.CosineSimilarity(dim=1)
+        return 1 - cos(x, y)
+    elif metric == "euclidean":
+        return torch.sqrt(torch.sum((x - y) ** 2, dim=1))
+    elif metric == "manhattan":
+        return torch.sum(torch.abs((x - y)), dim=1)
+
+
 def vecdist(
-    x: np.ndarray, y: np.ndarray, metric: Literal["cosine", "euclidean", "manhattan"]
+    x: np.ndarray | Tensor,
+    y: np.ndarray | Tensor,
+    metric: Literal["cosine", "euclidean", "manhattan"],
 ) -> np.ndarray:
     """Element-wise distance calculation between rows of 2d matrices x, y"""
     if len(x.shape) > 2 or len(y.shape) > 2:
         raise ValueError("x and y must both be 2d")
     if x.shape[0] != y.shape[0]:
         raise ValueError("x and y have a differing number of elements!")
+    if isinstance(x, Tensor) and isinstance(y, Tensor):
+        return _vecdist_pt(x, y, metric)
     if metric == "cosine":
         nx = np.linalg.vector_norm(x, axis=1, ord=2)
         ny = np.linalg.vector_norm(y, axis=1, ord=2)
