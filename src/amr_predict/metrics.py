@@ -1036,37 +1036,51 @@ class PerturbationMetrics:
     id_col: str
     embedding_distance: Literal["cosine", "euclidean", "manhattan"]
     natural: LinkedDataset
-    perturbed: LinkedDataset
-    random: LinkedDataset
+    perturbed: LinkedDataset | None
+    random: LinkedDataset | None
     level: Literal["seqs", "tokens"] = "seqs"
+    classifier_kws: dict = field(factory=dict)
     seed: int | None = None
     random_is_pairable: bool = False
     rng: Generator = field(
         init=False,
         default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
     )
-    classifier_name: str = "LogisticRegression"
-    classifier: BaseEstimator = field(
-        init=False, default=Factory(lambda self: self.classfier_name, takes_self=True)
-    )
-    cv: int = 5
+    classifier_name: str = "Lasso"
     n_distance_resampling: int = 5
-    classifier_kws: dict = field(factory=dict)
+    classifier: BaseEstimator = field(init=False)
+    cv: int = 5
+    rns_kws: dict = field(factory=lambda: {"prop": 1, "iterations": 20})
     subsample_prop: dict | None = field(
         factory=lambda: {"natural": 0.8, "perturbed": 0.8, "random": 0.8},
-        validator=validators.deep_mapping(
-            key_validator=validators.in_(
-                ["natural", "perturbed", "random"],
+        validator=validators.or_(
+            validators.in_((None,)),
+            validators.deep_mapping(
+                key_validator=validators.in_(
+                    ["natural", "perturbed", "random"],
+                ),
                 value_validator=validators.instance_of(float),
-            )
+            ),
         ),
     )
     idx_df: pl.DataFrame = field(init=False, default=None)
 
     @classifier.default
     def _classifier_dispatch(self) -> BaseEstimator:
-        if self.classfier_name == "RandomForest":
+        if self.classifier_name == "RandomForest":
+            from sklearn.ensemble import RandomForestClassifier
+
             return RandomForestClassifier(**self.classifier_kws)
+        elif self.classifier_name == "Lasso":
+            from sklearn.linear_model import LogisticRegressionCV
+
+            self.classifier_kws["l1_ratios"] = [1, 0]
+            self.classifier_kws["solver"] = "saga"
+            return LogisticRegressionCV(**self.classifier_kws)
+        elif self.classifier_name == "SVM":
+            from sklearn.svm import SVC
+
+            return SVC(**self.classifier_kws)
         raise NotImplementedError()
 
     def _get_idx_df(self, dset) -> pl.DataFrame:
