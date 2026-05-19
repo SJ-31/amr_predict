@@ -965,7 +965,8 @@ class NeighborMetrics:
             self.anno_sep,
         )
         observed = binary_annots[indices, :]
-        neighbors = self.neighbors[indices, :]  # shape of n x n_neighbors
+        _, neighbors = self.nn.kneighbors(self.dset[self.dset.x_key][indices])
+        # shape of n x n_neighbors
         anno_mat: np.ndarray = np.hstack(
             [
                 observed.reshape(-1, 1, observed.shape[1]),
