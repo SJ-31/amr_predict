@@ -64,6 +64,38 @@ def multinomial_setup(
     return fn
 
 
+@pytest.mark.parametrize(
+    "pairable,ssprop",
+    [
+        (False, None),
+        (True, None),
+        (False, {"natural": 0.5, "random": 0.8, "perturbed": 0.5}),
+    ],
+)
+def test_perturbation_metrics(pairable, ssprop, random_linked_dset):
+    from amr_predict.metrics import PerturbationMetrics
+
+    n = 1000
+    natural = random_linked_dset(n)
+    random = random_linked_dset(n)
+    pert = random_linked_dset(n)
+
+    P = PerturbationMetrics(
+        natural=natural,
+        random=random,
+        perturbed=pert,
+        random_is_pairable=pairable,
+        id_col="id",
+        embedding_distance="euclidean",
+        subsample_prop=ssprop,
+        seed=942,
+    )
+    assert P.idx_df.height == 1000
+    result = P.run()
+    print(result)
+    print(P.idx_df)
+
+
 # TODO: use this to check how sensitive it is
 
 

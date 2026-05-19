@@ -101,7 +101,9 @@ def random_linked_dset(tmp_path, rng, custom_cols: dict[str, Callable] | None = 
 
     def fn(n: int = 1000, dim: int = 10) -> LinkedDataset:
         annots = list(set(txt.words(20)))
-        cache_path = tmp_path / "cache"
+        n_caches = len(list(tmp_path.glob("*cache*")))
+        name = "cache" + f"_{n_caches}" if n_caches > 0 else "cache"
+        cache_path = tmp_path / name
         cache_path.mkdir()
 
         def embed_fn(values) -> tuple[str, torch.Tensor, torch.Tensor]:
