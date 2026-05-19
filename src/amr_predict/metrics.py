@@ -16,6 +16,7 @@ import pandas as pd
 import polars as pl
 import skbio.sequence as sks
 import skbio.sequence.distance as ssd
+import sklearn.model_selection as ms
 import sklearn.preprocessing as sp
 import torch
 import torch.nn as nn
@@ -30,6 +31,8 @@ from numpy.random import Generator
 from scipy import stats
 from scipy.spatial.distance import pdist
 from scipy.stats import ecdf
+from sklearn.base import BaseEstimator
+from sklearn.metrics import make_scorer, matthews_corrcoef
 from sklearn.metrics.pairwise import paired_distances
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import LabelEncoder
@@ -44,12 +47,40 @@ logger.disable("amr_predict")
 
 
 SEQ_DISTANCE_METRICS: dict[str, Callable] = {
-    "hamming": ssd.hamming,
     # "pdist": ssd.pdist,
-    "paralin": ssd.paralin,
+    # "paralin": ssd.paralin,
     "kmer": ssd.kmer_distance,
-    "logdet": ssd.logdet,
+    # "logdet": ssd.logdet,
 }
+
+
+def random_neighbor_score(
+    natural: LinkedDataset,
+    random: LinkedDataset,
+    n_neighbors: int = 10,
+    prop: float = 0.8,
+    iterations: int = 10,
+    seed: int | None = None,
+    nn_kws: dict | None = None,
+) -> float:
+    def _run_once() -> float:
+        n_subsampled = natural.sample(fraction=prop, seed=seed)
+        r_subsampled = random.sample(fraction=prop, seed=seed)
+        # 1 for random, 0 for natural
+        labels = np.array([0] * len(n_subsampled) + [1] * len(r_subsampled))
+        nn: NearestNeighbors = NearestNeighbors(
+            **(nn_kws or {"n_neighbors": n_neighbors})
+        )
+        x = [
+            n_subsampled[n_subsampled.x_key].numpy(),
+            r_subsampled[r_subsampled.x_key].numpy(),
+        ]
+        nn.fit(np.vstack(x))
+        _, neighbors = nn.kneighbors(n_subsampled[n_subsampled.x_key].numpy())
+        dist = np.array([(labels[row] == 1).sum() / n_neighbors for row in neighbors])
+        return dist.mean()
+
+    return np.array([_run_once() for _ in range(iterations)]).mean()
 
 
 def multitask_acc(
@@ -638,6 +669,9 @@ def nn_proportions(
             )
         result.update(nulls)
     return result
+
+
+# * Embedding correlation
 
 
 @define
