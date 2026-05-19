@@ -10,6 +10,7 @@ import polars as pl
 import pytest
 import torch
 from amr_predict.cache import EmbeddingCache, LinkedDataset, expand_max_len
+from amr_predict.enums import BasicPoolings
 from datasets import Dataset
 from loguru import logger
 from pyhere import here
@@ -25,17 +26,18 @@ def dummy_embed(texts):
     ncol = 3
     mapping = dict(zip(ascii_letters, range(len(ascii_letters))))
 
-    def embed(text):
+    def embed(text, offset):
         if len(text) >= ncol:
-            return torch.tensor([mapping[text[i]] for i in range(ncol)]).to(
-                torch.float32
+            return (
+                torch.tensor([mapping[text[i]] for i in range(ncol)]).to(torch.float32)
+                + offset
             )
         return torch.randn(3)
 
     for t in texts:
         yield (
             t,
-            torch.vstack([embed(t) for _ in range(torch.randint(2, 10, (1,)))]),
+            torch.vstack([embed(t, i) for i in range(torch.randint(2, 10, (1,)))]),
             torch.tensor([mapping[letter] + torch.rand(1).item() for letter in t]),
         )
 
@@ -56,7 +58,11 @@ def make_default_cache(tmp_path, rng) -> Callable:
         path: Path = tmp_path / str(uuid4()) / ".cache"
         path.mkdir(parents=True)
         cache: EmbeddingCache = EmbeddingCache(
-            path, save_interval=1, save_mode=mode, save_proba=save_proba
+            path,
+            save_interval=1,
+            save_mode=mode,
+            save_proba=save_proba,
+            pooling=BasicPoolings.MEAN,
         )
         words = [
             "forest",
@@ -95,6 +101,40 @@ def test_cache1_only_tk(make_default_cache):
     cache: EmbeddingCache
     cache, words = make_default_cache(mode="tokens")
     print(cache.to_pl().collect())
+
+
+@pytest.mark.parametrize("level", ["tokens", "seqs"])
+def test_single_tokens(level, make_default_cache):
+    cache: EmbeddingCache
+    cache, words = make_default_cache(mode="both")
+    if level == "tokens":
+        logger.info("words {}", words)
+        logger.info("cache {}", cache.to_pl().collect())
+    df = pl.DataFrame({"key": words, "id": range(len(words))})
+    ds = LinkedDataset(
+        meta=df,
+        cache=cache,
+        text_key="key",
+        x_key="x",
+        subseq_agg=BasicPoolings.MEAN,
+        level=level,
+    )
+    ds.return_all_tokens = False
+    n = len(ds)
+    assert n == len(words)
+    idx = np.array(range(n))
+    before = ds[idx[:5]]
+    if level == "tokens":
+        logger.info("before {}", before)
+    after = ds[idx[:5]]
+    if level == "tokens":
+        logger.info("before {}", after)
+    assert (before["x"] == after["x"]).all()
+    assert before["x"].shape[0] == 5
+    assert after["x"].shape[0] == 5
+    b2 = ds[idx]
+    assert b2["x"].shape[0] == n
+    assert (b2["x"][:5, :] == before["x"]).all()
 
 
 def test_max_len(make_default_cache):

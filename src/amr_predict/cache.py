@@ -451,10 +451,47 @@ class LinkedDataset(td.Dataset):
     max_len: int | None = None
     subseq_agg: BasicPoolings | None = BasicPoolings.MEAN
     return_all_tokens: bool = field(init=False, default=True)
+    # If false, map a single token to each query sequence and always return
+    # that. Otherwise, return all tokens
+    key2token_idx: pl.DataFrame | None = field(init=False, default=None)
+    # Cache the random indices used for token selection if return_all_tokens
+    # is false so subsequent lookups return the same tokens
 
     @property
     def shape(self):
-        return self._retrieve_with_max_len().shape
+        df = self._retrieve_with_max_len()
+        if self.level == "tokens" and self.return_all_tokens:
+            return df.explode("token", "token_idx").shape
+        return df.shape
+
+    def _get_key2token_idx(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Generate key2token_idx with a new set of key->id mappings
+        based on df
+        """
+        df = df.with_columns(
+            pl.int_ranges(start=0, end=pl.col("token").list.len())
+            .list.sample(n=1)
+            .list.first()
+            .alias("SELECTED_TOKEN")
+        ).select(self.text_key, "SELECTED_TOKEN")
+        return df
+
+    def _select_one_token(self, df: pl.DataFrame) -> pl.DataFrame:
+        if self.key2token_idx is None:
+            self.key2token_idx = self._get_key2token_idx(df)
+        unseen: pl.DataFrame = df.filter(
+            ~pl.col(self.text_key).is_in(self.key2token_idx[self.text_key])
+        )
+        if unseen.height > 0:
+            self.key2token_idx = pl.concat(
+                [self.key2token_idx, self._get_key2token_idx(unseen)]
+            )
+        return (
+            df.join(self.key2token_idx, on=self.text_key)
+            .with_columns(pl.col("token").list.get(pl.col("SELECTED_TOKEN")))
+            .drop("SELECTED_TOKEN")
+        )
 
     def _retrieve_with_max_len(self, df: pl.DataFrame | None = None) -> pl.DataFrame:
         """
@@ -583,13 +620,13 @@ class LinkedDataset(td.Dataset):
         if isinstance(index, str):
             return self._get_col(index)
         level = self.level.removesuffix("s")
-        if self.level == "tokens":
+        if self.level == "tokens" and self.return_all_tokens:
             index = self._from_token_level_ids(index)
         df = self._get_x(index)
         if self.level == "tokens" and self.return_all_tokens:
             df = df.explode("token", "token_idx")
         elif self.level == "tokens":
-            df = df.with_columns(pl.col("token").list.sample(n=1).list.first())
+            df = self._select_one_token(df)
         can_convert = self.meta.select(pl.selectors.numeric()).columns
         converted = {col: df[col].to_torch() for col in can_convert}
         x = df[level].to_torch()
