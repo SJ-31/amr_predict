@@ -749,13 +749,15 @@ class EmbeddingCorrelations:
             x=list(range(self.n)), n=self.n_resample, rng=self.seed
         )
         p1, p2 = pairs[:, 0], pairs[:, 1]
+        if self.level == "tokens":
+            self.dset.return_all_tokens = False
         emb_dist = vecdist(
             self.dset[p1]["x"].numpy(),
             self.dset[p2]["x"].numpy(),
             metric=self.embedding_distance,
         )
         dists = {"embedding": emb_dist}  # For visualization
-        correlations: dict = {}
+        correlations: dict = {"covariate": [], "value": [], "metric": []}
         for col, covar in self.columns.items():
             if covar == ae.SeqCovariates.functional_similarity:
                 cov_dist = self._dist_functional(col, p1, p2)
@@ -766,10 +768,10 @@ class EmbeddingCorrelations:
             else:
                 raise NotImplementedError()
             dists[col] = cov_dist
-            correlations[col] = stats.spearmanr(emb_dist, cov_dist)
-        return pl.DataFrame(correlations).with_columns(
-            pl.Series(["statistic", "p_value"]).alias("metric")
-        ), dists
+            correlations["covariate"].extend([col, col])
+            correlations["value"].extend(stats.spearmanr(emb_dist, cov_dist))
+            correlations["metric"].extend(["statistic", "p_value"])
+        return pl.DataFrame(correlations), dists
 
     def run(self, rounds: int = 1) -> tuple[pl.DataFrame, dict]:
         if rounds == 1:
@@ -1117,10 +1119,10 @@ class PerturbationMetrics:
     ) -> tuple[np.ndarray, int]:
         d1_len, d2_len = len(d1), len(d2)
         if d1_len > d2_len:
-            d1 = d1[self.rng.choice(range(d1_len, size=d2_len))]
+            d1 = d1.select(self.rng.choice(range(d1_len), size=d2_len))
             half_len = d2_len
         else:
-            d2 = d1[self.rng.choice(range(d2_len, size=d1_len))]
+            d2 = d2.select(self.rng.choice(range(d2_len), size=d1_len))
             half_len = d1_len
         return np.vstack([d1[d1.x_key].numpy(), d2[d2.x_key].numpy()]), half_len
 
@@ -1168,6 +1170,10 @@ class PerturbationMetrics:
         return pl.DataFrame(result)
 
     def _measure_classifiability(self):
+        """
+        Compare perturbed, natural, and random embeddings by the ability of a binary
+        classifier to distinguish between them
+        """
         result = {"group": [], "mcc": []}
         for group, dset_pair in zip(
             ["cv_natural_w_perturbed", "cv_natural_w_random"],
@@ -1180,8 +1186,7 @@ class PerturbationMetrics:
                 y=[0] * half_len + [1] * half_len,
                 scoring=make_scorer(matthews_corrcoef),
                 cv=self.cv,
-                estimator=group == "cv_natural_w_random",
-                return_estimator=True,
+                return_estimator=group == "cv_natural_w_random",
             )
             scores = cv_results["test_score"]
             result["group"].extend([group] * len(scores))
@@ -1189,7 +1194,7 @@ class PerturbationMetrics:
             if group == "cv_natural_w_random":
                 x_test = self.perturbed[self.perturbed.x_key][:]
                 len_test = len(x_test)
-                for est in cv_results["estimators"]:
+                for est in cv_results["estimator"]:
                     pred = est.predict(x_test)
                     result["group"].append("cv_natural_w_random_on_perturbed")
                     result["mcc"].append(
