@@ -677,7 +677,7 @@ class EmbeddingCorrelations:
     def _dist_sequence(self, col: str, idx1, idx2) -> np.ndarray:
         first, sec = self.dset[col][idx1], self.dset[col][idx2]
         fn = SEQ_DISTANCE_METRICS[self.sequence_distance]
-        kws = self.seq_kws.get(self.sequence_distance, {})
+        kws = self.seq_kws[self.sequence_distance]
         result = [
             sks.Sequence(f).distance(
                 sks.Sequence(s), metric=lambda x, y: fn(x, y, **kws)
@@ -714,15 +714,13 @@ class EmbeddingCorrelations:
             x=list(range(self.n)), n=self.n_resample, rng=self.seed
         )
         p1, p2 = pairs[:, 0], pairs[:, 1]
-        if self.level == "tokens":
-            self.dset.return_all_tokens = False
         emb_dist = vecdist(
             self.dset[p1]["x"].numpy(),
             self.dset[p2]["x"].numpy(),
             metric=self.embedding_distance,
         )
         dists = {"embedding": emb_dist}  # For visualization
-        correlations: dict = {"covariate": [], "value": [], "metric": []}
+        correlations: dict = {}
         for col, covar in self.columns.items():
             if covar == ae.SeqCovariates.functional_similarity:
                 cov_dist = self._dist_functional(col, p1, p2)
@@ -733,10 +731,10 @@ class EmbeddingCorrelations:
             else:
                 raise NotImplementedError()
             dists[col] = cov_dist
-            correlations["covariate"].extend([col, col])
-            correlations["value"].extend(stats.spearmanr(emb_dist, cov_dist))
-            correlations["metric"].extend(["statistic", "p_value"])
-        return pl.DataFrame(correlations), dists
+            correlations[col] = stats.spearmanr(emb_dist, cov_dist)
+        return pl.DataFrame(correlations).with_columns(
+            pl.Series(["statistic", "p_value"]).alias("metric")
+        ), dists
 
     def run(self, rounds: int = 1) -> tuple[pl.DataFrame, dict]:
         if rounds == 1:
@@ -751,9 +749,6 @@ class EmbeddingCorrelations:
                 for k, v in dist.items():
                     dists[k] = np.concat(dists[k], v)
         return pl.concat(dfs), dists
-
-
-# * Nearest neighbors
 
 
 @define
@@ -804,6 +799,8 @@ class NeighborMetrics:
     n: int = field(
         init=False, default=Factory(lambda self: self.dset.shape[0], takes_self=True)
     )
+    neighbors: np.ndarray = field(init=False)
+    distances: np.ndarray = field(init=False)
     encoders: dict[str, LabelEncoder] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
@@ -815,17 +812,34 @@ class NeighborMetrics:
         logger.info("Kneighbor computation started")
         self.nn.fit(self.dset[self.dset.x_key][self.sampled_idx])
         logger.success("Kneighbors fitted")
+        self.distances, self.neighbors = self.nn.kneighbors()
 
-    def _random_neighbors(self, x: np.ndarray, n: int | None = None) -> Tensor:
+    def _random_neighbors(
+        self, x: pl.Series | np.ndarray, n: int | None = None
+    ) -> Tensor:
         n = n or self.n_resample
-        indices = range(x.shape[0])
-        call = lambda: self.rng.choice(indices, self.n_neighbors + 1, replace=False)
-        if len(x.shape) == 1:
-            rands = [torch.tensor(x[call()]) for _ in range(n)]
-            return torch.vstack(rands)
-        nn = torch.stack([torch.tensor(x[call(), :]) for _ in range(n)])
-        assert len(nn.shape) == 3 and nn.shape[0] == n
-        return nn
+        if isinstance(x, pl.Series):
+            c1 = (
+                x.sample(n, with_replacement=True, seed=self.seed)
+                .to_numpy()
+                .reshape(-1, 1)
+            )
+            nn = np.vstack(
+                [
+                    x.sample(self.n_neighbors, seed=self.seed).to_numpy()
+                    for _ in range(n)
+                ]
+            )
+        else:
+            indices = range(x.shape[0])
+            c1 = x[self.rng.choice(indices, n, replace=True), :].reshape(
+                -1, 1, x.shape[1]
+            )
+            nn = [
+                np.array(x[self.rng.choice(indices, self.n_neighbors), :])
+                for _ in range(n)
+            ]
+        return torch.from_numpy(np.hstack([c1, nn]))
 
     def _neighbor_prop(self, x: np.ndarray) -> float:
         """
@@ -917,8 +931,7 @@ class NeighborMetrics:
             self.anno_sep,
         )
         observed = binary_annots[indices, :]
-        _, neighbors = self.nn.kneighbors(self.dset[self.dset.x_key][indices])
-        # shape of n x n_neighbors
+        neighbors = self.neighbors[indices, :]  # shape of n x n_neighbors
         anno_mat: np.ndarray = np.hstack(
             [
                 observed.reshape(-1, 1, observed.shape[1]),
@@ -989,10 +1002,9 @@ class PerturbationMetrics:
     id_col: str
     embedding_distance: Literal["cosine", "euclidean", "manhattan"]
     natural: LinkedDataset
-    perturbed: LinkedDataset | None
-    random: LinkedDataset | None
+    perturbed: LinkedDataset
+    random: LinkedDataset
     level: Literal["seqs", "tokens"] = "seqs"
-    classifier_kws: dict = field(factory=dict)
     seed: int | None = None
     random_is_pairable: bool = False
     rng: Generator = field(
@@ -1000,35 +1012,27 @@ class PerturbationMetrics:
         default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
     )
     classifier_name: str = "LogisticRegression"
-    n_distance_resampling: int = 5
-    classifier: BaseEstimator = field(init=False)
+    classifier: BaseEstimator = field(
+        init=False, default=Factory(lambda self: self.classfier_name, takes_self=True)
+    )
     cv: int = 5
-    rns_kws: dict = field(factory=lambda: {"prop": 1, "iterations": 20})
+    n_distance_resampling: int = 5
+    classifier_kws: dict = field(factory=dict)
     subsample_prop: dict | None = field(
         factory=lambda: {"natural": 0.8, "perturbed": 0.8, "random": 0.8},
         validator=validators.deep_mapping(
             key_validator=validators.in_(
                 ["natural", "perturbed", "random"],
-            ),
-            value_validator=validators.instance_of(float),
+                value_validator=validators.instance_of(float),
+            )
         ),
     )
     idx_df: pl.DataFrame = field(init=False, default=None)
 
     @classifier.default
     def _classifier_dispatch(self) -> BaseEstimator:
-        if self.classifier_name == "RandomForest":
-            from sklearn.ensemble import RandomForestClassifier
-
+        if self.classfier_name == "RandomForest":
             return RandomForestClassifier(**self.classifier_kws)
-        elif self.classifier_name == "Lasso":
-            from sklearn.linear_model import LassoCV
-
-            return LassoCV(**self.classifier_kws)
-        elif self.classifier_name == "SVM":
-            from sklearn.svm import SVC
-
-            return SVC(**self.classifier_kws)
         raise NotImplementedError()
 
     def _get_idx_df(self, dset) -> pl.DataFrame:
@@ -1040,33 +1044,27 @@ class PerturbationMetrics:
     def __attrs_post_init__(self):
         if self.subsample_prop:
             for k, v in self.subsample_prop.items():
-                dset: LinkedDataset | None = getattr(self, k)
-                if dset is not None:
-                    sampled = dset.sample(fraction=v, seed=self.seed)
-                    setattr(self, k, sampled)
-        self.rns_kws.update({"seed": self.seed})
+                dset: LinkedDataset = getattr(self, k)
+                sampled = dset.sample(fraction=v, seed=self.seed)
+                setattr(self, k, sampled)
 
-        if self.perturbed is not None and self.random is not None:
-            n_df = self._get_idx_df(self.natural).rename({"index": "natural"})
-            p_df = self._get_idx_df(self.perturbed).rename({"index": "perturbed"})
-            shared = n_df.join(p_df, on=self.id_col, how="inner")
-            if self.random_is_pairable:
-                r_df = self._get_idx_df(self.random).rename({"index": "random"})
-                shared = shared.join(r_df, on=self.id_col, how="inner")
-            else:
-                shared = shared.with_columns(
-                    pl.Series(
-                        self.rng.choice(range(len(self.random)), size=shared.height)
-                    ).alias("random")
-                )
-            self.idx_df = shared
+        n_df = self._get_idx_df(self.natural).rename({"index": "natural"})
+        p_df = self._get_idx_df(self.perturbed).rename({"index": "perturbed"})
+        shared = n_df.join(p_df, on=self.id_col, how="inner")
+        if self.random_is_pairable:
+            r_df = self._get_idx_df(self.random).rename({"index": "random"})
+            shared = shared.join(r_df, on=self.id_col, how="inner")
+        else:
+            shared = shared.with_columns(
+                pl.Series(
+                    self.rng.choice(range(len(self.random), size=shared.height))
+                ).alias("random")
+            )
+        self.idx_df = shared
 
-    def find_baseline(
+    def establish_baseline(
         self, split_kws: dict | None = None, n_repeats: int = 5
     ) -> pl.DataFrame:
-        """
-        Helper method to identify a baseline binary classifier (one that doesn't overfit to random labels)
-        """
         result = {"round": [], "mcc": []}
         indices = np.array(range(self.natural.shape))
         for i in range(n_repeats):
@@ -1085,10 +1083,10 @@ class PerturbationMetrics:
     ) -> tuple[np.ndarray, int]:
         d1_len, d2_len = len(d1), len(d2)
         if d1_len > d2_len:
-            d1 = d1.select(self.rng.choice(range(d1_len), size=d2_len))
+            d1 = d1[self.rng.choice(range(d1_len, size=d2_len))]
             half_len = d2_len
         else:
-            d2 = d2.select(self.rng.choice(range(d2_len), size=d1_len))
+            d2 = d1[self.rng.choice(range(d2_len, size=d1_len))]
             half_len = d1_len
         return np.vstack([d1[d1.x_key].numpy(), d2[d2.x_key].numpy()]), half_len
 
@@ -1136,10 +1134,6 @@ class PerturbationMetrics:
         return pl.DataFrame(result)
 
     def _measure_classifiability(self):
-        """
-        Compare perturbed, natural, and random embeddings by the ability of a binary
-        classifier to distinguish between them
-        """
         result = {"group": [], "mcc": []}
         for group, dset_pair in zip(
             ["cv_natural_w_perturbed", "cv_natural_w_random"],
@@ -1152,7 +1146,8 @@ class PerturbationMetrics:
                 y=[0] * half_len + [1] * half_len,
                 scoring=make_scorer(matthews_corrcoef),
                 cv=self.cv,
-                return_estimator=group == "cv_natural_w_random",
+                estimator=group == "cv_natural_w_random",
+                return_estimator=True,
             )
             scores = cv_results["test_score"]
             result["group"].extend([group] * len(scores))
@@ -1160,7 +1155,7 @@ class PerturbationMetrics:
             if group == "cv_natural_w_random":
                 x_test = self.perturbed[self.perturbed.x_key][:]
                 len_test = len(x_test)
-                for est in cv_results["estimator"]:
+                for est in cv_results["estimators"]:
                     pred = est.predict(x_test)
                     result["group"].append("cv_natural_w_random_on_perturbed")
                     result["mcc"].append(

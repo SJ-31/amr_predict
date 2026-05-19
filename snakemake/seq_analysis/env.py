@@ -239,7 +239,7 @@ class PerturbationMetricsCfg:
 class EmbeddingCorrelationsCfg:
     columns: dict[str, ae.SeqCovariates]
     embedding_distance: Literal["cosine", "euclidean", "manhattan"]
-    sequence_distance: str = "kmer"
+    sequence_distance: str = "hamming"
     anno_sep: str = ";"
     seed: int | None = None
     n_resample: int = 10_000

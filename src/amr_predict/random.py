@@ -10,7 +10,6 @@ import dnachisel as dc
 import numpy as np
 import polars as pl
 from attrs import Factory, define, field, validators
-from loguru import logger
 from numpy.random import Generator
 from skbio.sequence import SubstitutionMatrix
 
@@ -164,26 +163,12 @@ class BySubstitutionMatrix(Perturber):
         ),
     )
     choices: dict = field(init=False, factory=dict)
-    # Map of amino acid codes to a dictionary of AA->scores where scores
-    # are the substitution scores between the first key and all other amino
-    # acids
-    special: set = field(init=False, factory=set)
 
     def substitute(self, char: str) -> str:
-        if char in self.special:
-            return char
         if char not in self.choices and not self.by_properties:
-            tmp_dict = self.mat.to_dict()
-            if char not in tmp_dict:
-                self.special.add(char)
-                return char
-            # Fallback for special symbols (e.g. selenocysteine, "U") is no substitution
-            score_sort = sorted(tmp_dict[char].items(), key=lambda x: x[1])
+            score_sort = sorted(self.mat.to_dict()[char].items(), key=lambda x: x[1])
             self.choices[char] = list(map(lambda x: x[0], score_sort))[: self.k]
         elif char not in self.choices:
-            if char not in aa.AA_DF["aa"]:
-                self.special.add(char)
-                return char
             clst = aa.AA_DF.filter(pl.col("aa") == char)["cluster"]
             self.choices[char] = aa.AA_DF.filter(pl.col("cluster") == clst)[
                 "cluster"

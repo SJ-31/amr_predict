@@ -73,7 +73,7 @@ def resample_pairs(
         If true, return an array of indices with shape (n, 2) containing indices for
         pairs in `x`. Otherwise, return a list of tuples containing paired elements of x
     """
-    rng = rng if isinstance(rng, Generator) else np.random.default_rng(rng)
+    rng = rng if rng is not None else np.random.default_rng(rng)
     seen: set = set()
     count: int = len(x)
     pair_count: int = 0

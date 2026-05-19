@@ -450,7 +450,6 @@ class LinkedDataset(td.Dataset):
     text_key: str = "sequence"
     max_len: int | None = None
     subseq_agg: BasicPoolings | None = BasicPoolings.MEAN
-    return_all_tokens: bool = field(init=False, default=True)
 
     @property
     def shape(self):
@@ -514,15 +513,10 @@ class LinkedDataset(td.Dataset):
             return expanded
         return pl.DataFrame()
 
-    def sample(
-        self, by: str | None = None, inplace: bool = False, **kws
-    ) -> None | LinkedDataset:
+    def sample(self, by: str | None = None, **kws) -> None:
         """Reduce the number of keys in the dataset"""
         if by is None:
-            idx = self.meta.with_row_index().select("index").sample(**kws)["index"]
-            if not inplace:
-                return self.select(idx)
-            self.meta = self.meta[idx]
+            self.meta = self.meta.sample(**kws)
         else:
             idx = (
                 self.meta.with_row_index()
@@ -531,8 +525,6 @@ class LinkedDataset(td.Dataset):
                 .with_columns(pl.col("index").list.sample(**kws))
                 .explode("index")["index"]
             )
-            if not inplace:
-                return self.select(idx)
             self.meta = self.meta[idx, :]
 
     def __len__(self):
@@ -579,6 +571,7 @@ class LinkedDataset(td.Dataset):
             return self.meta[col]
         return self.to_pl(True)[col]
 
+    @override
     def __getitem__(self, index) -> dict | Tensor | pl.Series:
         if isinstance(index, str):
             return self._get_col(index)
@@ -586,10 +579,8 @@ class LinkedDataset(td.Dataset):
         if self.level == "tokens":
             index = self._from_token_level_ids(index)
         df = self._get_x(index)
-        if self.level == "tokens" and self.return_all_tokens:
+        if self.level == "tokens":
             df = df.explode("token", "token_idx")
-        elif self.level == "tokens":
-            df = df.with_columns(pl.col("token").list.sample(n=1).list.first())
         can_convert = self.meta.select(pl.selectors.numeric()).columns
         converted = {col: df[col].to_torch() for col in can_convert}
         x = df[level].to_torch()
