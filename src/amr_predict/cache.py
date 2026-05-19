@@ -450,6 +450,7 @@ class LinkedDataset(td.Dataset):
     text_key: str = "sequence"
     max_len: int | None = None
     subseq_agg: BasicPoolings | None = BasicPoolings.MEAN
+    return_all_tokens: bool = field(init=False, default=True)
 
     @property
     def shape(self):
@@ -513,10 +514,15 @@ class LinkedDataset(td.Dataset):
             return expanded
         return pl.DataFrame()
 
-    def sample(self, by: str | None = None, **kws) -> None:
+    def sample(
+        self, by: str | None = None, inplace: bool = False, **kws
+    ) -> None | LinkedDataset:
         """Reduce the number of keys in the dataset"""
         if by is None:
-            self.meta = self.meta.sample(**kws)
+            idx = self.meta.with_row_index().select("index").sample(**kws)["index"]
+            if not inplace:
+                return self.select(idx)
+            self.meta = self.meta[idx]
         else:
             idx = (
                 self.meta.with_row_index()
@@ -525,6 +531,8 @@ class LinkedDataset(td.Dataset):
                 .with_columns(pl.col("index").list.sample(**kws))
                 .explode("index")["index"]
             )
+            if not inplace:
+                return self.select(idx)
             self.meta = self.meta[idx, :]
 
     def __len__(self):
