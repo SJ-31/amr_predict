@@ -785,6 +785,9 @@ class EmbeddingCorrelations:
         return pl.concat(dfs), dists
 
 
+# * Nearest neighbors
+
+
 @define
 class NeighborMetrics:
     """Helper class for running analyses on embeddings in NN space
@@ -833,8 +836,6 @@ class NeighborMetrics:
     n: int = field(
         init=False, default=Factory(lambda self: self.dset.shape[0], takes_self=True)
     )
-    neighbors: np.ndarray = field(init=False)
-    distances: np.ndarray = field(init=False)
     encoders: dict[str, LabelEncoder] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
@@ -846,34 +847,17 @@ class NeighborMetrics:
         logger.info("Kneighbor computation started")
         self.nn.fit(self.dset[self.dset.x_key][self.sampled_idx])
         logger.success("Kneighbors fitted")
-        self.distances, self.neighbors = self.nn.kneighbors()
 
-    def _random_neighbors(
-        self, x: pl.Series | np.ndarray, n: int | None = None
-    ) -> Tensor:
+    def _random_neighbors(self, x: np.ndarray, n: int | None = None) -> Tensor:
         n = n or self.n_resample
-        if isinstance(x, pl.Series):
-            c1 = (
-                x.sample(n, with_replacement=True, seed=self.seed)
-                .to_numpy()
-                .reshape(-1, 1)
-            )
-            nn = np.vstack(
-                [
-                    x.sample(self.n_neighbors, seed=self.seed).to_numpy()
-                    for _ in range(n)
-                ]
-            )
-        else:
-            indices = range(x.shape[0])
-            c1 = x[self.rng.choice(indices, n, replace=True), :].reshape(
-                -1, 1, x.shape[1]
-            )
-            nn = [
-                np.array(x[self.rng.choice(indices, self.n_neighbors), :])
-                for _ in range(n)
-            ]
-        return torch.from_numpy(np.hstack([c1, nn]))
+        indices = range(x.shape[0])
+        call = lambda: self.rng.choice(indices, self.n_neighbors + 1, replace=False)
+        if len(x.shape) == 1:
+            rands = [torch.tensor(x[call()]) for _ in range(n)]
+            return torch.vstack(rands)
+        nn = torch.stack([torch.tensor(x[call(), :]) for _ in range(n)])
+        assert len(nn.shape) == 3 and nn.shape[0] == n
+        return nn
 
     def _neighbor_prop(self, x: np.ndarray) -> float:
         """
@@ -1212,36 +1196,22 @@ class PerturbationMetrics:
                     )
         return pl.DataFrame(result)
 
-    # def _random_neighbor_score(self) ->
+    def _random_neighbor_score(self) -> dict:
+        return {
+            "natural": random_neighbor_score(
+                natural=self.natural, random=self.random, **self.rns_kws
+            ),
+            "perturbed": random_neighbor_score(
+                natural=self.perturbed, random=self.random, **self.rns_kws
+            ),
+        }
 
-
-def random_neighbor_score(
-    natural: LinkedDataset,
-    random: LinkedDataset,
-    n_neighbors: int = 10,
-    prop: float = 0.8,
-    iterations: int = 10,
-    seed: int | None = None,
-    nn_kws: dict | None = None,
-) -> float:
-    def _run_once() -> float:
-        n_subsampled = natural.sample(fraction=prop, seed=seed)
-        r_subsampled = random.sample(fraction=prop, seed=seed)
-        # 1 for random, 0 for natural
-        labels = [0] * len(n_subsampled) + [1] * len(r_subsampled)
-        nn: NearestNeighbors = NearestNeighbors(
-            **(nn_kws or {"n_neighbors": n_neighbors})
-        )
-        x = [
-            n_subsampled[n_subsampled.x_key].numpy(),
-            r_subsampled[r_subsampled.x_key].numpy(),
-        ]
-        nn.fit(np.vstack(x))
-        neighbors = nn.kneighbors(n_subsampled[n_subsampled.x_key].numpy())
-        dist = np.array([(labels[nn] == 1).sum() / n_neighbors for nn in neighbors])
-        return dist.mean()
-
-    return np.array([_run_once() for _ in range(iterations)]).mean()
+    def run(self) -> dict:
+        return {
+            "classifiability": self._measure_classifiability(),
+            "random_neighbor_score": pl.DataFrame(self._random_neighbor_score()),
+            "distance_correlation": self._distance_correlation(),
+        }
 
 
 # * Neighbor-preserving score
