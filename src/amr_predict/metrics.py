@@ -685,6 +685,7 @@ class EmbeddingCorrelations:
     anno_sep: str = ";"
     seed: int | None = None
     n_resample: int = 10_000
+    level: Literal["seqs", "tokens"] = "seqs"
     tree_file: Path | str | None = None
     n: int = field(
         init=False, default=Factory(lambda self: self.dset.shape[0], takes_self=True)
@@ -711,7 +712,7 @@ class EmbeddingCorrelations:
     def _dist_sequence(self, col: str, idx1, idx2) -> np.ndarray:
         first, sec = self.dset[col][idx1], self.dset[col][idx2]
         fn = SEQ_DISTANCE_METRICS[self.sequence_distance]
-        kws = self.seq_kws[self.sequence_distance]
+        kws = self.seq_kws.get(self.sequence_distance, {})
         result = [
             sks.Sequence(f).distance(
                 sks.Sequence(s), metric=lambda x, y: fn(x, y, **kws)

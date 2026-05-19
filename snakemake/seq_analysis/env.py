@@ -239,7 +239,7 @@ class PerturbationMetricsCfg:
 class EmbeddingCorrelationsCfg:
     columns: dict[str, ae.SeqCovariates]
     embedding_distance: Literal["cosine", "euclidean", "manhattan"]
-    sequence_distance: str = "hamming"
+    sequence_distance: str = "kmer"
     anno_sep: str = ";"
     seed: int | None = None
     n_resample: int = 10_000
@@ -316,6 +316,7 @@ class SnakeEnv:
             self.outdir / "analyses/nn_all.csv",
             self.outdir / "analyses/covariate_correlation_all.csv",
             self.outdir / "analyses/nn_comparison.csv",
+            self.outdir / "analyses/classifier_random_perf.csv",
             self.outdir / "analyses/classifiability.csv",
             self.outdir / "analyses/random_neighbor_score.csv",
             self.outdir / "analyses/distance_correlation.csv",

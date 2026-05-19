@@ -579,7 +579,6 @@ class LinkedDataset(td.Dataset):
             return self.meta[col]
         return self.to_pl(True)[col]
 
-    @override
     def __getitem__(self, index) -> dict | Tensor | pl.Series:
         if isinstance(index, str):
             return self._get_col(index)
@@ -587,8 +586,10 @@ class LinkedDataset(td.Dataset):
         if self.level == "tokens":
             index = self._from_token_level_ids(index)
         df = self._get_x(index)
-        if self.level == "tokens":
+        if self.level == "tokens" and self.return_all_tokens:
             df = df.explode("token", "token_idx")
+        elif self.level == "tokens":
+            df = df.with_columns(pl.col("token").list.sample(n=1).list.first())
         can_convert = self.meta.select(pl.selectors.numeric()).columns
         converted = {col: df[col].to_torch() for col in can_convert}
         x = df[level].to_torch()
