@@ -745,12 +745,12 @@ class EmbeddingCorrelations:
         """
         Compute correlation in batches
         """
-        pairs: np.ndarray = resample_pairs(
-            x=list(range(self.n)), n=self.n_resample, rng=self.seed
-        )
-        p1, p2 = pairs[:, 0], pairs[:, 1]
         if self.level == "tokens":
             self.dset.return_all_tokens = False
+        pairs: np.ndarray = resample_pairs(
+            x=list(range(self.dset.shape[0])), n=self.n_resample, rng=self.seed
+        )
+        p1, p2 = pairs[:, 0], pairs[:, 1]
         emb_dist = vecdist(
             self.dset[p1]["x"].numpy(),
             self.dset[p2]["x"].numpy(),
@@ -1100,22 +1100,35 @@ class PerturbationMetrics:
                         self.rng.choice(range(len(self.random)), size=shared.height)
                     ).alias("random")
                 )
+            if shared.height == 0:
+                raise ValueError("No ids are shared between the samples")
             self.idx_df = shared
 
-    def establish_baseline(
+    def find_baseline(
         self, split_kws: dict | None = None, n_repeats: int = 5
     ) -> pl.DataFrame:
+        """
+        Helper method to identify a baseline binary classifier (one that doesn't overfit to random labels)
+        """
         result = {"round": [], "mcc": []}
-        indices = np.array(range(self.natural.shape))
+        prev_setting = self.natural.return_all_tokens
+        if prev_setting:
+            self.natural.return_all_tokens = False
+        n_samples = self.natural.shape[0]
+        indices = np.array(range(n_samples))
         for i in range(n_repeats):
-            labels = self.rng.choice([0, 1], size=self.natural.shape, replace=True)
+            labels = self.rng.choice([0, 1], size=n_samples, replace=True)
             train_idx, test_idx = ms.train_test_split(indices, **(split_kws or {}))
             train = self.natural[train_idx][self.natural.x_key].numpy()
+            logger.debug("Shape of train {}, len ids {}", train.shape, len(train_idx))
             test = self.natural[test_idx][self.natural.x_key].numpy()
-            self.classifier.fit(train, y=labels[train])
+            self.classifier.fit(train, y=labels[train_idx])
             pred = self.classifier.predict(test)
             result["round"].append(i)
-            result["mcc"].append(matthews_corrcoef(y_true=labels[test], y_pred=pred))
+            result["mcc"].append(
+                matthews_corrcoef(y_true=labels[test_idx], y_pred=pred)
+            )
+        self.natural.return_all_tokens = prev_setting
         return pl.DataFrame(result)
 
     def _combine_dsets_balanced(
