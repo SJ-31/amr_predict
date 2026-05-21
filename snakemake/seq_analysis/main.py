@@ -312,6 +312,60 @@ def label_cooccurrence():
     with open(snakemake.output[1], "w") as f:
         yaml.safe_dump(f, pattern_stats)
 
+def find_baseline():
+    from amr_predict.metrics import PerturbationMetrics
+
+    metadata_expr = [
+        pl.lit(PARAMS[item]).alias(item)
+        for item in ("seqtype", "level", "embedding_method", "pooling")
+    ]
+
+    dfs = []
+    for cls_name, kws in ENV.find_baseline.classifiers.items():
+        M: PerturbationMetrics = PerturbationMetrics(
+            id_col=ENV.perturbation_metrics.id_col,
+            embedding_distance=ENV.perturbation_metrics.embedding_distance,
+            natural=load_embeddings(INPUT["natural"], "natural", "0"),
+            random=None,
+            perturbed=None,
+            level=PARAMS["level"],
+            seed=ENV.rng,
+            classifier_name=cls_name,
+            classifier_kws=(kws or {}),
+        )
+        res = M.find_baseline(
+            n_repeats=ENV.find_baseline.n_repeats, split_kws=ENV.find_baseline.split_kws
+        ).with_columns(*metadata_expr)
+        dfs.append(res)
+    pl.concat(dfs).write_csv(snakemake.output[0])
+
+
+def perturbation_metrics():
+    from amr_predict.metrics import PerturbationMetrics
+
+    rand_method = PARAMS["rand_method"]
+    if ENV.test:
+        ENV.perturbation_metrics.id_col = "dummy_id"
+    M: PerturbationMetrics = PerturbationMetrics(
+        natural=load_embeddings(INPUT["natural"], "natural", "0"),
+        perturbed=load_embeddings(INPUT["perturbed"], "perturbed", PARAMS["method"]),
+        random=load_embeddings(INPUT["random"], "randomized", rand_method),
+        level=PARAMS["level"],
+        seed=ENV.rng,
+        random_is_pairable="denovo" not in rand_method,
+        **asdict(ENV.perturbation_metrics),
+    )
+    meta = {k: PARAMS[k] for k in ("seqtype", "level", "pooling", "embedding_method")}
+    result: dict = {
+        "perturbation": PARAMS["method"],
+        "randomization": rand_method,
+        "result": M.run(),
+    }
+    result = result | meta
+    with open(snakemake.output[0], "wb") as f:
+        pickle.dump(result, f)
+
+
 
 # def label_clustering():
 #     label_df = read_tabular(snakemake.input[0]).unique()
