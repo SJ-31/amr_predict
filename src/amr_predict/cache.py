@@ -469,15 +469,20 @@ class LinkedDataset(td.Dataset):
         Generate key2token_idx with a new set of key->id mappings
         based on df
         """
-        df = df.with_columns(
-            pl.int_ranges(start=0, end=pl.col("token").list.len())
-            .list.sample(n=1)
-            .list.first()
-            .alias("SELECTED_TOKEN")
-        ).select(self.text_key, "SELECTED_TOKEN")
+        df = (
+            df.unique(self.text_key)
+            .with_columns(
+                pl.int_ranges(start=0, end=pl.col("token").list.len())
+                .list.sample(n=1)
+                .list.first()
+                .alias("SELECTED_TOKEN")
+            )
+            .select(self.text_key, "SELECTED_TOKEN")
+        )
         return df
 
     def _select_one_token(self, df: pl.DataFrame) -> pl.DataFrame:
+        n_rows = df.shape[0]
         if self.key2token_idx is None:
             self.key2token_idx = self._get_key2token_idx(df)
         unseen: pl.DataFrame = df.filter(
@@ -487,11 +492,13 @@ class LinkedDataset(td.Dataset):
             self.key2token_idx = pl.concat(
                 [self.key2token_idx, self._get_key2token_idx(unseen)]
             )
-        return (
-            df.join(self.key2token_idx, on=self.text_key)
+        joined = (
+            df.join(self.key2token_idx, on=self.text_key, how="left", validate="m:1")
             .with_columns(pl.col("token").list.get(pl.col("SELECTED_TOKEN")))
             .drop("SELECTED_TOKEN")
         )
+        assert joined.shape[0] == n_rows
+        return joined
 
     def _retrieve_with_max_len(self, df: pl.DataFrame | None = None) -> pl.DataFrame:
         """
@@ -499,8 +506,14 @@ class LinkedDataset(td.Dataset):
         the embeddings of their subsequences
         This method assumes that the cache was generated while accounting for the given
         max length
+
+        Notes
+        -----
+        This method returns more rows if level == "tokens" and
+        return_all_tokens is True
         """
         df = df if df is not None else self.meta
+        old_height = df.shape[0]
         retrieve_kws = {"level": self.level, "as_array": True, "key_col": self.text_key}
         if (
             self.max_len
@@ -518,6 +531,9 @@ class LinkedDataset(td.Dataset):
                 id_col="__id",
                 keep_cols=True,
             )
+            # Add rows corresponding to subsequences of the original
+            # query strings that were split to accomodate for the
+            # length restrictions
             cache_lookup = self.cache.retrieve(
                 expanded, **(retrieve_kws | {"key_col": "__key"})
             )
@@ -532,20 +548,34 @@ class LinkedDataset(td.Dataset):
                     tmp.append(cur_df)
                 expanded = pl.concat(tmp)
             else:  # Adjust token indices
-                kept_cols.extend(["token", "token_idx"])
+                token_cols = ["token", "token_idx"]
+                kept_cols.extend(token_cols)
                 if "token_pr" in cache_lookup.columns:
                     kept_cols.append("token_pr")
                 expanded = cache_lookup.with_columns(
-                    (
-                        pl.col("token_idx") + (pl.col("__id_subseq") * self.max_len)
-                    ).alias("token_idx")
-                ).select(kept_cols)
+                    pl.col("token_idx")
+                    + (pl.col("__id_subseq") * self.max_len).alias("token_idx")
+                )
+                if not self.return_all_tokens:
+                    # Group subsequences together
+                    as_first = [
+                        col
+                        for col in expanded.columns
+                        if col not in token_cols and col != "__id"
+                    ]
+                    expanded = expanded.group_by("__id").agg(
+                        pl.col(as_first).first(), pl.col(token_cols).list.explode()
+                    )
+                expanded = expanded.select(kept_cols)
         else:
             expanded = None
         if not df.is_empty():
             embeddings = self.cache.retrieve(df, **retrieve_kws)
             if expanded is not None:
                 embeddings = pl.concat([embeddings, expanded])
+            assert (
+                embeddings.shape[0] == old_height
+            ), f"New height {embeddings.shape[0]} doesn't match old {old_height}"
             return embeddings
         elif expanded is not None and not expanded.is_empty():
             return expanded
