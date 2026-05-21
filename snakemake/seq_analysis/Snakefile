@@ -192,7 +192,7 @@ use rule base as perturbation_metrics with:
         _seqs_p=f"{DATASETS}/sequences/{{seqtype}}-perturbed-{{method}}",
         _seqs_r=f"{DATASETS}/sequences/{{seqtype}}-randomized-{{rand_method}}",
     params:
-        rand_method=get_wc("randomization_method"),
+        rand_method=get_wc("rand_method"),
     output:  # hidden file to summarize later
         f"{env.outdir}/analyses/.perturbation_tmp/{{seqtype}}_{{level}}/{{method}}-{{rand_method}}-{{embedding_method}}-{{pooling}}.pkl",
 
@@ -272,6 +272,22 @@ use rule base as collect_embedding_metrics with:
         corr_all=env.outdir / "analyses/covariate_correlation_all.csv",
         nn_comparison=env.outdir / "analyses/nn_comparison.csv",
         nn_all=env.outdir / "analyses/nn_all.csv",
+
+
+use rule base as collect_baseline with:
+    input:
+        filter(
+            lambda x: x.endswith(".csv"),
+            expand_nested(
+                all_emb_metrics,
+                prefix=f"{env.outdir}/analyses/.perturbation_baseline_tmp",
+                _0="/",
+                _1="-",
+                _2="",
+            ),
+        ),
+    output:
+        env.outdir / "analyses/classifier_random_perf.csv",
 
 
 # rule sae_metrics:

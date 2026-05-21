@@ -117,6 +117,8 @@ def load_embeddings(
     cache = EmbeddingCache(dir=cache_path)
     seqs: Path = dataset_path / "sequences" / f"{seqtype}-{variation}-{vmethod}"
     seq_df: pl.DataFrame = load_from_disk(seqs).to_polars()
+    if ENV.test:
+        seq_df = seq_df.with_row_index(name="dummy_id")
     lm = ENV.embedding_methods[SeqTypes[seqtype.upper()]][embedding_method].model
     pooling = BasicPoolings[pooling] if level == "seqs" else None
     if with_metadata and ENV.metadata.file.exists():
@@ -310,7 +312,76 @@ def label_cooccurrence():
         snakemake.output[0]
     )
     with open(snakemake.output[1], "w") as f:
-        yaml.safe_dump(f, pattern_stats)
+        yaml.safe_dump(pattern_stats, f)
+
+
+def embedding_metrics():
+    analysis_group = PARAMS["analysis"]
+    assert analysis_group in {"nn", "corr"}
+    run_kws = {}
+    if analysis_group == "nn":
+        from amr_predict.metrics import NeighborMetrics
+
+        obj_fn = NeighborMetrics
+        kws = asdict(ENV.neighbor_metrics)
+        run_kws["with_randomization"] = True
+    else:
+        from amr_predict.metrics import EmbeddingCorrelations
+
+        obj_fn = EmbeddingCorrelations
+        kws = asdict(ENV.embedding_correlations)
+        kws["level"] = PARAMS["level"]
+
+    dset = load_embeddings(
+        cache_completion_file=INPUT[0],
+        variation="natural",
+        vmethod="0",
+        with_metadata=True,
+    )
+    kws["seed"] = ENV.rng
+    obj = obj_fn(dset, **kws)
+    test_results, dist = obj.run(**run_kws)
+    metadata_expr = []
+    dist_dict = {"result": dist}
+    for item in ("seqtype", "level", "embedding_method", "pooling", "analysis"):
+        metadata_expr.append(pl.lit(PARAMS[item]).alias(item))
+        dist_dict[item] = PARAMS[item]
+    test_results = test_results.with_columns(*metadata_expr)
+    test_results.write_csv(snakemake.output[0])
+    with open(snakemake.output[1], "wb") as f:
+        pickle.dump(dist_dict, f)
+
+
+def collect_embedding_metrics():
+    corr_all, nn_all, dist_dfs = [], [], []
+    for path in (Path(i) for i in INPUT):
+        if path.suffix == ".csv":
+            df: pl.DataFrame = pl.read_csv(path)
+            if (df["analysis"] == "nn").all():
+                append_to = nn_all
+            else:
+                append_to = corr_all
+        else:
+            append_to = dist_dfs
+            with open(path, "rb") as f:
+                dist = pickle.load(f)
+                df = pl.concat(
+                    [
+                        pl.DataFrame({"metric": k, "value": v})
+                        for k, v in dist["result"].items()
+                    ],
+                    how="diagonal_relaxed",
+                ).with_columns(
+                    *[pl.lit(v).alias(k) for k, v in dist.items() if k != "result"]
+                )
+        append_to.append(df)
+    pl.concat(nn_all, how="diagonal_relaxed").write_csv(snakemake.output["nn_all"])
+    pl.concat(corr_all, how="diagonal_relaxed").write_csv(snakemake.output["corr_all"])
+
+    # The distribution stores embedding distributions
+    # TODO: add graphing and testing to compare distributions
+    Path(snakemake.output["nn_comparison"]).touch()
+
 
 def find_baseline():
     from amr_predict.metrics import PerturbationMetrics
@@ -340,6 +411,14 @@ def find_baseline():
     pl.concat(dfs).write_csv(snakemake.output[0])
 
 
+def collect_baseline():
+    dfs = [
+        pl.read_csv(input).with_columns(pl.col("pooling").cast(pl.String))
+        for input in INPUT
+    ]
+    pl.concat(dfs, how="diagonal_relaxed").write_csv(snakemake.output[0])
+
+
 def perturbation_metrics():
     from amr_predict.metrics import PerturbationMetrics
 
@@ -366,9 +445,22 @@ def perturbation_metrics():
         pickle.dump(result, f)
 
 
+def collect_perturbation_metrics():
+    to_combine = defaultdict(list)
+    for file in INPUT:
+        with open(file, "rb") as f:
+            data: dict = pickle.load(f)
+        meta_expr = [pl.lit(v).alias(k) for k, v in data.items() if k != "result"]
+        for k, v in data["result"].items():
+            v: pl.DataFrame
+            to_combine[k].append(v.with_columns(*meta_expr))
+    for k, v in to_combine.items():
+        df = pl.concat(v)
+        df.write_csv(snakemake.output[k])
+
 
 # def label_clustering():
-#     label_df = read_tabular(snakemake.input[0]).unique()
+#     label_df = read_tabular(INPUT[0]).unique()
 #     binary = to_binary_form(label_df, sample_col=SCOL, label_col=LCOL, sep=LABEL_SEP)
 #     labels = binary.columns
 #     linkage = fastcluster.linkage_vector(
