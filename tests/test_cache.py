@@ -103,10 +103,12 @@ def test_cache1_only_tk(make_default_cache):
     print(cache.to_pl().collect())
 
 
-@pytest.mark.parametrize("level", ["tokens", "seqs"])
-def test_single_tokens(level, make_default_cache):
+@pytest.mark.parametrize(
+    "level,max_len", [("tokens", None), ("seqs", None), ("tokens", 3)]
+)
+def test_single_tokens(level, max_len, make_default_cache):
     cache: EmbeddingCache
-    cache, words = make_default_cache(mode="both")
+    cache, words = make_default_cache(mode="both", max_len=max_len)
     if level == "tokens":
         logger.info("words {}", words)
         logger.info("cache {}", cache.to_pl().collect())
@@ -114,6 +116,7 @@ def test_single_tokens(level, make_default_cache):
     ds = LinkedDataset(
         meta=df,
         cache=cache,
+        max_len=max_len,
         text_key="key",
         x_key="x",
         subseq_agg=BasicPoolings.MEAN,

@@ -65,14 +65,16 @@ def multinomial_setup(
 
 
 @pytest.mark.parametrize(
-    "pairable,ssprop",
+    "pairable,ssprop,level",
     [
-        (False, None),
-        (True, None),
-        (False, {"natural": 0.5, "random": 0.8, "perturbed": 0.5}),
+        (False, None, "seqs"),
+        (True, None, "seqs"),
+        (False, {"natural": 0.5, "random": 0.8, "perturbed": 0.5}, "seqs"),
+        (False, {"natural": 0.5, "random": 0.8, "perturbed": 0.5}, "tokens"),
+        (False, None, "tokens"),
     ],
 )
-def test_perturbation_metrics(pairable, ssprop, random_linked_dset):
+def test_perturbation_metrics(pairable, ssprop, level, random_linked_dset):
     from amr_predict.metrics import PerturbationMetrics
 
     n = 1000
@@ -85,6 +87,7 @@ def test_perturbation_metrics(pairable, ssprop, random_linked_dset):
         random=random,
         perturbed=pert,
         random_is_pairable=pairable,
+        level=level,
         id_col="id",
         embedding_distance="euclidean",
         subsample_prop=ssprop,
