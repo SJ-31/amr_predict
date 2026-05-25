@@ -745,11 +745,11 @@ class EvalSAE:
         """
         occurrences: pl.LazyFrame = to_binary_form(
             labels, label_col=label_col, sample_col=sample_col, sep=label_sep
-        ).lazy()
-        occur_vals: Tensor = (
-            occurrences.collect().transpose().to_torch().to(self.acts_dtype)
         )
-        sum_acts = torch.matmul(occur_vals, self.acts)
+        # occurences is shape G x n where G is the total number of labels
+        occur_vals: Tensor = occurrences.transpose().to_torch().to(self.acts_dtype)
+        sum_acts = torch.matmul(occur_vals / occur_vals.sum(dim=0), self.acts)
+
         return self._compute_metrics(
             anno_occurence=occur_vals,
             labels=occurrences.collect_schema().names(),
