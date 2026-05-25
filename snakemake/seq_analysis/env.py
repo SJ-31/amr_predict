@@ -178,6 +178,14 @@ class SaeCfg:
 
 
 @define
+class EvalSAECfg:
+    threshold: float
+    top_k: int
+    top_k_by: str = "activation_prop"
+    # drop: dict  = field(default )
+
+
+@define
 class WriteTrainingIndices:
     test_size: float = 0.4
     shuffle: bool = True
@@ -283,6 +291,7 @@ class SnakeEnv:
     embedding_correlations: EmbeddingCorrelationsCfg | None
     perturbation_metrics: PerturbationMetricsCfg | None
     find_baseline: FindBaseline | None
+    eval_sae: EvalSAECfg
 
     # Misc rule config
     slurm_time_limit: str = "18-00:00:00"

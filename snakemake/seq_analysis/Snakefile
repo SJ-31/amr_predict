@@ -169,6 +169,13 @@ use rule base as get_activations with:
         ),
 
 
+use rule base as sae_label_eval with:
+    input:
+        f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}",
+    output:
+        f"{env.outdir}/analyses/.sae_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pkl",
+
+
 use rule base as embedding_metrics with:
     input:
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
@@ -288,6 +295,28 @@ use rule base as collect_baseline with:
         ),
     output:
         env.outdir / "analyses/classifier_random_perf.csv",
+
+
+sae_output = [
+    Path(p).with_name(f"{Path(p).stem}-{sname}.pkl")
+    for p in expand_nested(
+        all_emb_metrics,
+        prefix=f"{env.outdir}/analyses/.sae_tmp",
+        _0="/",
+        _1="-",
+        _2="-",
+        _3="-",
+        _4="",
+    )
+    for sname in env.saes["custom"].keys()
+]
+
+
+use rule base as collect_sae_label_evals with:
+    input:
+        sae_output,
+    output:
+        env.outdir / "analyses/sae_label_evaluation.csv",
 
 
 # rule sae_metrics:
