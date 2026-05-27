@@ -298,7 +298,7 @@ use rule base as collect_baseline with:
 
 
 sae_output = [
-    Path(p).with_name(f"{Path(p).stem}-{sname}.pkl")
+    Path(p).with_name(f"{Path(p).stem}{sname}.pkl")
     for p in expand_nested(
         all_emb_metrics,
         prefix=f"{env.outdir}/analyses/.sae_tmp",

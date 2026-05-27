@@ -326,6 +326,7 @@ class SnakeEnv:
             self.outdir / "analyses/covariate_correlation_all.csv",
             self.outdir / "analyses/nn_comparison.csv",
             self.outdir / "analyses/classifier_random_perf.csv",
+            self.outdir / "analyses/sae_label_evaluation.csv",
             self.outdir / "analyses/classifiability.csv",
             self.outdir / "analyses/random_neighbor_score.csv",
             self.outdir / "analyses/distance_correlation.csv",
