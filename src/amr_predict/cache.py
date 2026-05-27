@@ -573,9 +573,10 @@ class LinkedDataset(td.Dataset):
             embeddings = self.cache.retrieve(df, **retrieve_kws)
             if expanded is not None:
                 embeddings = pl.concat([embeddings, expanded])
-            assert (
-                embeddings.shape[0] == old_height
-            ), f"New height {embeddings.shape[0]} doesn't match old {old_height}"
+            if not self.return_all_tokens:
+                assert (
+                    embeddings.shape[0] == old_height
+                ), f"New height {embeddings.shape[0]} doesn't match old {old_height}"
             return embeddings
         elif expanded is not None and not expanded.is_empty():
             return expanded
