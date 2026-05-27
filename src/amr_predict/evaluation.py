@@ -700,7 +700,7 @@ class EvalSAE:
         ----------
         anno_occurence : Tensor
             Binary matrix of shape n_concepts x n_samples, where the i,j entry is
-            1 if sammple j has concept i
+            1 if sample j has concept i
         """
         pred_active = (self.acts >= self.threshold).to(self.acts_dtype)
         pred_dead = torch.where(pred_active == 1, 0, 1).to(self.acts_dtype)
@@ -772,9 +772,12 @@ def to_binary_form(
             aggregate_function="first",
         )
         .fill_null(0)
-        .drop(sample_col)
     )
-    return result
+    if result.shape[0] != df.shape[0]:
+        result = df.select(sample_col).join(
+            result, on=sample_col, how="left", validate="m:1"
+        )
+    return result.drop(sample_col)
 
 
 # * Utility functions
