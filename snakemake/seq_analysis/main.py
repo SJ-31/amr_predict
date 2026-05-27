@@ -4,6 +4,7 @@ import os
 import pickle
 import sys
 from collections import defaultdict
+from collections.abc import Callable
 
 import numpy as np
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -22,7 +23,7 @@ import yaml
 from amr_predict.cache import EmbeddingCache, LinkedDataset, expand_max_len
 from amr_predict.embedding import EmbeddingModels, ModelEmbedder, embedding_size
 from amr_predict.enums import BasicPoolings, SeqTypes
-from amr_predict.evaluation import pami_wrapper, to_binary_form
+from amr_predict.evaluation import EvalSAE, SaeMetrics, pami_wrapper, to_binary_form
 from amr_predict.models import BaseNN
 from amr_predict.random import Perturber, Randomizer
 from amr_predict.sae import BatchTopK
@@ -185,6 +186,38 @@ def get_activations():
         samples = test_portion["id"][:]
         act_dset = Dataset.from_dict({"id": samples, "activation": activations})
         act_dset.save_to_disk(snakemake.output[0])
+
+def sae_label_eval():
+    metadata = read_tabular(ENV.metadata.file).unique(ENV.metadata.sample_col)
+    dataset = load_from_disk(INPUT[0]).with_format("torch", dtype=torch.float32)
+    size = dataset["activation"][:].shape[1]
+    dataset: pl.DataFrame = dataset.to_polars().cast(
+        {"activation": pl.Array(pl.Float32, size)}
+    )
+    dataset = dataset.join(
+        metadata,
+        how="left",
+        left_on="id",
+        right_on=ENV.metadata.sample_col,
+        validate="m:1",
+    )
+    eva = EvalSAE(
+        acts=dataset["activation"].to_torch(), threshold=ENV.eval_sae.threshold
+    )
+    metrics = eva.score_latents(
+        labels=dataset.drop("activation"),
+        label_col=ENV.metadata.label_col,
+        sample_col="id",
+        label_sep=ENV.metadata.label_sep,
+    )
+    result = {
+        item: PARAMS[item]
+        for item in ("seqtype", "level", "embedding_method", "pooling", "sae")
+    }
+    result["metrics"] = metrics
+    with open(snakemake.output[0], "wb") as f:
+        pickle.dump(result, f)
+
 
 
 def write_training_indices(token_level: bool):
