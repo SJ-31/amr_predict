@@ -20,12 +20,11 @@ import polars as pl
 import sklearn.model_selection as ms
 import torch
 import yaml
-from amr_predict.cache import EmbeddingCache, LinkedDataset, expand_max_len
-from amr_predict.embedding import EmbeddingModels, ModelEmbedder, embedding_size
+from amr_predict.cache import EmbeddingCache, LinkedDataset
+from amr_predict.embedding import embedding_size
 from amr_predict.enums import BasicPoolings, SeqTypes
-from amr_predict.evaluation import EvalSAE, SaeMetrics, pami_wrapper, to_binary_form
+from amr_predict.evaluation import pami_wrapper, to_binary_form
 from amr_predict.models import BaseNN
-from amr_predict.random import Perturber, Randomizer
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
 from amr_predict.utils import ModuleConfig, read_tabular
@@ -34,7 +33,6 @@ from beartype import beartype
 from Bio import SeqIO
 from datasets import load_from_disk
 from datasets.arrow_dataset import Dataset
-from lightning.pytorch.loggers import WandbLogger
 from loguru import logger
 from scipy.cluster.hierarchy import cut_tree
 from torch.utils.data import DataLoader
@@ -188,6 +186,8 @@ def get_activations():
         act_dset.save_to_disk(snakemake.output[0])
 
 def sae_label_eval():
+    from amr_predict.evaluation import EvalSAE
+
     metadata = read_tabular(ENV.metadata.file).unique(ENV.metadata.sample_col)
     dataset = load_from_disk(INPUT[0]).with_format("torch", dtype=torch.float32)
     size = dataset["activation"][:].shape[1]
@@ -256,6 +256,8 @@ def write_seq_training_indices():
 
 
 def train_sae():
+    from lightning.pytorch.loggers import WandbLogger
+
     cache_path: Path = Path(INPUT[0]).with_suffix("")
     rconfig = ENV.train_sae
     train_kws = rconfig.trainer.to_kws()
@@ -292,6 +294,8 @@ def train_sae():
 
 
 def make_seq_dataset():
+    from amr_predict.random import Perturber, Randomizer
+
     dfs: pl.DataFrame = []
     seqtype = seqtype_from_params()
     for spec in ENV.fastas[seqtype]:
@@ -511,6 +515,9 @@ def collect_perturbation_metrics():
 
 
 def get_embeddings():
+    from amr_predict.cache import expand_max_len
+    from amr_predict.embedding import EmbeddingModels, ModelEmbedder
+
     df: pl.DataFrame = load_from_disk(INPUT[0]).to_polars()
     spec = ENV.embedding_methods[seqtype_from_params()][PARAMS["embedding_method"]]
     model: EmbeddingModels = spec.model
