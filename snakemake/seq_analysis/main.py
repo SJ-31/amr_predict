@@ -161,6 +161,38 @@ def lookup_sae(spec: str, act_size: int) -> BaseNN:
     return cls(cfg=cfg, x_key="x")
 
 
+def collect_from_pkl(result_handler: Callable[[dict], pl.DataFrame]) -> pl.DataFrame:
+    """Helper function to aggregate metrics stored in individual
+    pickle files into a dataframe.
+
+    Parameters
+    ----------
+    result_handler : Callable
+        Function that receives the pickled dictionary and produces the initial
+        result dataframe for each file. This function
+        is expected to remove the key containing the results from the dictionary
+
+    Returns
+    -------
+    DataFrame of results
+
+    Notes
+    -----
+    This function reads directly from snakemake input, and each file
+    must be pickle file containing a dictionary of results and rule metadata
+    """
+    result = []
+    for file in INPUT:
+        with open(file, "rb") as f:
+            obj: dict = pickle.load(f)
+            df: pl.DataFrame = result_handler(obj)
+            meta_expr = [pl.lit(k).alias(v) for k, v in obj.items()]
+            df = df.with_columns(*meta_expr)
+            result.append(df)
+    combined = pl.concat(result, how="diagonal_relaxed")
+    return combined
+
+
 # * Rules
 
 
@@ -184,6 +216,14 @@ def get_activations():
         samples = test_portion["id"][:]
         act_dset = Dataset.from_dict({"id": samples, "activation": activations})
         act_dset.save_to_disk(snakemake.output[0])
+        loss_out = {
+            it: PARAMS[it]
+            for it in ("seqtype", "level", "embedding_method", "pooling", "sae")
+        }
+        loss_out["loss"] = sae.training_step({sae.x_key: predict_on}, None)
+        with open(snakemake.output[1], "wb") as f:
+            pickle.dump(loss_out, f)
+
 
 def sae_label_eval():
     from amr_predict.evaluation import EvalSAE
@@ -218,6 +258,23 @@ def sae_label_eval():
     with open(snakemake.output[0], "wb") as f:
         pickle.dump(result, f)
 
+
+def collect_sae_label_evals():
+    import polars.selectors as cs
+
+    combined = collect_from_pkl(
+        lambda x: x.pop("metrics")
+        .report(k=ENV.eval_sae.top_k, by=ENV.eval_sae.top_k_by)
+        .explode(cs.array(), cs.list())
+    )  # WARNING: [2026-05-28 Thu] this is exceptionally slow
+    # and produces millions of rows if top_k is too high
+
+    combined.write_csv(snakemake.output[0])
+
+
+def collect_sae_perf():
+    combined = collect_from_pkl(lambda x: pl.DataFrame(x.pop("loss")))
+    combined.write_csv(snakemake.output[0])
 
 
 def write_training_indices(token_level: bool):
