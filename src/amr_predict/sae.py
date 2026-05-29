@@ -92,18 +92,21 @@ class BatchTopK(BaseNN):
         output = self.m.forward(x)
         loss = output["loss"]
         # `loss` is the sum of l2_loss, l1_loss and aux_loss
-        self.log("train_loss", loss)
-        self._try_cache_to("train_loss", loss)
-        self.update_threshold(output["feature_acts"])
-        self.log_dict(
-            {
-                k: v
-                for k, v in output.items()
-                if k not in {"sae_out", "loss", "feature_acts", "num_dead_features"}
-            }
-        )
-        if isinstance(self.logger, WandbLogger):
-            self.logger.log_metrics({"num_dead_features": output["num_dead_features"]})
-        else:
-            self.log("num_dead_features", output["num_dead_features"])
+        if self.training:
+            self.log("train_loss", loss)
+            self._try_cache_to("train_loss", loss)
+            self.update_threshold(output["feature_acts"])
+            self.log_dict(
+                {
+                    k: v
+                    for k, v in output.items()
+                    if k not in {"sae_out", "loss", "feature_acts", "num_dead_features"}
+                }
+            )
+            if isinstance(self.logger, WandbLogger):
+                self.logger.log_metrics(
+                    {"num_dead_features": output["num_dead_features"]}
+                )
+            else:
+                self.log("num_dead_features", output["num_dead_features"])
         return loss
