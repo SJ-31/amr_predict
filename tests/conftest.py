@@ -108,7 +108,7 @@ def random_linked_dset(tmp_path, rng, custom_cols: dict[str, Callable] | None = 
 
         def embed_fn(values) -> tuple[str, torch.Tensor, torch.Tensor]:
             for val in values:
-                yield (val, torch.randn((8, dim)), torch.randn(len(val)))
+                yield (val, torch.randn((8, dim)), torch.randn(rng.integers(9) + 1))
 
         dct = {
             "id": range(n),

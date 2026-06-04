@@ -158,6 +158,10 @@ def test_max_by_lab():
     ).all()
 
 
+def test_compute_metrics():
+    acts = ""
+
+
 def test_score_latents():
     acts = torch.tensor(
         [
