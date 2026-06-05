@@ -805,8 +805,9 @@ class NeighborMetrics:
         If set to None, don't subsample and use every sample as a reference point
 
     n_resample : int
-        - Number of resamples for permutation test
-        -
+        - Number of resamples for resampling tests
+    n_resample_chi_square : int
+        - Number of samples taken for neighbors chi square test
     """
 
     dset: LinkedDataset
@@ -827,6 +828,9 @@ class NeighborMetrics:
     n_neighbors: int = 8
     nn_kws: dict = field(factory=dict)
     n_resample: int = 10_000
+    n_resample_chi_square: int = field(
+        default=Factory(lambda self: self.n_resample // 2, takes_self=True),
+    )
     sampled_idx: np.ndarray = field(init=False, default=None)
     nn: NearestNeighbors = field(
         default=Factory(
@@ -904,67 +908,63 @@ class NeighborMetrics:
         # Array of shape: (samples, 1 + n_neighbors)
         return encoder, category_mat, cats.to_torch()
 
-    def _neighbors_chi_square_test(
-        self,
-        all_categories: Tensor,
-        neighbor_idx: np.ndarray,
-        ref_point_idx: np.ndarray,
+    def _neighbors_chi_square(
+        self, indices, distances: np.ndarray, all_categories: Tensor
     ) -> tuple[pl.DataFrame, pl.DataFrame]:
         """
-        Perform a chi-square GOF test of the null hypothesis that the neighbor
-        distribution for reference points of belonging to a given category
-        is no different to the distribution of categories in the overall data
+        Perform the chi-square test on a randomly-selected set of nearest
+        neighbors, testing the null hypothesis that the category distribution
+        of nearest neighbors a given point is no
+        different to the distribution of categories in the overall data
 
-        Since not enough neighbors are obtained per observation
-        for the test to be well-approximated, this routine sums the neighbors
-        across reference points for a given category.
-        Thus the number of tests carried out is equal to the number of categories
-        in the dataset
+        The test is repeated with a new point n_resample times and the
+        p_values are combined conservatively
         """
-        expected_prop = pl.Series(all_categories).value_counts(
-            normalize=True, sort=True
+        expected_freq = pl.Series(all_categories).value_counts(normalize=True)
+        median_dist = np.median(distances)
+        results = {"statistic": [], "p_value": []}
+        selection = self.rng.choice(
+            indices, size=self.n_resample_chi_square, replace=True
         )
-        results = {"category": [], "p_value": [], "statistic": []}
-        with_neighbors = np.hstack(
-            [np.array(all_categories[ref_point_idx]).reshape(-1, 1), neighbor_idx]
+        for x in self.dset[self.dset.x_key][selection, :]:
+            dist_scaling = 2
+            while True:  # Ensure that there are enough neighbors
+                # to meet the assumptions of chi-square
+                _, tmp = self.nn.radius_neighbors(
+                    [x], radius=median_dist * dist_scaling
+                )
+                neighbors = tmp[0]
+                n = len(neighbors)
+                cats = all_categories[neighbors]
+                aligned = (
+                    expected_freq.with_columns(expected=pl.col("proportion") * n)
+                    .join(pl.Series(cats).value_counts(), on="", how="left")
+                    .fill_null(0)
+                )
+                if (aligned["count"] >= 10).all():
+                    chi = stats.chisquare(aligned["count"], aligned["expected"])
+                    results["statistic"].append(chi.statistic)
+                    results["p_value"].append(chi.pvalue)
+                    break
+                else:
+                    dist_scaling += 1
+                    continue
+        adjusted = min(len(results["p_value"]) * min(results["p_value"]), 1)
+        df = pl.DataFrame(
+            {
+                "mean": np.mean(results["statistic"]),
+                "std": np.std(results["statistic"]),
+                "median": np.median(results["statistic"]),
+                "iqr": stats.iqr(results["statistic"]),
+                "p_adj": adjusted,
+            }
         )
-        for cat in expected_prop[""]:
-            cur = with_neighbors[with_neighbors[:, 0] == cat, 1:]
-            present_cats = all_categories[np.unique(cur[:, 1:].flatten())].tolist()
-            n = len(present_cats)
-            counter = Counter(present_cats)
-            aligned = expected_prop.with_columns(
-                expected=pl.col("proportion") * n,
-                observed=pl.col("").map_elements(
-                    lambda x: counter.get(x, 0), return_dtype=pl.Int64
-                ),
-            )
-            test = stats.chisquare(aligned["observed"], aligned["expected"])
-            results["p_value"].append(test.pvalue)
-            results["statistic"].append(test.statistic)
-            results["category"].append(cat)
-        p_adj = min(len(results["p_value"]) * min(results["p_value"]), 1)
-        full = pl.DataFrame(results).with_columns(pl.lit(p_adj).alias("p_adj"))
-        summary = (
-            full.with_columns(
-                mean=pl.mean("statistic"),
-                std=pl.std("statistic"),
-                median=pl.median("statistic"),
-                iqr=pl.lit(stats.iqr(full["statistic"])),
-            )
-            .drop(["p_value", "category"])
-            .head(n=1)
-        )
-        return full, summary
+        return df, pl.DataFrame(results)
 
     def _compute_category_metrics(
         self, indices, category_col: str, randomize: bool = False
     ) -> tuple[pl.DataFrame, pl.DataFrame, McTestResult]:
-        _, neighbors = self.nn.kneighbors(self.dset[self.dset.x_key][indices])
-        # For debugging
-        neighbors = self.rng.choice(
-            indices, size=(len(indices), self.n_neighbors), replace=True
-        )
+        distances, neighbors = self.nn.kneighbors(self.dset[self.dset.x_key][indices])
         encoder, category_mat, cats = self._get_category_matrix(
             self.dset[category_col],
             neighbors,
@@ -973,8 +973,8 @@ class NeighborMetrics:
             seed=self.seed,
         )
         self.encoders[category_col] = encoder
-        n_prop_chi_square, n_prop_chi_square_summary = self._neighbors_chi_square_test(
-            all_categories=cats, ref_point_idx=indices, neighbor_idx=neighbors
+        n_prop_chi_square_summary, n_prop_chi_square = self._neighbors_chi_square(
+            indices=indices, distances=distances, all_categories=cats
         )
         impurity_result = generalized_mc_test(
             category_mat,

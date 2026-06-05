@@ -159,6 +159,7 @@ def test_neighbor_metrics_rand(random_linked_dset):
         category_cols=["c1", "c2"],
         anno_cols=["a1"],
         n_resample=10_000,
+        n_resample_chi_square=1000,
         n_neighbors=10,
     )
     df, dist = met.run(with_randomization=True)
