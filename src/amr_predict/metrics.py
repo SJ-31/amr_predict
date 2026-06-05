@@ -83,6 +83,47 @@ def random_neighbor_score(
     return np.array([_run_once() for _ in range(iterations)]).mean()
 
 
+def compare_category_distribution(
+    data: Tensor,
+    n_resample: int,
+    all_categories: Tensor,
+    metric: str = "euclidean",
+    rng: None | Generator = None,
+    alternative: str = "less",
+) -> dict:
+    """
+    Compare the distribution of distances between points of the same
+    category and randomly selected categories
+
+    Parameters
+    ----------
+    all_categories : Tensor
+        Categories corresponding to the points in `data`
+
+    """
+    rng = rng or np.random.default_rng()
+    assert (
+        len(all_categories) == data.shape[0]
+    ), "Number of points in categories and data must match"
+    n = len(all_categories)
+    nulls = resample_pairs(range(n), n=n_resample, rng=rng, only_indices=True)
+    null_a, null_b = nulls[:, 0], nulls[:, 1]
+    category2indices: dict = dict(
+        pl.DataFrame({"cat": all_categories})
+        .with_row_index()
+        .group_by("cat")
+        .agg(pl.col("index"))
+        .iter_rows()
+    )
+    a = rng.choice(range(n), size=n_resample, replace=True)
+    b = [rng.choice(category2indices[all_categories[x]], size=1).item() for x in a]
+    category_dist = vecdist(data[a, :], data[b, :], metric=metric)
+    null_dist = vecdist(data[null_a, :], data[null_b, :], metric=metric)
+    test = stats.ks_2samp(category_dist, null_dist, alternative=alternative)
+    df = pl.DataFrame({"statistic": test.statistic, "p_value": test.pvalue})
+    return {"test": df, "null": null_dist, "observed": category_dist}
+
+
 def multitask_acc(
     predictions: Tensor | np.ndarray,
     y_true: Tensor | DataLoader | Dataset | np.ndarray,
@@ -844,6 +885,7 @@ class NeighborMetrics:
         init=False, default=Factory(lambda self: self.dset.shape[0], takes_self=True)
     )
     encoders: dict[str, LabelEncoder] = field(init=False, factory=dict)
+    embedding_distance: str = "euclidean"
 
     def __attrs_post_init__(self):
         if self.subsample is None:
@@ -909,7 +951,7 @@ class NeighborMetrics:
         return encoder, category_mat, cats.to_torch()
 
     def _neighbors_chi_square(
-        self, indices, distances: np.ndarray, all_categories: Tensor
+        self, indices, all_categories
     ) -> tuple[pl.DataFrame, pl.DataFrame]:
         """
         Perform the chi-square test on a randomly-selected set of nearest
@@ -921,7 +963,9 @@ class NeighborMetrics:
         p_values are combined conservatively
         """
         expected_freq = pl.Series(all_categories).value_counts(normalize=True)
-        median_dist = np.median(distances)
+        median_dist = np.median(
+            self.nn.kneighbors(self.dset[self.dset.x_key][indices])[0]
+        )
         results = {"statistic": [], "p_value": []}
         selection = self.rng.choice(
             indices, size=self.n_resample_chi_square, replace=True
@@ -956,35 +1000,31 @@ class NeighborMetrics:
                 "std": np.std(results["statistic"]),
                 "median": np.median(results["statistic"]),
                 "iqr": stats.iqr(results["statistic"]),
-                "p_adj": adjusted,
+                "p_value": adjusted,
             }
         )
         return df, pl.DataFrame(results)
 
     def _compute_category_metrics(
         self, indices, category_col: str, randomize: bool = False
-    ) -> tuple[pl.DataFrame, pl.DataFrame, McTestResult]:
-        distances, neighbors = self.nn.kneighbors(self.dset[self.dset.x_key][indices])
-        encoder, category_mat, cats = self._get_category_matrix(
-            self.dset[category_col],
-            neighbors,
-            indices,
-            randomize=randomize,
-            seed=self.seed,
-        )
+    ) -> tuple[pl.DataFrame, pl.DataFrame, dict]:
+        encoder = LabelEncoder()
+        cats = encoder.fit_transform(self.dset[category_col])
+        if randomize:
+            cats = self.rng.permuted(cats)
         self.encoders[category_col] = encoder
         n_prop_chi_square_summary, n_prop_chi_square = self._neighbors_chi_square(
-            indices=indices, distances=distances, all_categories=cats
+            indices=indices, all_categories=cats
         )
-        impurity_result = generalized_mc_test(
-            category_mat,
-            statistic=gini_impurity,
-            rvs=lambda x: self._random_neighbors(cats, x),
+        category_dist_test = compare_category_distribution(
+            self.dset[self.dset.x_key][indices],
             n_resample=self.n_resample,
-            alternative="less",  # Lower impurity the better
-            vectorized=False,
+            all_categories=cats,
+            metric=self.embedding_distance,
+            rng=self.rng,
+            alternative="less",
         )
-        return n_prop_chi_square, n_prop_chi_square_summary, impurity_result
+        return n_prop_chi_square, n_prop_chi_square_summary, category_dist_test
 
     def _compute_anno_metrics(
         self, indices, anno_col: str, randomize: bool = False
@@ -1018,7 +1058,7 @@ class NeighborMetrics:
     ) -> tuple[pl.DataFrame, dict[str, jaxtyping.Shaped[Any, "a"]]]:
         dfs = []
         distributions = {
-            "gini_impurity": {},
+            "pair_category": {},
             "chi": {},
             "mean_jaccard_distance": {},
         }
@@ -1027,29 +1067,32 @@ class NeighborMetrics:
                 if not with_randomization and do_random:
                     continue
                 if col in self.category_cols:
-                    chi, chi_summary, gini = self._compute_category_metrics(
+                    chi, chi_summary, cat_dist = self._compute_category_metrics(
                         self.sampled_idx, category_col=col, randomize=do_random
                     )
                     df = pl.concat(
-                        [chi_summary, gini.to_pl()], how="diagonal_relaxed"
+                        [chi_summary, cat_dist["test"]], how="diagonal_relaxed"
                     ).with_columns(
                         pl.Series(
                             [
                                 "neighbor_proportion",
-                                "gini_impurity",
+                                "pair_category_distribution",
                             ]
                         ).alias("metric"),
                         pl.lit(col).alias("column"),
                     )
                     distributions["chi"][col] = chi
-                    distributions["gini_impurity"][col] = gini.observed_dist
+                    distributions["pair_category"][col] = cat_dist["observed"]
                 else:
                     res = self._compute_anno_metrics(
                         self.sampled_idx, anno_col=col, randomize=do_random
                     )
-
-                    df = res.to_pl().with_columns(
-                        metric=pl.lit("mean_jaccard_distance"), column=pl.lit(col)
+                    df = (
+                        res.to_pl()
+                        .with_columns(
+                            metric=pl.lit("mean_jaccard_distance"), column=pl.lit(col)
+                        )
+                        .rename({"p_adj": "p_value"})
                     )
                     distributions["mean_jaccard_distance"][col] = res.observed_dist
                 if with_randomization:

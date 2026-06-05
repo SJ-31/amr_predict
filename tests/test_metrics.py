@@ -165,7 +165,7 @@ def test_neighbor_metrics_rand(random_linked_dset):
     df, dist = met.run(with_randomization=True)
     df.write_csv("./neighbor_metrics_rand.csv")
     logger.info("{}", df)
-    assert (df["p_adj"] == 1).all()
+    assert (df["p_value"] > 0.05).all()
 
 
 # TODO:  Parameters to check for neighbors: number of neighbors, number of categories
