@@ -31,6 +31,8 @@ from beartype import beartype
 from datasets import Dataset, DatasetDict
 from loguru import logger
 from matplotlib.axes import Axes
+from numpy.random import Generator
+from polars.functions import random
 from sklearn.base import BaseEstimator
 from sklearn.cluster import KMeans
 from sklearn.metrics import (
@@ -45,6 +47,11 @@ from torch.utils.data import DataLoader
 MODEL_CLASSES: TypeAlias = L.LightningModule | Baseline | nn.Module | BaseEstimator
 
 logger.disable("amr_predict")
+
+"""
+References
+[1] Ojala, Markus and Garriga, Gemma C. (2009). "Permutation Tests for Studying Classifier Performance". In: , "2009 Ninth IEEE International Conference on Data Mining". IEEE. 908–913. 10.1109/icdm.2009.108.
+"""
 
 
 TENSOR2D_FLOAT = jaxtyping.Float[Tensor, "a b"]
@@ -80,9 +87,15 @@ class Evaluator:
     x_key: str | None = field(default=None)
     task_type: TASK_TYPES = "classification"
     task_names: Sequence = field(factory=lambda: ["y"])
+    verbose: bool = True
     is_sklearn: bool = True
     n_classes: Sequence[int] | None = field(
-        default=None, converter=lambda x: [x] if isinstance(x, int) else x
+        default=None, converter=lambda x: (x,) if isinstance(x, int) else x
+    )
+    seed: int | None = None
+    rng: Generator = field(
+        init=False,
+        default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
     )
 
     def predict(
@@ -122,21 +135,25 @@ class Evaluator:
         train = train.select_columns([self.x_key] + list(self.task_names))
         M = self.M(train.shape)
         if isinstance(M, Baseline):
-            logger.info("Start fit for Baseline model")
+            if self.verbose:
+                logger.info("Start fit for Baseline model")
             M.fit(train)
         elif isinstance(M, BaseEstimator):
             x = train[self.x_key][:]
             y = train[self.task_names[0]][:]
-            logger.info(f"Start fit for model {M}")
+            if self.verbose:
+                logger.info(f"Start fit for model {M}")
             M.fit(x, y)
         elif self.trainer is None:
             raise ValueError("Trainer must be provided if not using baseline model")
         else:
-            logger.info(f"Start fit for model {M}")
+            if self.verbose:
+                logger.info(f"Start fit for model {M}")
             tl = DataLoader(train, **self.kws)
             vl = DataLoader(val, **self.kws) if val is not None else val
             self.trainer.fit(M, train_dataloaders=tl, val_dataloaders=vl)
-        logger.success("Fit complete")
+        if self.verbose:
+            logger.success("Fit complete")
         return M
 
     def cv(
@@ -223,7 +240,6 @@ class Evaluator:
             dataset = dataset.train_test_split(**kws)
             splits = {"auto": ("train", "test", validation)}
 
-        tasks = self.model.task_names
         for key, dsets in splits.items():
             val = None
             if len(dsets) == 2:
@@ -246,8 +262,9 @@ class Evaluator:
             else:  # Interpret train, test to be keys and dataset to be DatasetDict
                 train_dset = dataset[train]
                 test_dset = dataset[test]
-            logger.info(f"Holdout on key {key}")
-            logger.info(f"Train, test shape: {train_dset.shape}, {test_dset.shape}")
+            if self.verbose:
+                logger.info(f"Holdout on key {key}")
+                logger.info(f"Train, test shape: {train_dset.shape}, {test_dset.shape}")
             if test_dset.shape[0] == 0:
                 raise ValueError("no samples in test dataset")
             if train_dset.shape[0] == 0:
@@ -255,10 +272,11 @@ class Evaluator:
 
             if validation_kws:
                 val_split = train_dset.train_test_split(**validation_kws)
-                logger.info("Generating validation set from kws {}", validation_kws)
+                if self.verbose:
+                    logger.info("Generating validation set from kws {}", validation_kws)
                 train_dset = val_split["train"]
                 val_dset = val_split["test"]
-            if val_dset is not None:
+            if val_dset is not None and self.verbose:
                 logger.info(f"Validation set shape: {val_dset.shape}")
 
             if self.pp is not None:
@@ -316,8 +334,6 @@ class Evaluator:
             Number of features changed during preprocessing.
             Ensure the model can handle this if no `model_fn` was passed
             """)
-        if self.model_fn is not None:
-            self.model = self.model_fn(new_in_features)
         return train_dset, test_dset, val_dset
 
 
