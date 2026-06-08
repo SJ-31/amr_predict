@@ -1,4 +1,7 @@
 #!/usr/bin/env ipython
+from collections.abc import Sequence
+from typing import Literal, TypeAlias
+
 import anndata as ad
 import polars as pl
 from amr_predict.cache import LinkedDataset

@@ -83,8 +83,11 @@ def toy_dset(rng):
         elif samples is None and seq_level:
             samples = rng.choice(list(ascii_uppercase), n, replace=True)
         to_dset = {"sample": samples, x_key: torch.rand(len(samples), x_size)}
-        for col, choices in column_spec.items():
-            to_dset[col] = rng.choice(choices, len(samples), replace=True)
+        for col, rvs in column_spec.items():
+            if isinstance(rvs, Callable):
+                to_dset[col] = rvs(rng, len(samples))
+            else:
+                to_dset[col] = rng.choice(rvs, len(samples), replace=True)
         return Dataset.from_dict(to_dset).with_format("torch")
 
     return f

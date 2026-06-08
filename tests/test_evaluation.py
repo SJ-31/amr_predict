@@ -9,20 +9,20 @@ import polars as pl
 import pytest
 import torch
 from amr_predict.evaluation import EvalSAE, Evaluator, make_control_task, max_by_label
+from amr_predict.metadata import encode_strs, with_metadata
 from amr_predict.metrics import multitask_all_cls
 from amr_predict.models import MLP, Baseline
 from amr_predict.utils import (
     ModuleConfig,
     Preprocessor,
     data_spec,
-    encode_strs,
     load_as,
     read_tabular,
-    with_metadata,
 )
 from datasets import Dataset, concatenate_datasets
 from loguru import logger
 from pyhere import here
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier, XGBRegressor
 
@@ -38,13 +38,7 @@ logger.enable("amr_predict")
 REGRESSION_TASKS = ["AMK", "GEN"]
 CLASSIFICATION_TASKS = ["AMK", "GEN"]
 
-
-@pytest.fixture
-def dset() -> Dataset:
-    loaded: Dataset = load_as(
-        here(DIRS["seqlens"], "datasets", "pooled", "bin-mean"), "huggingface"
-    )
-    return loaded
+torch.set_default_dtype(torch.float64)
 
 
 def test_add_ctrl(toy_dset, env):
@@ -114,12 +108,47 @@ def test_mlp_cls():
     print(metrics)
 
 
-@pytest.mark.skip(reason="passed")
 @pytest.mark.parametrize(
-    "task_type,tasks",
-    [("classification", CLASSIFICATION_TASKS), ("regression", REGRESSION_TASKS)],
+    "task_type,cspec",
+    [
+        ("classification", {"y": [1, 0]}),
+        ("regression", {"y": lambda rng, s: rng.random(size=s)}),
+    ],
 )
-def test_baseline(dset, task_type, tasks, keys):
+def test_evaluator_sklearn(task_type, cspec, toy_dset):
+    dset = toy_dset(n=2000, column_spec=cspec)
+    model = (
+        RandomForestRegressor
+        if task_type != "classification"
+        else RandomForestClassifier
+    )
+    eva = Evaluator(model=model, x_key="x", task_names=["y"])
+    holdout = eva.holdout(dataset=dset)
+    cv = eva.cv(dataset=dset, n_splits=5)
+    logger.info("holdout: {}", holdout)
+    logger.info("cv: {}", cv)
+
+
+@pytest.mark.parametrize(
+    "task_type,tasks,cspec",
+    [
+        (
+            "classification",
+            CLASSIFICATION_TASKS,
+            {"AMK": ["R", "S", "M"], "GEN": ["R", "S", "M"]},
+        ),
+        (
+            "regression",
+            REGRESSION_TASKS,
+            {
+                "AMK": lambda rng, s: rng.random(size=s),
+                "GEN": lambda rng, s: rng.random(size=s) + 500,
+            },
+        ),
+    ],
+)
+def test_baseline(toy_dset, task_type, tasks, cspec, keys):
+    dset = toy_dset(n=2000, column_spec=cspec)
     x_key, sample_key = keys
     dset, _ = encode_strs(dset, tasks)
     if task_type == "classification":
@@ -135,7 +164,10 @@ def test_baseline(dset, task_type, tasks, keys):
     )
     model = Baseline(x_key=x_key, device="cpu", model=model, cfg=mconf)
     eva: Evaluator = Evaluator(model=model)
-    print(eva.holdout(dataset=dset))
+    holdout = eva.holdout(dataset=dset)
+    cv = eva.cv(dataset=dset, n_splits=5)
+    logger.info("holdout: {}", holdout)
+    logger.info("cv: {}", cv)
 
 
 def test_max_by_lab():
