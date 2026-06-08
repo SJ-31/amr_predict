@@ -205,6 +205,123 @@ class Evaluator:
         ddict = make_splits(dataset=dataset, split_methods=split_indices)
         return self.holdout(ddict, split_names)
 
+    def permutation_test(
+        self,
+        dataset: Dataset,
+        test_type: Literal["class_label", "per_class_feature"],
+        r: int = 10,
+        k: int = 100,
+        use_cv: bool = True,
+        **kws,
+    ) -> pl.DataFrame:
+        """
+        Implementation of Tests 1 (class_label) and
+            2 (per_class_feature) as outlined in [1]
+
+        Parameters
+        ----------
+        r : int
+            Number of error estimates obtained on the original data
+        k : int
+            Number of error estimates obtained on the randomized data
+        use_cv : bool
+            Use Cross-validation to obtain error estimates
+        kws : kwargs
+            Kwargs passed to cv if use_cv, otherwise kwargs passed to
+            holdout
+        """
+        assert (
+            self.task_type == "classification"
+        ), "Permutation testing only supported for classification tasks"
+        assert (
+            len(self.task_names) == 1
+        ), "Only 1 task can be given for permutation testing"
+
+        original_error = self._get_error_estimate(
+            dataset, iter=r, use_cv=use_cv, colname="repeat", process_fn=None, **kws
+        )
+        task = self.task_names[0]
+        if test_type == "class_label":
+
+            def permute(batch):
+                result = {}
+                result[task] = self.rng.permuted(batch[task])
+                return result
+
+        else:
+
+            def permute(batch):
+                result = {}
+                tmp: Tensor = torch.zeros_like(batch[self.x_key])
+                for _, group in (
+                    pl.DataFrame({"y": batch[task]}).with_row_index().group_by("y")
+                ):
+                    indices = group["index"]
+                    cur = torch.tensor(
+                        self.rng.permuted(batch[self.x_key][indices, :], axis=0)
+                    )
+                    tmp[indices, :] = cur
+                result[self.x_key] = tmp
+                return result
+
+        random_error = self._get_error_estimate(
+            dataset,
+            iter=k,
+            use_cv=use_cv,
+            colname="repeat",
+            process_fn=lambda x: x.map(permute, batch_size=None, batched=True),
+            **kws,
+        )
+        return self._permutation_p_value(original_error, random_error)
+
+    def _permutation_p_value(
+        self, original: pl.DataFrame, randomized: pl.DataFrame
+    ) -> pl.DataFrame:
+        """
+        Compute the permutation p-value as defined by [1]
+        """
+
+        result = {"task": [], "metric": [], "p_value": []}
+        original = original.filter(pl.col("metric").is_in(["normalized_mcc", "acc"]))
+        for (task, metric), group in original.group_by(["task", "metric"]):
+            result["task"].append(task)
+            result["metric"].append(metric)
+            e_original = 1 - group["value"]
+            filtered = randomized.filter(
+                (pl.col("metric") == metric) & (pl.col("task") == task)
+            )
+            e_random = 1 - filtered["value"]
+            k = len(e_random)
+            p_values = e_original.map_elements(  # Compute r p-values
+                lambda x: ((e_random <= x).sum() + 1) / (k + 1), return_dtype=pl.Float64
+            )
+            result["p_value"].append(p_values.mean())
+        return pl.DataFrame(result)
+
+    def _get_error_estimate(
+        self,
+        dataset: Dataset,
+        iter: int,
+        use_cv: bool,
+        colname: str,
+        process_fn: Callable | None = None,
+        **kws,
+    ) -> pl.DataFrame:
+        tmp = []
+        for i in range(iter):
+            if process_fn is not None:
+                dataset = process_fn(dataset)
+            if use_cv:
+                result = (
+                    self.cv(dataset, **kws)
+                    .group_by(["task", "metric"])
+                    .agg(pl.col("value").mean())
+                )
+            else:
+                result = self.holdout(dataset, **kws)
+            tmp.append(result.with_columns(pl.lit(i).alias(colname)))
+        return pl.concat(tmp, how="vertical_relaxed")
+
     def holdout(
         self,
         dataset: Path | DatasetDict | Dataset,
