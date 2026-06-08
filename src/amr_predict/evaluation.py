@@ -3,8 +3,9 @@
 from collections.abc import Sequence
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Callable, Literal, TypeAlias
+from typing import Any, Callable, Literal, TypeAlias, get_args
 
+import fastcluster
 import jaxtyping
 import lightning as L
 import numpy as np
@@ -30,6 +31,7 @@ from beartype import beartype
 from datasets import Dataset, DatasetDict
 from loguru import logger
 from matplotlib.axes import Axes
+from sklearn.base import BaseEstimator
 from sklearn.cluster import KMeans
 from sklearn.metrics import (
     calinski_harabasz_score,
@@ -40,7 +42,7 @@ from sklearn.preprocessing import LabelBinarizer, OneHotEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-MODEL_CLASSES: TypeAlias = L.LightningModule | Baseline | nn.Module
+MODEL_CLASSES: TypeAlias = L.LightningModule | Baseline | nn.Module | BaseEstimator
 
 logger.disable("amr_predict")
 
@@ -48,45 +50,94 @@ logger.disable("amr_predict")
 TENSOR2D_FLOAT = jaxtyping.Float[Tensor, "a b"]
 
 
+@define
 class Evaluator:
-    def __init__(
-        self,
-        model: MODEL_CLASSES,
-        preprocessor: Preprocessor | None = None,
-        trainer: L.Trainer | None = None,
-        model_fn: Callable[[Any], MODEL_CLASSES] | None = None,
-        **kws,
-    ) -> None:
-        """
-        Parameters
-        ----------
-        model_fn : Callable
-            Function that takes a single argument: the number of input features (as integer) and
-            returns a trainable model. Required if the preprocessor is expected to change
-            the number of features and `model` needs to be re-instantiated to handle the change
-        """
-        self.model: MODEL_CLASSES = model
-        self.pp: Preprocessor | None = preprocessor
-        self.model_fn: Callable[[Any], MODEL_CLASSES] | None = model_fn
-        self.x_key: str = self.model.x_key
-        self.task_type: TASK_TYPES = self.model.cfg.task_type
-        self.trainer: L.Trainer | None = trainer
-        self.kws: dict = kws
+    """
+    Wrapper class for model evaluation routines
 
-    def _fit(self, train: Dataset, val: Dataset | None = None) -> None:
-        train = train.select_columns([self.model.x_key] + list(self.model.task_names))
-        if isinstance(self.model, Baseline):
+    Parameters
+    ----------
+
+    model : MODEL_CLASSES | Callable[[int], MODEL_CLASSES]
+        If a callable, should be a function that takes a single argument: the shape of the dataset and
+        returns a trainable model. Required if the preprocessor is expected to change
+        the number of features and `model` needs to be re-instantiated to handle the change
+
+    sklearn_metrics : Callable
+        Function
+
+
+    """
+
+    model: MODEL_CLASSES | Callable[[tuple], MODEL_CLASSES]
+    trainer: L.Trainer | None = field(
+        default=None,
+        validator=lambda inst, attr, val: val is None
+        and (isinstance(inst.model, Baseline) or isinstance(inst.model, BaseEstimator)),
+    )
+    kws: dict = field(factory=dict)
+    pp: Preprocessor | None = None
+    x_key: str | None = field(default=None)
+    task_type: TASK_TYPES = "classification"
+    task_names: Sequence = field(factory=lambda: ["y"])
+    is_sklearn: bool = True
+    n_classes: Sequence[int] | None = field(
+        default=None, converter=lambda x: [x] if isinstance(x, int) else x
+    )
+
+    def predict(
+        self, model: MODEL_CLASSES, dset: Dataset
+    ) -> jaxtyping.Shaped[Any, "a"] | tuple:
+        x = dset if not self.is_sklearn else dset[self.x_key][:].numpy()
+        if self.task_type == "classification" and "predict_proba" in dir(model):
+            return model.predict_proba(x)
+        elif self.is_sklearn:
+            return model.predict(x)
+        return model.predict_step(x)
+
+    def __attrs_post_init__(self):
+        tmp = self.M()
+        if not isinstance(tmp, BaseEstimator):
+            self.task_type = tmp.cfg.task_type
+            self.task_names = tmp.task_names
+            self.n_classes = tmp.cfg.n_classes
+            self.x_key = tmp.x_key
+            self.is_sklearn = False
+        else:
+            assert (
+                len(self.task_names) == 1
+            ), "Must only supply one task name if using an sklearn estimator"
+            assert (
+                self.n_classes is not None
+            ), "Number of classes must be given at init if using sklearn estimator"
+
+    def M(self, shape: tuple | None = None) -> MODEL_CLASSES:
+        if isinstance(self.model, Callable) and shape is not None:
+            return self.model()
+        elif isinstance(self.model, Callable):
+            return self.model(shape)
+        return self.model
+
+    def _get_fitted(self, train: Dataset, val: Dataset | None = None) -> MODEL_CLASSES:
+        train = train.select_columns([self.x_key] + list(self.task_names))
+        M = self.M(train.shape)
+        if isinstance(M, Baseline):
             logger.info("Start fit for Baseline model")
-            self.model.fit(train)
-            logger.success("Fit complete")
+            M.fit(train)
+        elif isinstance(M, BaseEstimator):
+            x = train[self.x_key][:]
+            y = train[self.task_names[0]][:]
+            logger.info(f"Start fit for model {M}")
+            M.fit(x, y)
         elif self.trainer is None:
             raise ValueError("Trainer must be provided if not using baseline model")
         else:
-            logger.info(f"Start fit for model {self.model}")
+            logger.info(f"Start fit for model {M}")
             tl = DataLoader(train, **self.kws)
             vl = DataLoader(val, **self.kws) if val is not None else val
-            self.trainer.fit(self.model, train_dataloaders=tl, val_dataloaders=vl)
-            logger.success("Fit complete")
+            self.trainer.fit(M, train_dataloaders=tl, val_dataloaders=vl)
+        logger.success("Fit complete")
+        return M
 
     def cv(
         self,
@@ -214,24 +265,36 @@ class Evaluator:
                 train_dset, test_dset, val_dset = self._preprocess(
                     train_dset, test_dset, val_dset
                 )
-            self._fit(train=train_dset, val=val_dset)
-            y_true: Tensor = test_dset.to_polars().select(tasks).to_torch()
-            if self.task_type == "regression":
-                y_pred: Tensor | tuple = self.model.predict_step(test_dset)
-                metrics = multitask_all_reg(y_pred, y_true, task_names=tasks)
-            else:
-                y_pred = self.model.predict_proba(test_dset)
-                metrics = multitask_all_cls(
-                    y_pred,
-                    y_true,
-                    n_classes=self.model.cfg.n_classes,
-                    task_names=tasks,
-                )
-            df = multitask_metrics2df(metrics)
-            results.append(df.with_columns(pl.lit(key).alias("test_set")))
+            model = self._get_fitted(train=train_dset, val=val_dset)
+            metrics = self._eval_fitted(model, test_dset=test_dset)
+            results.append(metrics.with_columns(pl.lit(key).alias("test_set")))
         if not results:
             raise ValueError("no splits were given")
         return pl.concat(results)
+
+    def _eval_fitted(self, model: MODEL_CLASSES, test_dset: Dataset) -> pl.DataFrame:
+        """
+        Wrrapper function for evaluation metrics for
+        `model` on `test_dset`
+        """
+        y_true = test_dset.to_polars().select(self.task_names).to_torch()
+        y_pred = self.predict(model, test_dset)
+        if self.is_sklearn:
+            y_pred = torch.tensor(y_pred)
+            if self.task_type == "regression":
+                y_pred = y_pred.to(torch.get_default_dtype())
+            y_pred = (y_pred,)
+        if self.task_type == "regression":
+            tmp_metrics = multitask_all_reg(y_pred, y_true, task_names=self.task_names)
+        else:
+            tmp_metrics = multitask_all_cls(
+                y_pred,
+                y_true,
+                n_classes=self.n_classes,
+                task_names=self.task_names,
+            )
+        metrics = multitask_metrics2df(tmp_metrics)
+        return metrics
 
     def _preprocess(self, train_dset, test_dset, val_dset):
         old_in_features: int = train_dset[self.x_key][:].shape[1]
