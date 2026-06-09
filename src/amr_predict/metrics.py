@@ -232,9 +232,11 @@ def multitask_all_cls(
         result[task]["kappa"] = tmet.cohen_kappa(
             preds=score, target=truth, num_classes=n, task="multiclass"
         )
-        result[task]["mcc"] = tmet.matthews_corrcoef(
+        mcc = tmet.matthews_corrcoef(
             preds=score, target=truth, num_classes=n, task="multiclass"
         )
+        result[task]["mcc"] = mcc
+        result[task]["normalized_mcc"] = (mcc + 1) / 2
         result[task]["auroc"] = tmet.auroc(
             preds=score, target=truth, num_classes=n, task="multiclass"
         )
@@ -492,6 +494,24 @@ def mc_multinomial_test(
         alternative="less",
         p_adj=min(len(p_values) * min(p_values), 1),
     )
+
+
+def classifier_dispatch(name: str, **kws) -> BaseEstimator:
+    if name == "RandomForest":
+        from sklearn.ensemble import RandomForestClassifier
+
+        return RandomForestClassifier(**kws)
+    elif name == "Lasso":
+        from sklearn.linear_model import LogisticRegressionCV
+
+        kws["l1_ratios"] = [1, 0]
+        kws["solver"] = "saga"
+        return LogisticRegressionCV(**kws)
+    elif name == "SVM":
+        from sklearn.svm import SVC
+
+        return SVC(**kws)
+    raise NotImplementedError()
 
 
 @beartype
@@ -1148,21 +1168,7 @@ class PerturbationMetrics:
 
     @classifier.default
     def _classifier_dispatch(self) -> BaseEstimator:
-        if self.classifier_name == "RandomForest":
-            from sklearn.ensemble import RandomForestClassifier
-
-            return RandomForestClassifier(**self.classifier_kws)
-        elif self.classifier_name == "Lasso":
-            from sklearn.linear_model import LogisticRegressionCV
-
-            self.classifier_kws["l1_ratios"] = [1, 0]
-            self.classifier_kws["solver"] = "saga"
-            return LogisticRegressionCV(**self.classifier_kws)
-        elif self.classifier_name == "SVM":
-            from sklearn.svm import SVC
-
-            return SVC(**self.classifier_kws)
-        raise NotImplementedError()
+        return classifier_dispatch(self.classifier_name, **self.classifier_kws)
 
     def _get_idx_df(self, dset) -> pl.DataFrame:
         df = dset.to_pl().select(self.id_col).with_row_index()
@@ -1205,7 +1211,6 @@ class PerturbationMetrics:
             labels = self.rng.choice([0, 1], size=n_samples, replace=True)
             train_idx, test_idx = ms.train_test_split(indices, **(split_kws or {}))
             train = self.natural[train_idx][self.natural.x_key].numpy()
-            logger.debug("Shape of train {}, len ids {}", train.shape, len(train_idx))
             test = self.natural[test_idx][self.natural.x_key].numpy()
             self.classifier.fit(train, y=labels[train_idx])
             pred = self.classifier.predict(test)
