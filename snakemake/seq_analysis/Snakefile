@@ -215,7 +215,7 @@ use rule base as probing_permutation_tests with:
     input:
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
     output:
-        f"{env.outdir}/analyses/.probing_tmp/{{seqtype}}_{{level}}/{{method}}-{{variation}}/{{embedding_method}}-{{pooling}}.csv",
+        f"{env.outdir}/analyses/.probing_permutation_tmp/{{seqtype}}_{{level}}/{{method}}-{{variation}}/{{embedding_method}}-{{pooling}}.csv",
         # `method` is the classification model name
         # `variation` is the task name
 
@@ -320,6 +320,7 @@ use rule base as collect_probing_permutation_test with:
                     }
                     for k, v in all_emb_metrics.items()
                 },
+                prefix=f"{env.outdir}/analyses/.probing_permutation_tmp",
                 _0="/",
                 _1="/",
                 _2="-",
@@ -327,7 +328,7 @@ use rule base as collect_probing_permutation_test with:
             ),
         ),
     output:
-        "analyses/probing_permutation_tests.csv",
+        env.outdir / "analyses/probing_permutation_tests.csv",
 
 
 sae_output = [
