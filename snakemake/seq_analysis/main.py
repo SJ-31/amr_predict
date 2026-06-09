@@ -477,6 +477,35 @@ def collect_embedding_metrics():
     Path(snakemake.output["nn_comparison"]).touch()
 
 
+def probing_permutation_tests():
+    from amr_predict.evaluation import Evaluator
+    from amr_predict.metadata import encode_strs
+    from amr_predict.metrics import classifier_dispatch
+
+    # Parallelize over different models, tasks, and embeddings
+    # with 'method' as the model key
+    # and `variation` as the task name
+    model_name = PARAMS["method"]
+    kws: dict = ENV.probing.classifiers[model_name]
+    model = classifier_dispatch(model_name, **kws)
+    task = (PARAMS["variation"],)
+    eva = Evaluator(model=model, x_key="x", task_type="classification", seed=ENV.rng)
+    dset = Dataset.from_polars(load_embeddings(INPUT[0]).to_pl().select(("x",) + task))
+    dset, encoder = encode_strs(dset, task_names=task)
+    t1 = eva.permutation_test(dset, "class_label").with_columns(
+        pl.lit("permutation_test_1").alias("test")
+    )
+    t2 = eva.permutation_test(dset, "per_class_feature").with_columns(
+        pl.lit("permutation_test_2").alias("test")
+    )
+    combined = pl.concat([t1, t2], how="vertical_relaxed")
+    combined.write_csv(snakemake.output[0])
+
+
+# TODO: Will need to adjust for multiple testing with this
+# def collect_probing
+
+
 def find_baseline():
     from amr_predict.metrics import PerturbationMetrics
 

@@ -44,9 +44,9 @@ from sklearn.preprocessing import LabelBinarizer, OneHotEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader
 
-MODEL_CLASSES: TypeAlias = L.LightningModule | Baseline | nn.Module | BaseEstimator
-
 logger.disable("amr_predict")
+
+MODEL_CLASSES: TypeAlias = L.LightningModule | Baseline | nn.Module | BaseEstimator
 
 """
 References

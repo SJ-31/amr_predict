@@ -165,6 +165,20 @@ def needs_val_if_not_custom(inst, attr, val, allowed: Enum | None = None):
 
 
 @define
+class PermutationTesting:
+    r: int = 10
+    k: int = 100
+    use_cv: bool = True
+
+
+@define
+class Probing:
+    classifiers: dict[str, dict]
+    tasks: list[str]
+    permutation_tests: PermutationTesting
+
+
+@define
 class SaeCfg:
     source: str | None = None
     variant: str = field(default="BatchTopK", validator=validators.in_(["BatchTopK"]))
@@ -292,6 +306,7 @@ class SnakeEnv:
     perturbation_metrics: PerturbationMetricsCfg | None
     find_baseline: FindBaseline | None
     eval_sae: EvalSAECfg
+    probing: Probing
 
     # Misc rule config
     slurm_time_limit: str = "18-00:00:00"
@@ -324,6 +339,7 @@ class SnakeEnv:
             self.outdir / "cooccurrence_stats.yaml",
             self.outdir / "analyses/nn_all.csv",
             self.outdir / "analyses/covariate_correlation_all.csv",
+            self.outdir / "analyses/probing_permutation_tests.csv",
             self.outdir / "analyses/nn_comparison.csv",
             self.outdir / "analyses/classifier_random_perf.csv",
             self.outdir / "analyses/sae_label_evaluation.csv",

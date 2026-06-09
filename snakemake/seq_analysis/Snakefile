@@ -211,6 +211,15 @@ use rule base as find_baseline with:
         f"{env.outdir}/analyses/.perturbation_baseline_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}.csv",
 
 
+use rule base as probing_permutation_tests with:
+    input:
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
+    output:
+        f"{env.outdir}/analyses/.probing_tmp/{{seqtype}}_{{level}}/{{method}}-{{variation}}/{{embedding_method}}-{{pooling}}.csv",
+        # `method` is the classification model name
+        # `variation` is the task name
+
+
 # * Summarize metric output
 
 all_ptb = {
@@ -295,6 +304,30 @@ use rule base as collect_baseline with:
         ),
     output:
         env.outdir / "analyses/classifier_random_perf.csv",
+
+
+use rule base as collect_probing_permutation_test with:
+    input:
+        filter(
+            lambda x: x.endswith(".csv"),
+            expand_nested(
+                {
+                    k: {
+                        model_task_name: v
+                        for model_task_name in expand(
+                            "{m}-{t}", m=env.probing.classifiers, t=env.probing.tasks
+                        )
+                    }
+                    for k, v in all_emb_metrics.items()
+                },
+                _0="/",
+                _1="/",
+                _2="-",
+                _3="",
+            ),
+        ),
+    output:
+        "analyses/probing_permutation_tests.csv",
 
 
 sae_output = [
