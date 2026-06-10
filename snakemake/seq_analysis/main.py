@@ -27,7 +27,7 @@ from amr_predict.evaluation import pami_wrapper, to_binary_form
 from amr_predict.models import BaseNN
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
-from amr_predict.utils import ModuleConfig, read_tabular
+from amr_predict.utils import ModuleConfig, data_spec, read_tabular
 from attrs import asdict
 from beartype import beartype
 from Bio import SeqIO
@@ -488,10 +488,31 @@ def probing_permutation_tests():
     model_name = PARAMS["method"]
     kws: dict = ENV.probing.classifiers[model_name]
     model = classifier_dispatch(model_name, **kws)
-    task = (PARAMS["variation"],)
-    eva = Evaluator(model=model, x_key="x", task_type="classification", seed=ENV.rng)
-    dset = Dataset.from_polars(load_embeddings(INPUT[0]).to_pl().select(("x",) + task))
-    dset, encoder = encode_strs(dset, task_names=task)
+    task = ENV.probing.tasks[PARAMS["variation"]]
+    level = PARAMS["level"].removesuffix("s")
+    dset = Dataset.from_polars(
+        load_embeddings(INPUT[0], "natural", "0", with_metadata=True)
+        .to_pl()
+        .rename({level: "x"})
+        .select(["x", task])
+        .with_columns(pl.col(task).cast(pl.String))
+    )
+    if ENV.test:
+        rng = np.random.default_rng()
+        dset = dset.remove_columns(task).add_column(
+            task, rng.choice(list("abcd"), size=dset.shape[0])
+        )
+    dset, encoder = encode_strs(dset, task_names=(task,))
+    dset = dset.with_format("torch")
+    _, n_classes = data_spec(dset, (task,), x_key="x")
+    eva = Evaluator(
+        model=model,
+        x_key="x",
+        task_type="classification",
+        seed=ENV.rng,
+        task_names=(task,),
+        n_classes=n_classes,
+    )
     t1 = eva.permutation_test(dset, "class_label").with_columns(
         pl.lit("permutation_test_1").alias("test")
     )
