@@ -60,6 +60,8 @@ rule base:
 # Total number of datasets is 2 * n_seqtypes *
 # (n_variations * n_types_variation) * n_embedding_methods * n_pooling
 
+# * Rules
+
 
 use rule base as make_seq_dataset with:
     output:
@@ -124,6 +126,29 @@ use rule base as label_cooccurrence with:
 #     script:
 #         "main.py"
 
+# ** SAE analysis
+
+
+use rule base as make_dummy_embeddings with:
+    params:
+        d_model=get_wc("d_model"),
+    output:
+        indices=f"{DATASETS}/dummy_embeddings/{{d_model}}/indices.pkl",
+        embeddings=f"{DATASETS}/dummy_embeddings/{{d_model}}/embeddings",
+        weights=f"{DATASETS}/dummy_embeddings/{{d_model}}/weights.pt",
+        noise=f"{DATASETS}/dummy_embeddings/{{d_model}}/noise.pt",
+
+
+use rule base as train_sae_dummy with:
+    input:
+        embeddings=f"{DATASETS}/dummy_embeddings/{{d_model}}/embeddings",
+        indices=f"{DATASETS}/dummy_embeddings/{{d_model}}/indices.pkl",
+    params:
+        d_model=get_wc("d_model"),
+    retries: 5
+    output:
+        f"{OUTDIR}/dummy_saes/{{sae}}-{{d_model}}.pt",
+
 
 use rule base as train_sae with:
     input:  # NOTE: Only train with natural sequences for now
@@ -167,6 +192,7 @@ use rule base as get_activations with:
         directory(
             f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}"
         ),
+        f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pkl",
 
 
 use rule base as sae_label_eval with:
@@ -174,6 +200,9 @@ use rule base as sae_label_eval with:
         f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}",
     output:
         f"{env.outdir}/analyses/.sae_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pkl",
+
+
+# ** Other metrics
 
 
 use rule base as embedding_metrics with:

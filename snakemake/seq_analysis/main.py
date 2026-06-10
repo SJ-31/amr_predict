@@ -23,7 +23,6 @@ import yaml
 from amr_predict.cache import EmbeddingCache, LinkedDataset
 from amr_predict.embedding import embedding_size
 from amr_predict.enums import BasicPoolings, SeqTypes
-from amr_predict.evaluation import pami_wrapper, to_binary_form
 from amr_predict.models import BaseNN
 from amr_predict.sae import BatchTopK
 from amr_predict.sae_external import get_default_cfg
@@ -202,6 +201,7 @@ def train_sae_helper(
     ckpt_dir: Path,
     save_sae_to: str,
     log_dir: Path,
+    index_file: str,
 ):
     from lightning.pytorch.loggers import WandbLogger
 
@@ -223,24 +223,18 @@ def train_sae_helper(
     sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
     load_kws = rconfig.dataloader.to_kws()
     trainer = L.Trainer(callbacks=[ckpt_callback], **train_kws)
-    train_idx, _, val_idx = get_dset_indices(INPUT[1])
+    train_idx, _, val_idx = get_dset_indices(index_file)
     train_l = DataLoader(dset.select(train_idx), **load_kws)
     val_l = DataLoader(dset.select(val_idx), **load_kws)
     trainer.fit(sae, train_dataloaders=train_l, val_dataloaders=val_l, ckpt_path="last")
     torch.save(sae.state_dict(), save_sae_to)
 
 
-# * Rules
-
-
-def get_activations():
-    dset: LinkedDataset = load_embeddings(
-        cache_completion_file=INPUT["embeddings"],
-        variation="natural",
-        vmethod="0",
-    )
+def get_activations_helper(
+    dset: LinkedDataset | Dataset,
+) -> tuple[Dataset, dict | None]:
     if not INPUT["sae"]:
-        return from_pretrained()
+        raise NotImplementedError()
         # TODO: unfinished
     else:
         sae = lookup_sae(PARAMS["sae"], act_size=dset[0]["x"].shape[1])
@@ -252,14 +246,29 @@ def get_activations():
         activations = sae.predict_step(predict_on)
         samples = test_portion["id"][:]
         act_dset = Dataset.from_dict({"id": samples, "activation": activations})
-        act_dset.save_to_disk(snakemake.output[0])
-        loss_out = {
-            it: PARAMS[it]
-            for it in ("seqtype", "level", "embedding_method", "pooling", "sae")
-        }
-        loss_out["loss"] = sae.training_step({sae.x_key: predict_on}, None)
-        with open(snakemake.output[1], "wb") as f:
-            pickle.dump(loss_out, f)
+        loss = sae.training_step({sae.x_key: predict_on}, None)
+    return act_dset, loss
+
+
+# * Rules
+
+
+def get_activations():
+    dset: LinkedDataset = load_embeddings(
+        cache_completion_file=INPUT["embeddings"],
+        variation="natural",
+        vmethod="0",
+    )
+    act_dset, loss = get_activations_helper(dset)
+    act_dset.save_to_disk(snakemake.output[0])
+    loss_out = {
+        it: PARAMS[it]
+        for it in ("seqtype", "level", "embedding_method", "pooling", "sae")
+    }
+    loss_out["loss"] = loss
+    with open(snakemake.output[1], "wb") as f:
+        pickle.dump(loss_out, f)
+
 
 
 def sae_label_eval():
@@ -399,6 +408,7 @@ def make_seq_dataset():
 
 
 def label_cooccurrence():
+    from amr_predict.evaluation import pami_wrapper
     from PAMI.frequentPattern.basic.FPGrowth import FPGrowth
 
     cuda_apriori_available = False

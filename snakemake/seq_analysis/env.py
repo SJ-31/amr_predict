@@ -179,6 +179,15 @@ class Probing:
 
 
 @define
+class DummyEmbeddings:
+    n: int
+    splits: tuple[float, float, float]
+    sizes: list[int]
+    nonlinearity: str
+    noise_scale: float
+
+
+@define
 class SaeCfg:
     source: str | None = None
     variant: str = field(default="BatchTopK", validator=validators.in_(["BatchTopK"]))
@@ -307,6 +316,7 @@ class SnakeEnv:
     find_baseline: FindBaseline | None
     eval_sae: EvalSAECfg
     probing: Probing
+    dummy_embeddings: DummyEmbeddings
 
     # Misc rule config
     slurm_time_limit: str = "18-00:00:00"
