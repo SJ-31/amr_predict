@@ -976,8 +976,8 @@ class NeighborMetrics:
         """
         Perform the chi-square test on a randomly-selected set of nearest
         neighbors, testing the null hypothesis that the category distribution
-        of nearest neighbors a given point is no
-        different to the distribution of categories in the overall data
+        of a portion of embedding space, expanding outwards from a randomly
+        chosen point, is no different to the distribution of categories in the overall data
 
         The test is repeated with a new point n_resample times and the
         p_values are combined conservatively
@@ -1303,6 +1303,8 @@ class PerturbationMetrics:
             [(natural, perturbed), (natural, random)],
         ):
             x, half_len = self._combine_dsets_balanced(d1=dset_pair[0], d2=dset_pair[1])
+            # TODO: use your Evaluator class for this instead
+
             cv_results: dict = ms.cross_validate(
                 self.classifier,
                 X=x,

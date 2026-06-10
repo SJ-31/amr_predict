@@ -174,7 +174,7 @@ class PermutationTesting:
 @define
 class Probing:
     classifiers: dict[str, dict]
-    tasks: list[str]
+    tasks: dict[str, str]
     permutation_tests: PermutationTesting
 
 

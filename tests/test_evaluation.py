@@ -19,12 +19,14 @@ from amr_predict.utils import (
     load_as,
     read_tabular,
 )
-from datasets import Dataset, concatenate_datasets
+from datasets import Dataset, concatenate_datasets, disable_progress_bar
 from loguru import logger
 from pyhere import here
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier, XGBRegressor
+
+disable_progress_bar()
 
 DIRS: dict = {
     "evo2": here("results", "tests", "with_evo2"),
@@ -108,6 +110,43 @@ def test_mlp_cls():
     print(metrics)
 
 
+def test_permute(rng):
+    random = torch.hstack(
+        [
+            torch.randint(3, (10, 1)),
+            torch.randint(8, (10, 1)),
+            torch.randint(200, (10, 1)),
+        ]
+    )
+    y = rng.choice(list("abc"), size=10)
+    logger.info("original {}", random)
+    to_fill = torch.zeros_like(random)
+    for _, group in pl.DataFrame({"y": y}).with_row_index().group_by("y"):
+        indices = group["index"]
+        cur = torch.tensor(rng.permuted(random[indices, :], axis=0))
+        to_fill[indices, :] = cur
+    logger.info("Permuted {}", to_fill)
+
+
+@pytest.mark.parametrize("ttype", ["class_label", "per_class_feature"])
+def test_permutation_test(ttype, toy_dset):
+    dset = toy_dset(n=500, column_spec={"y": list("abcdef")}, seq_level=True, x_size=5)
+    _, n_classes = data_spec(dset, y=["y"], x_key="x")
+    dset, _ = encode_strs(dset, ["y"])
+    eva = Evaluator(
+        model=RandomForestClassifier(),
+        task_names=["y"],
+        x_key="x",
+        task_type="classification",
+        n_classes=n_classes,
+        verbose=False,
+    )
+    test = eva.permutation_test(
+        dset, test_type=ttype, use_cv=True, n_splits=3, n_repeats=2
+    )
+    logger.info("test {}", test)
+
+
 @pytest.mark.parametrize(
     "task_type,cspec",
     [
@@ -117,14 +156,21 @@ def test_mlp_cls():
 )
 def test_evaluator_sklearn(task_type, cspec, toy_dset):
     dset = toy_dset(n=2000, column_spec=cspec)
+    in_features, n_classes = data_spec(dset, y=["y"], x_key="x")
     model = (
         RandomForestRegressor
         if task_type != "classification"
         else RandomForestClassifier
     )
-    eva = Evaluator(model=model, x_key="x", task_names=["y"])
+    eva = Evaluator(
+        model=model,
+        x_key="x",
+        task_names=["y"],
+        task_type=task_type,
+        n_classes=n_classes,
+    )
     holdout = eva.holdout(dataset=dset)
-    cv = eva.cv(dataset=dset, n_splits=5)
+    cv = eva.cv(dataset=dset, n_splits=5, n_repeats=3)
     logger.info("holdout: {}", holdout)
     logger.info("cv: {}", cv)
 
@@ -150,9 +196,9 @@ def test_evaluator_sklearn(task_type, cspec, toy_dset):
 def test_baseline(toy_dset, task_type, tasks, cspec, keys):
     dset = toy_dset(n=2000, column_spec=cspec)
     x_key, sample_key = keys
-    dset, _ = encode_strs(dset, tasks)
     if task_type == "classification":
         model = XGBClassifier
+        dset, _ = encode_strs(dset, tasks)
     else:
         model = XGBRegressor
     in_features, n_classes = data_spec(dset, y=tasks, x_key=x_key)
@@ -165,7 +211,7 @@ def test_baseline(toy_dset, task_type, tasks, cspec, keys):
     model = Baseline(x_key=x_key, device="cpu", model=model, cfg=mconf)
     eva: Evaluator = Evaluator(model=model)
     holdout = eva.holdout(dataset=dset)
-    cv = eva.cv(dataset=dset, n_splits=5)
+    cv = eva.cv(dataset=dset, n_splits=5, n_repeats=2)
     logger.info("holdout: {}", holdout)
     logger.info("cv: {}", cv)
 

@@ -82,7 +82,7 @@ def toy_dset(rng):
             samples = list(ascii_uppercase)
         elif samples is None and seq_level:
             samples = rng.choice(list(ascii_uppercase), n, replace=True)
-        to_dset = {"sample": samples, x_key: torch.rand(len(samples), x_size)}
+        to_dset = {"sample": samples, x_key: torch.rand((len(samples), x_size))}
         for col, rvs in column_spec.items():
             if isinstance(rvs, Callable):
                 to_dset[col] = rvs(rng, len(samples))
