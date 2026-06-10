@@ -193,6 +193,43 @@ def collect_from_pkl(result_handler: Callable[[dict], pl.DataFrame]) -> pl.DataF
     return combined
 
 
+# ** SAE-related
+
+
+def train_sae_helper(
+    dset: LinkedDataset | Dataset,
+    run_name: str,
+    ckpt_dir: Path,
+    save_sae_to: str,
+    log_dir: Path,
+):
+    from lightning.pytorch.loggers import WandbLogger
+
+    rconfig = ENV.train_sae
+    train_kws = rconfig.trainer.to_kws()
+    sae_name = PARAMS["sae"]
+    ckpt_callback = ModelCheckpoint(
+        dirpath=ckpt_dir,
+        every_n_epochs=5,
+        enable_version_counter=True,
+        verbose=True,
+    )
+    if ENV.log_wandb:
+        train_kws["logger"] = WandbLogger(
+            run_name, project=ENV.wandb_project, save_dir=log_dir
+        )
+        if log_dir.exists():
+            ckpt_dir = "last"
+    sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
+    load_kws = rconfig.dataloader.to_kws()
+    trainer = L.Trainer(callbacks=[ckpt_callback], **train_kws)
+    train_idx, _, val_idx = get_dset_indices(INPUT[1])
+    train_l = DataLoader(dset.select(train_idx), **load_kws)
+    val_l = DataLoader(dset.select(val_idx), **load_kws)
+    trainer.fit(sae, train_dataloaders=train_l, val_dataloaders=val_l, ckpt_path="last")
+    torch.save(sae.state_dict(), save_sae_to)
+
+
 # * Rules
 
 
@@ -313,41 +350,24 @@ def write_seq_training_indices():
 
 
 def train_sae():
-    from lightning.pytorch.loggers import WandbLogger
-
     cache_path: Path = Path(INPUT[0]).with_suffix("")
-    rconfig = ENV.train_sae
-    train_kws = rconfig.trainer.to_kws()
     sae_name = PARAMS["sae"]
     run_name = (
         f"{cache_path.stem}-{PARAMS['level']}-{PARAMS['seqtype']}-train_sae-{sae_name}"
     )
     outpath = Path(snakemake.output[0])
     ckpt_dir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_checkpoints"
-    ckpt_callback = ModelCheckpoint(
-        dirpath=ckpt_dir,
-        every_n_epochs=5,
-        enable_version_counter=True,
-        verbose=True,
-    )
-    if ENV.log_wandb:
-        logdir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_wandb"
-        train_kws["logger"] = WandbLogger(
-            run_name, project=ENV.wandb_project, save_dir=logdir
-        )
-        if logdir.exists():
-            ckpt_dir = "last"
     dset: LinkedDataset = load_embeddings(
         cache_completion_file=INPUT[0], variation="natural", vmethod="0"
     )
-    sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
-    load_kws = rconfig.dataloader.to_kws()
-    trainer = L.Trainer(callbacks=[ckpt_callback], **train_kws)
-    train_idx, _, val_idx = get_dset_indices(INPUT[1])
-    train_l = DataLoader(dset.select(train_idx), **load_kws)
-    val_l = DataLoader(dset.select(val_idx), **load_kws)
-    trainer.fit(sae, train_dataloaders=train_l, val_dataloaders=val_l, ckpt_path="last")
-    torch.save(sae.state_dict(), snakemake.output[0])
+    log_dir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_wandb"
+    train_sae_helper(
+        dset=dset,
+        run_name=run_name,
+        ckpt_dir=ckpt_dir,
+        log_dir=log_dir,
+        save_sae_to=snakemake.output[0],
+    )
 
 
 def make_seq_dataset():
