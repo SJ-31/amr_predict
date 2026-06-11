@@ -8,10 +8,17 @@ import numpy as np
 import polars as pl
 import pytest
 import torch
-from amr_predict.evaluation import EvalSAE, Evaluator, make_control_task, max_by_label
+from amr_predict.evaluation import (
+    EvalSAE,
+    Evaluator,
+    LatentAblation,
+    make_control_task,
+    max_by_label,
+)
 from amr_predict.metadata import encode_strs, with_metadata
 from amr_predict.metrics import multitask_all_cls
 from amr_predict.models import MLP, Baseline
+from amr_predict.sae import BatchTopK
 from amr_predict.utils import (
     ModuleConfig,
     Preprocessor,
@@ -72,15 +79,27 @@ def test_add_ctrl(toy_dset, env):
     assert list(dset["foo"][:]) != old_target
 
 
-def test_mlp_cls():
-    dset = load_as(
-        here("results", "tests", "esm_test", "datasets", "pooled", "orf_only-esm-mean")
-    ).with_format("torch")
-    task_names = ["amikacin_class", "gentamicin_class"]
-    for t in task_names:
-        dset = dset.add_column(
-            t, np.random.choice(["R", "I", "S"], dset.shape[0], replace=True)
-        )
+@pytest.mark.parametrize("how", ["embedding", "reconstruction", "activation"])
+def test_sae_ablate(random_linked_dset, how):
+    dummy_embeddings = random_linked_dset(dim=100)
+
+    cfg: ModuleConfig = ModuleConfig(act_size=100, dict_size=1000, top_k=5)
+    trainer = L.Trainer(max_epochs=20, enable_progress_bar=False)
+    sae = BatchTopK(cfg, x_key="x")
+    loader = DataLoader(dummy_embeddings, batch_size=10)
+    trainer.fit(sae, train_dataloaders=loader)
+
+    ablator = LatentAblation(eva=Evaluator(RandomForestClassifier()), x_key="x")
+
+
+def test_mlp_cls(toy_dset):
+    dset = toy_dset(
+        {"amr_class": ["resistant", "susceptible", "intermediate"]},
+        seq_level=True,
+        n=1000,
+        x_size=200,
+    )
+    task_names = ["amr_class"]
     in_features, n_classes = data_spec(dset, y=task_names, x_key="x")
     mconf = ModuleConfig(
         task_type="classification",
@@ -91,23 +110,18 @@ def test_mlp_cls():
     )
     dset, _ = encode_strs(dset, task_names)
     dset = dset.select_columns(["x"] + task_names)
-    model = MLP(
-        in_features=in_features, cfg=mconf, num_layers=2, x_key="x", hidden_dim=50
-    )
     trainer = L.Trainer(max_epochs=20)
-    loader = DataLoader(dset, batch_size=5)
 
     # Simple test of overfitting to train
-    trainer.fit(model, train_dataloaders=loader)
-    y_pred = model.predict_proba(dset)
-    y_true = dset.to_polars().select(task_names).to_torch()
-    metrics = multitask_all_cls(
-        y_pred,
-        y_true,
-        n_classes=model.cfg.n_classes,
-        task_names=task_names,
+    eva = Evaluator(
+        model=lambda x: MLP(
+            in_features=x[1], cfg=mconf, num_layers=2, x_key="x", hidden_dim=50
+        ),
+        task_names=None,
+        trainer=trainer,
+        kws={"batch_size": 5},
     )
-    print(metrics)
+    print(eva.cv(dset, n_splits=3, n_repeats=2))
 
 
 def test_permute(rng):
@@ -209,11 +223,16 @@ def test_baseline(toy_dset, task_type, tasks, cspec, keys):
         task_names=tasks,
     )
     model = Baseline(x_key=x_key, device="cpu", model=model, cfg=mconf)
-    eva: Evaluator = Evaluator(model=model)
+    eva: Evaluator = Evaluator(
+        model=model, task_names=None, n_classes=None, task_type=None
+    )
     holdout = eva.holdout(dataset=dset)
     cv = eva.cv(dataset=dset, n_splits=5, n_repeats=2)
     logger.info("holdout: {}", holdout)
     logger.info("cv: {}", cv)
+
+
+# def test_latent_ablation() ->
 
 
 def test_max_by_lab():
@@ -292,10 +311,9 @@ def test_mlp_pp(keys, env, with_model_fn, fail):
             in_features=x, x_key=x_key, cfg=cfg, num_layers=2, batch_norm=True
         )
     eva = Evaluator(
-        model=model,
+        model=model_fn,
         preprocessor=pp,
         trainer=L.Trainer(max_epochs=5),
-        model_fn=model_fn,
         batch_size=5,
         drop_last=True,
     )

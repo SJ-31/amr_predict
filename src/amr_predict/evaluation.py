@@ -111,9 +111,12 @@ class Evaluator:
     def __attrs_post_init__(self):
         tmp = self.M()
         if not isinstance(tmp, BaseEstimator):
-            self.task_type = tmp.cfg.task_type
-            self.task_names = tmp.task_names
-            self.n_classes = tmp.cfg.n_classes
+            if self.task_type is None:
+                self.task_type = tmp.cfg.task_type
+            if self.task_names is None:
+                self.task_names = tmp.task_names
+            if self.n_classes is None:
+                self.n_classes = tmp.cfg.n_classes
             self.x_key = tmp.x_key
             self.is_sklearn = False
         else:
@@ -126,14 +129,14 @@ class Evaluator:
 
     def M(self, shape: tuple | None = None) -> MODEL_CLASSES:
         if isinstance(self.model, Callable) and shape is not None:
-            return self.model()
-        elif isinstance(self.model, Callable):
             return self.model(shape)
+        elif isinstance(self.model, Callable):
+            return self.model((10, 10))  # Temporary shape for compatibility
         return self.model
 
     def _get_fitted(self, train: Dataset, val: Dataset | None = None) -> MODEL_CLASSES:
         train = train.select_columns([self.x_key] + list(self.task_names))
-        M = self.M(train.shape)
+        M = self.M(train[self.x_key][:].shape)
         if isinstance(M, Baseline):
             if self.verbose:
                 logger.info("Start fit for Baseline model")
@@ -147,6 +150,8 @@ class Evaluator:
         elif self.trainer is None:
             raise ValueError("Trainer must be provided if not using baseline model")
         else:
+            M.cfg.task_names = self.task_names
+            M.cfg.n_classes = self.n_classes
             if self.verbose:
                 logger.info(f"Start fit for model {M}")
             tl = DataLoader(train, **self.kws)
@@ -563,7 +568,7 @@ class SaeMetrics:
     activation_prop: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
 
     def report(self, k: int = 1, by: str = "activation_prop") -> pl.DataFrame:
-        """Produce a dataframe which for each latent, reports the top n labels for each
+        """Produce a dataframe which for each latent, reports the top k labels for each
         metric
 
         Parameters
