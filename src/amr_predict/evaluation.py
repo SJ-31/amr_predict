@@ -124,9 +124,6 @@ class Evaluator:
             assert (
                 len(self.task_names) == 1
             ), "Must only supply one task name if using an sklearn estimator"
-            assert (
-                self.n_classes is not None
-            ), "Number of classes must be given at init if using sklearn estimator"
 
     def M(self, shape: tuple | None = None) -> MODEL_CLASSES:
         if isinstance(self.model, Callable) and shape is not None:
@@ -420,6 +417,7 @@ class Evaluator:
         """
         y_true = test_dset.to_polars().select(self.task_names).to_torch()
         y_pred = self.predict(model, test_dset)
+        assert self.n_classes is not None, "Number of classes must be given"
         if self.is_sklearn:
             y_pred = torch.tensor(y_pred)
             if self.task_type == "regression":
@@ -1007,7 +1005,7 @@ class LatentAblation:
         return dset
 
     def _eval(self, dataset: Dataset, agg: bool = True) -> pl.DataFrame:
-        cv = self.cv(dataset, **self.eval_kws)
+        cv = self.eva.cv(dataset, **self.eval_kws)
         if agg:
             cv = cv.group_by(["task", "metric"]).agg(
                 pl.col("value").mean(), pl.col("value").std().alias("value_std")
@@ -1062,11 +1060,49 @@ class LatentAblation:
             perf_ablated = self._eval(
                 self._format_dataset(x, y.select(task), how=how, ablate_idx=latent_idx)
             ).rename({"value": "value_ablated", "value_std": "value_std_ablated"})
-            df = perf_original.join(
-                perf_ablated, on=["task", "metric", "test_set"]
-            ).with_columns(pl.lit(task).alias("task"))
+            df = perf_original.join(perf_ablated, on=["task", "metric"])
             results.append(df)
-        return pl.concat([results])
+        return pl.concat(results)
+
+
+# * Utility functions
+
+
+def gen_dummy_embeddings(
+    anno_matrix: torch.Tensor,
+    d_model: int,
+    nonlinearity="relu",
+    noise_scale: float | None = 0.01,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """
+    Generate dummy embeddings of a binary annotation matrix
+
+    Parameters
+    -----------
+    d_model: target embedding dimension (< anno_matrix.shape[0] for superposition)
+    """
+
+    n_annots = anno_matrix.shape[1]
+
+    # Random projection matrix, normalized columns
+    W = torch.randn(n_annots, d_model)
+    W = W / torch.norm(W, dim=0)
+
+    X = torch.matmul(anno_matrix, W)  # (n_samples, d_embed)
+
+    if nonlinearity == "relu":
+        X = torch.nn.functional.relu(X)
+    elif nonlinearity == "tanh":
+        X = torch.nn.functional.tanh(X)
+
+    if noise_scale is not None:
+        noise = noise_scale * torch.randn(*X.shape)
+        X += noise
+    else:
+        noise = None
+
+    return X, W, noise
+
 
 def to_binary_form(
     df: pl.DataFrame, sample_col: str, label_col: str, sep: str = ";"
