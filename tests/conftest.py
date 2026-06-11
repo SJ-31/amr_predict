@@ -100,6 +100,8 @@ def random_linked_dset(tmp_path, rng, custom_cols: dict[str, Callable] | None = 
     txt = Text()
     food = Food()
     fruits = food._dataset["fruits"][:10]
+    fruits_bin = food._dataset["fruits"][:2]
+    color_bin = txt._dataset["color"][:2]
     dna = list("ATCG")
 
     def fn(n: int = 1000, dim: int = 10) -> LinkedDataset:
@@ -117,6 +119,8 @@ def random_linked_dset(tmp_path, rng, custom_cols: dict[str, Callable] | None = 
             "id": range(n),
             "word": txt.words(n),
             "c1": [txt.color() for _ in range(n)],
+            "b1": rng.choice(fruits_bin, size=n, replace=True),
+            "b2": rng.choice(color_bin, size=n, replace=True),
             "c2": rng.choice(fruits, size=n, replace=True),
             "s1": [
                 "".join(

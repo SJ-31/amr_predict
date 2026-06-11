@@ -248,6 +248,9 @@ def test_dataset(make_default_cache):
     loader = DataLoader(ds, batch_size=3)
     assert ds[:2]["x"].shape[0] == 2
     assert next(iter(loader))["x"].shape[0] == 3
+    x, y = ds.to_torch()
+    print(x)
+    assert x.shape[0] == y.height
     print(cache.to_pl(as_array=True).collect())
     d2 = LinkedDataset(meta=df, cache=cache, text_key="key", x_key="x", level="tokens")
     print(d2[:])

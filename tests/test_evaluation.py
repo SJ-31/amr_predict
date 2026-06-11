@@ -18,7 +18,6 @@ from amr_predict.evaluation import (
 from amr_predict.metadata import encode_strs, with_metadata
 from amr_predict.metrics import multitask_all_cls
 from amr_predict.models import MLP, Baseline
-from amr_predict.sae import BatchTopK
 from amr_predict.utils import (
     ModuleConfig,
     Preprocessor,
@@ -81,15 +80,35 @@ def test_add_ctrl(toy_dset, env):
 
 @pytest.mark.parametrize("how", ["embedding", "reconstruction", "activation"])
 def test_sae_ablate(random_linked_dset, how):
+    from amr_predict.sae import BatchTopK
+    from amr_predict.sae_external import get_default_cfg
+
     dummy_embeddings = random_linked_dset(dim=100)
 
-    cfg: ModuleConfig = ModuleConfig(act_size=100, dict_size=1000, top_k=5)
+    sae_defaults = get_default_cfg()
+    sae_defaults["act_size"] = 100
+    sae_defaults["dict_size"] = 1000
+    sae_defaults["device"] = "cpu"
+    sae_defaults["dtype"] = torch.float64
+
+    cfg: ModuleConfig = ModuleConfig(**sae_defaults)
     trainer = L.Trainer(max_epochs=20, enable_progress_bar=False)
     sae = BatchTopK(cfg, x_key="x")
     loader = DataLoader(dummy_embeddings, batch_size=10)
     trainer.fit(sae, train_dataloaders=loader)
 
-    ablator = LatentAblation(eva=Evaluator(RandomForestClassifier()), x_key="x")
+    ablator = LatentAblation(
+        eva=Evaluator(RandomForestClassifier(), x_key="x"),
+        sae=sae,
+        eval_kws={"n_repeats": 2, "n_splits": 3},
+    )
+    res = ablator.on_binary_tasks(
+        x=dummy_embeddings["x"][:],
+        y=dummy_embeddings.meta,
+        how=how,
+        to_ablate={"b1": [0, 1, 2], "b2": [82]},
+    )
+    logger.info("ablated {}", res)
 
 
 def test_mlp_cls(toy_dset):

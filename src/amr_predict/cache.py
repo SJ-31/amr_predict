@@ -618,6 +618,12 @@ class LinkedDataset(td.Dataset):
             joined = joined.explode("token", "token_idx")
         return joined
 
+    def to_torch(self, explode_tokens: bool = True) -> tuple[Tensor, pl.DataFrame]:
+        exploded = self.to_pl(explode_tokens)
+        key = self.level.removesuffix("s")
+        x = exploded[key].to_torch()
+        return x, exploded.drop(key)
+
     def to_anndata(self) -> ad.Anndata:
         df: pl.DataFrame = self.to_pl()
         x_col = self.level.removesuffix("s")
