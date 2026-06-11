@@ -30,6 +30,25 @@ class Metadata:
 
 
 @define
+class AblationSpec:
+    seqtype: ae.SeqTypes
+    level: Levels
+    sae: str
+    embedding_method: ae.EmbeddingModels
+    pooling: ae.BasicPoolings | str
+    to_ablate: dict[str, list[int]]
+
+
+@define
+class AblationAnalysis:
+    spec: list[AblationSpec]
+    probe: str
+    probe_kws: dict
+    eval_kws: dict
+    loader_kws: dict
+
+
+@define
 class TrainerCfg:
     # ── Core training ──────────────────────────────────────────────
     max_epochs: int = field(default=100)
@@ -317,6 +336,7 @@ class SnakeEnv:
     eval_sae: EvalSAECfg
     probing: Probing
     dummy_embeddings: DummyEmbeddings
+    ablation_analysis: AblationAnalysis
 
     # Misc rule config
     slurm_time_limit: str = "18-00:00:00"
@@ -343,7 +363,7 @@ class SnakeEnv:
     def datasets(self) -> Path:
         return self.outdir / "datasets"
 
-    def get_outputs(self) -> tuple[list, dict]:
+    def get_outputs(self) -> list:
         out: list = [
             self.outdir / "label_cooccurrence.csv",
             self.outdir / "cooccurrence_stats.yaml",
@@ -358,7 +378,8 @@ class SnakeEnv:
             self.outdir / "analyses/distance_correlation.csv",
         ]
         custom_saes: dict = self.saes["custom"]
-
+        if self.ablation_analysis.spec:
+            out.append(self.outdir / "analyses/sae_ablations.csv")
         for st in self.seqtypes:
             # TODO: the intermediate outputs (mainly embeddings) can be omitted
             # and left to snakemake wildcards to decide

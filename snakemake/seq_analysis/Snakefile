@@ -201,6 +201,13 @@ use rule base as sae_label_eval with:
     output:
         f"{env.outdir}/analyses/.sae_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pkl",
 
+use rule base as sae_ablation_analysis with:
+    input:
+        embeddings=f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
+        sae=f"{OUTDIR}/saes_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pt",
+    output:
+        f"{OUTDIR}/analyses/.sae_ablation_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.csv",
+
 
 # ** Other metrics
 
@@ -380,6 +387,15 @@ use rule base as collect_sae_label_evals with:
         sae_output,
     output:
         env.outdir / "analyses/sae_label_evaluation.csv",
+
+use rule base as collect_sae_ablations with:
+    input:
+        *[
+            f"{OUTDIR}/analyses/.sae_ablation_tmp/{a.seqtype}_{a.level}/natural-0/{a.embedding_method}-{a.pooling}-{a.sae}.csv"
+            for a in env.ablation_analysis.spec
+        ],
+    output:
+        f"{OUTDIR}/analyses/sae_ablations.csv",
 
 
 # rule sae_metrics:
