@@ -121,10 +121,10 @@ def load_embeddings(
     pooling = BasicPoolings[pooling] if level == "seqs" else None
     if with_metadata and ENV.metadata.file.exists():
         seq_df = seq_df.join(
-            read_tabular(ENV.metadata.file),
+            read_tabular(ENV.metadata.file).unique(SCOL),
             how="left",
             left_on="id",
-            right_on=ENV.metadata.sample_col,
+            right_on=SCOL,
         )
     elif with_metadata:
         raise ValueError("No existing metadata file specified in env")
@@ -230,9 +230,7 @@ def train_sae_helper(
     torch.save(sae.state_dict(), save_sae_to)
 
 
-def get_activations_helper(
-    dset: LinkedDataset | Dataset,
-) -> tuple[Dataset, dict | None]:
+def get_from_sae(dset: LinkedDataset | Dataset) -> tuple[Dataset, dict | None]:
     if not INPUT["sae"]:
         raise NotImplementedError()
         # TODO: unfinished
@@ -250,6 +248,30 @@ def get_activations_helper(
     return act_dset, loss
 
 
+def label_eval_helper(dataset: pl.DataFrame, metadata) -> SaeMetrics:
+    from amr_predict.evaluation import EvalSAE
+
+    size = dataset["activation"][:].shape[1]
+    dataset = dataset.to_polars().cast({"activation": pl.Array(pl.Float32, size)})
+    dataset = dataset.join(
+        metadata,
+        how="left",
+        left_on="id",
+        right_on=SCOL,
+        validate="m:1",
+    )
+    eva = EvalSAE(
+        acts=dataset["activation"].to_torch(), threshold=ENV.eval_sae.threshold
+    )
+    metrics = eva.score_latents(
+        labels=dataset.drop("activation"),
+        label_col=LCOL,
+        sample_col="id",
+        label_sep=LABEL_SEP,
+    )
+    return metrics
+
+
 # * Rules
 
 
@@ -259,7 +281,7 @@ def get_activations():
         variation="natural",
         vmethod="0",
     )
-    act_dset, loss = get_activations_helper(dset)
+    act_dset, loss = get_from_sae(dset)
     act_dset.save_to_disk(snakemake.output[0])
     loss_out = {
         it: PARAMS[it]
@@ -271,8 +293,6 @@ def get_activations():
 
 
 
-def sae_label_eval():
-    from amr_predict.evaluation import EvalSAE
 
     metadata = read_tabular(ENV.metadata.file).unique(ENV.metadata.sample_col)
     dataset = load_from_disk(INPUT[0]).with_format("torch", dtype=torch.float32)
@@ -295,12 +315,22 @@ def sae_label_eval():
         label_col=ENV.metadata.label_col,
         sample_col="id",
         label_sep=ENV.metadata.label_sep,
+
+def sae_label_eval():
+    dset: LinkedDataset = load_embeddings(
+        cache_completion_file=INPUT["embeddings"],
+        variation="natural",
+        vmethod="0",
+        with_metadata=True,
     )
+    activations, loss = get_from_sae(dset)
+    metrics = label_eval_helper(activations, dset.meta)
     result = {
         item: PARAMS[item]
         for item in ("seqtype", "level", "embedding_method", "pooling", "sae")
     }
     result["metrics"] = metrics
+    result["loss"] = loss
     with open(snakemake.output[0], "wb") as f:
         pickle.dump(result, f)
 
@@ -314,8 +344,10 @@ def collect_sae_label_evals():
         .explode(cs.array(), cs.list())
     )  # WARNING: [2026-05-28 Thu] this is exceptionally slow
     # and produces millions of rows if top_k is too high
+    losses = collect_from_pkl(lambda x: pl.DataFrame(x.pop("loss")))
 
     combined.write_csv(snakemake.output[0])
+    losses.write_csv(snakemake.output[1])
 
 
 def collect_sae_perf():

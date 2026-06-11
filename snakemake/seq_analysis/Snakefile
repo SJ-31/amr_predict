@@ -12,6 +12,7 @@ configfile: "env.yaml"
 
 env = SnakeEnv.new(config)
 
+
 OUTDIR = env.outdir
 DATASETS = env.datasets
 
@@ -169,7 +170,7 @@ def is_pretrained(wc):
     return wc.get("sae") in (env.saes["pretrained"] or [])
 
 
-use rule base as get_activations with:
+use rule base as sae_label_eval with:
     input:
         embeddings=branch(
             is_pretrained,
@@ -189,10 +190,7 @@ use rule base as get_activations with:
             / f"{wc['embedding_method']}-{wc['pooling']}-{wc['sae']}.pt",
         ),
     output:
-        directory(
-            f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}"
-        ),
-        f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pkl",
+        f"{OUTDIR}/analyses/.sae_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pkl",
 
 
 use rule base as sae_label_eval with:
@@ -387,6 +385,8 @@ use rule base as collect_sae_label_evals with:
         sae_output,
     output:
         env.outdir / "analyses/sae_label_evaluation.csv",
+        env.outdir / "sae_performance_metrics.csv",
+
 
 use rule base as collect_sae_ablations with:
     input:

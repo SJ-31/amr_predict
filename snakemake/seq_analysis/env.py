@@ -18,7 +18,9 @@ from yte import process_yaml
 Levels = Enum("Levels", (("TOKENS", "tokens"), ("SEQS", "seqs")))
 
 
-cattrs.register_structure_hook(Union[str, bool], Union[str, bool])
+cattrs.register_structure_hook(
+    Union[str, bool], Union[str, bool], Union[ae.BasicPoolings | str]
+)
 
 
 @define
@@ -377,20 +379,12 @@ class SnakeEnv:
             self.outdir / "analyses/random_neighbor_score.csv",
             self.outdir / "analyses/distance_correlation.csv",
         ]
-        custom_saes: dict = self.saes["custom"]
         if self.ablation_analysis.spec:
             out.append(self.outdir / "analyses/sae_ablations.csv")
         for st in self.seqtypes:
-            # TODO: the intermediate outputs (mainly embeddings) can be omitted
-            # and left to snakemake wildcards to decide
-            # The final outputs should be the analyses which will specify which
-            # embeddings are required
-            acts_prefix: str = f"{self.datasets}/activations_{st.value}"
             embedding_prefix: str = f"{self.datasets}/embedded_{st.value}"
 
             for mname, mspec in self.embedding_methods[st].items():
-                for s in custom_saes.keys():
-                    out.append(f"{acts_prefix}_tokens/{mname}-0-{s}")
                 for p in mspec.poolings:
                     out.append(
                         f"{embedding_prefix}_seqs/natural-0/{mname}-{p.value}.completed"
@@ -405,8 +399,6 @@ class SnakeEnv:
                         out.append(
                             f"{embedding_prefix}_seqs/randomized-{rnd}/{mname}-{p.value}.completed"
                         )
-                    for sae in custom_saes:
-                        out.append(f"{acts_prefix}_seqs/{mname}-{p.value}-{sae}")
 
             if self.saes["pretrained"]:
                 for sae, spec in self.saes["pretrained"].items():
@@ -415,7 +407,6 @@ class SnakeEnv:
                         / f"activations_{st.value}_{spec.level.value}"
                         / f"{spec.embedding}-_-{sae}"
                     )
-
         return out
 
     @classmethod
