@@ -344,6 +344,35 @@ def sae_label_eval():
         pickle.dump(result, f)
 
 
+def sae_ablation_analysis():
+    from amr_predict.evaluation import Evaluator, LatentAblation
+    from amr_predict.metrics import classifier_dispatch
+
+    dset: LinkedDataset = load_embeddings(
+        cache_completion_file=INPUT["embeddings"],
+        variation="natural",
+        vmethod="0",
+        with_metadata=True,
+    )
+    sae = lookup_sae(PARAMS["sae"], act_size=dset[0]["x"].shape[1])
+    sae.eval()
+    sae.load_state_dict(torch.load(INPUT["sae"]))
+    model = classifier_dispatch(
+        ENV.ablation_analysis.probe, **ENV.ablation_analysis.probe_kws
+    )
+    ablator = LatentAblation(
+        eva=Evaluator(model=model, x_key="x", **ENV.ablation_analysis.loader_kws),
+        sae=sae,
+        eval_kws=ENV.ablation_analysis.eval_kws,
+    )
+    x, y = dset.to_torch()
+    results = []
+    for h in ["activation", "embedding", "reconstruction"]:
+        df = ablator.on_binary_tasks(x=x, y=y[LCOL], separator=LABEL_SEP)
+        results.append(df.with_columns(how=h))
+    pl.concat(results, how="diagonal_relaxed").write_csv(snakemake.output[0])
+
+
 def collect_sae_label_evals():
     import polars.selectors as cs
 
@@ -613,8 +642,20 @@ def probing_permutation_tests():
     combined.write_csv(snakemake.output[0])
 
 
-# TODO: Will need to adjust for multiple testing with this
-# def collect_probing
+# TODO: can also include other probing tests if needed
+def collect_probing_permutation_test():
+    from scipy.stats import false_discovery_control
+
+    collected = pl.concat([pl.read_csv(f) for f in INPUT], how="vertical_relaxed")
+    result = []
+    for _, group in collected.group_by(["test", "metric"]):
+        group = group.with_columns(
+            pl.Series(false_discovery_control(group["p_value"], method="by"))
+        )
+        result.append(group)
+    # 'by' correction of the FDC function is more conservative, but makes
+    # no assumption of test dependency
+    pl.concat(result, how="vertical_relaxed").write_csv(snakemake.output[0])
 
 
 def find_baseline():
