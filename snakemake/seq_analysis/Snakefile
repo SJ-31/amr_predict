@@ -193,11 +193,14 @@ use rule base as sae_label_eval with:
         f"{OUTDIR}/analyses/.sae_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pkl",
 
 
-use rule base as sae_label_eval with:
+use rule base as sae_label_eval_dummy with:
     input:
-        f"{DATASETS}/activations_{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}",
+        embeddings=f"{DATASETS}/dummy_embeddings/{{d_model}}/embeddings",
+        indices=f"{DATASETS}/dummy_embeddings/{{d_model}}/indices.pkl",
+        sae=f"{OUTDIR}/dummy_saes/{{sae}}-{{d_model}}.pt",
     output:
-        f"{env.outdir}/analyses/.sae_tmp/{{seqtype}}_{{level}}/{{embedding_method}}-{{pooling}}-{{sae}}.pkl",
+        metrics=f"{OUTDIR}/analyses/.sae_dummy_tmp/{{sae}}-{{d_model}}.pkl",
+
 
 use rule base as sae_ablation_analysis with:
     input:

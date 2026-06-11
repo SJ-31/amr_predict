@@ -7,6 +7,7 @@ from collections import defaultdict
 from collections.abc import Callable
 
 import numpy as np
+from amr_predict.evaluation import SaeMetrics
 from lightning.pytorch.callbacks import ModelCheckpoint
 
 sys.path.append("/py_lib")
@@ -292,29 +293,37 @@ def get_activations():
         pickle.dump(loss_out, f)
 
 
+def make_dummy_embeddings():
+    from amr_predict.evaluation import gen_dummy_embeddings, to_binary_form
+
+    rng = np.random.default_rng(ENV.rng)
+    metadata = read_tabular(ENV.metadata.file).unique(SCOL)
+    n = ENV.dummy_embeddings.n
+    chosen = rng.choice(range(metadata.height), size=n)
+    metadata = metadata[chosen, :]
+    encoded, weights, noise = gen_dummy_embeddings(
+        anno_matrix=to_binary_form(
+            metadata, sample_col=SCOL, label_col=LCOL, sep=LABEL_SEP
+        ).to_torch(),
+        d_model=PARAMS["d_model"],
+        nonlinearity=ENV.dummy_embeddings.nonlinearity,
+        noise_scale=ENV.dummy_embeddings.noise_scale,
+    )
+    train_idx, test_idx = ms.train_test_split(range(n))
+    train_idx, val_idx = ms.train_test_split(train_idx, random_state=ENV.rng)
+    with open(snakemake.output["indices"], "wb") as f:
+        pickle.dump({"train": train_idx, "val": val_idx, "test": test_idx}, f)
+    dset = Dataset.from_dict({"x": encoded}).add_column("id", metadata[SCOL])
+    dset.save_to_disk(snakemake.output["embeddings"])
+    torch.save(weights, snakemake.output["weights"])
+    torch.save(noise, snakemake.output["noise"])
 
 
+def sae_label_eval_dummy():
     metadata = read_tabular(ENV.metadata.file).unique(ENV.metadata.sample_col)
-    dataset = load_from_disk(INPUT[0]).with_format("torch", dtype=torch.float32)
-    size = dataset["activation"][:].shape[1]
-    dataset: pl.DataFrame = dataset.to_polars().cast(
-        {"activation": pl.Array(pl.Float32, size)}
+    activations, loss = get_from_sae(
+        load_from_disk(INPUT["embeddings"]).with_format("torch", dtype=torch.float32),
     )
-    dataset = dataset.join(
-        metadata,
-        how="left",
-        left_on="id",
-        right_on=ENV.metadata.sample_col,
-        validate="m:1",
-    )
-    eva = EvalSAE(
-        acts=dataset["activation"].to_torch(), threshold=ENV.eval_sae.threshold
-    )
-    metrics = eva.score_latents(
-        labels=dataset.drop("activation"),
-        label_col=ENV.metadata.label_col,
-        sample_col="id",
-        label_sep=ENV.metadata.label_sep,
 
 def sae_label_eval():
     dset: LinkedDataset = load_embeddings(
@@ -408,6 +417,25 @@ def train_sae():
         ckpt_dir=ckpt_dir,
         log_dir=log_dir,
         save_sae_to=snakemake.output[0],
+        index_file=INPUT[1],
+    )
+
+
+def train_sae_dummy():
+    sae_name = PARAMS["sae"]
+    d_model = PARAMS["d_model"]
+    run_name = f"dummy-{d_model}-train_sae-{sae_name}"
+    outpath = Path(snakemake.output[0])
+    ckpt_dir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_checkpoints"
+    dset = load_from_disk(INPUT["embeddings"]).with_format("torch")
+    log_dir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_wandb"
+    train_sae_helper(
+        dset=dset,
+        run_name=run_name,
+        ckpt_dir=ckpt_dir,
+        log_dir=log_dir,
+        save_sae_to=snakemake.output[0],
+        index_file=INPUT["indices"],
     )
 
 
