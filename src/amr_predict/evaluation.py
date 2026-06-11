@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Callable, Literal, TypeAlias, get_args
+from typing import Any, Callable, Literal, TypeAlias
 
 import fastcluster
 import jaxtyping
@@ -25,6 +25,7 @@ from amr_predict.metrics import (
     multitask_metrics2df,
 )
 from amr_predict.models import Baseline
+from amr_predict.sae import BaseSAE
 from amr_predict.utils import TASK_TYPES, Preprocessor, load_as, read_tabular
 from attrs import Factory, define, field, fields_dict, validators
 from beartype import beartype
@@ -40,7 +41,7 @@ from sklearn.metrics import (
     silhouette_samples,
     silhouette_score,
 )
-from sklearn.preprocessing import LabelBinarizer, OneHotEncoder
+from sklearn.preprocessing import LabelBinarizer, LabelEncoder, OneHotEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader
 
@@ -85,8 +86,8 @@ class Evaluator:
     kws: dict = field(factory=dict)
     pp: Preprocessor | None = None
     x_key: str | None = field(default=None)
-    task_type: TASK_TYPES = "classification"
-    task_names: Sequence = field(factory=lambda: ["y"])
+    task_type: TASK_TYPES | None = "classification"
+    task_names: Sequence | None = field(factory=lambda: ["y"])
     verbose: bool = True
     is_sklearn: bool = True
     n_classes: Sequence[int] | None = field(
@@ -631,7 +632,10 @@ class SaeMetrics:
 
 @define
 class EvalSAE:
-    acts: Tensor = field(validator=lambda _, __, value: len(value.shape) == 2)
+    acts: Tensor = field(
+        validator=lambda _, __, value: len(value.shape) == 2,
+        converter=lambda x: torch.nan_to_num(x, 0),
+    )
     threshold: float
     # Activations of shape n_samples x d_sae
     U: umap.UMAP = field(init=False)
@@ -958,6 +962,112 @@ class EvalSAE:
         )
 
 
+@define
+class LatentAblation:
+    """
+    Class for evaluating the effects of latent ablation on downstream
+    tasks
+
+    Parameters
+    ----------
+    contribution_threshold : float
+        Threshold determining whether a neuron contributes to a given
+        latent in the SAE encoder matrix
+    """
+
+    sae: BaseSAE
+    eva: Evaluator
+    contribution_threshold: float = 0.0
+    eval_kws: dict = field(factory=dict)
+
+    def _format_dataset(
+        self,
+        x: Tensor,
+        y: pl.DataFrame,
+        how: Literal["activation", "embedding", "reconstruction"],
+        ablate_idx: Tensor | None = None,
+    ) -> Dataset:
+        ablate = ablate_idx is not None
+        if ablate and how == "activation":
+            x = self.sae.predict_step(x)
+            x[:, ablate_idx] = 0
+        elif ablate and how == "reconstruction":
+            x = self.sae.reconstruct(x, ablate=ablate_idx)
+        elif ablate:
+            w_enc = self.sae.w_enc  # Rows are latent ids, cols are original
+            # features
+            contributing = torch.argwhere(
+                w_enc[ablate_idx, :] > self.contribution_threshold
+            )  # Second column gives the columns where `cond` is true
+            indices = contributing[:, 1].unique()
+            x[:, indices] = 0
+        dset = Dataset.from_dict(
+            dict(**{self.eva.x_key: x}, **y.to_dict())
+        ).with_format("torch")
+        return dset
+
+    def _eval(self, dataset: Dataset, agg: bool = True) -> pl.DataFrame:
+        cv = self.cv(dataset, **self.eval_kws)
+        if agg:
+            cv = cv.group_by(["task", "metric"]).agg(
+                pl.col("value").mean(), pl.col("value").std().alias("value_std")
+            )
+        return cv
+
+    def on_binary_tasks(
+        self,
+        x: Tensor,
+        y: pl.Series | pl.DataFrame,
+        how: Literal["activation", "embedding", "reconstruction"],
+        to_ablate: dict[str, list[int]],
+        separator: str = ";",
+    ) -> pl.DataFrame:
+        """
+        Parameters
+        ----------
+        x : Tensor
+            Original model embeddings
+        how : Literal
+            Method of applying the ablation, which determines what type
+        of data the probe is trained on
+        to_ablate : dict[str, list[int]]
+            Dictionary mapping attribute names to the latents that should
+            be ablated
+
+        Notes
+        -----
+        For each task, the selected latents should be hypothesized to
+        correspond to the attribute
+
+        EX: select latents with the highest recall on that attribute
+        """
+        n_y: int = len(y) if isinstance(y, pl.Series) else y.shape[0]
+        assert x.shape[0] == n_y, "Differing number of samples in x, y"
+        if isinstance(y, pl.Series):
+            y = to_binary_form(
+                pl.DataFrame({"id": range(n_y), "y": y}), "id", "y", sep=separator
+            )
+        else:
+            encoder = LabelEncoder()
+            encoded = {}
+            for task in to_ablate:
+                assert len(y[task].unique() == 2), "Tasks must be binary"
+                encoded[task] = encoder.fit_transform(y[task])
+            y = y.with_columns(*[pl.Series(v).alias(k) for k, v in encoded.items()])
+        results = []
+        for task, latent_idx in to_ablate.items():
+            self.eva.task_names = [task]
+            self.eva.n_classes = 2
+            perf_original = self._eval(self._format_dataset(x, y.select(task), how=how))
+            perf_ablated = self._eval(
+                self._format_dataset(x, y.select(task), how=how, ablate_idx=latent_idx)
+            ).rename({"value": "value_ablated", "value_std": "value_std_ablated"})
+            df = perf_original.join(
+                perf_ablated, on=["task", "metric", "test_set"]
+            ).with_columns(pl.lit(task).alias("task"))
+            results.append(df)
+        return pl.concat([results])
+
 def to_binary_form(
     df: pl.DataFrame, sample_col: str, label_col: str, sep: str = ";"
 ) -> pl.DataFrame:
@@ -979,9 +1089,6 @@ def to_binary_form(
             result, on=sample_col, how="left", validate="m:1"
         )
     return result.drop(sample_col)
-
-
-# * Utility functions
 
 
 def encode_labels(labels) -> tuple[np.ndarray, LabelBinarizer | OneHotEncoder, list]:
