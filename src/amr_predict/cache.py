@@ -200,22 +200,48 @@ class EmbeddingCache:
             .to_list()
         )
 
-    def rewrite(self, n_rows: int = 100_000, token_prop: float | None = None) -> None:
-        "Read all entries into memory, remove duplicates and re-write cache to contain N parquet files"
-        lf: pl.LazyFrame = self.to_pl().unique("seq")
-        if token_prop:
-            col = lf.select("token").collect()["token"].is_not_null()
-            if col.any():
-                lf = self._mask_in_df(lf, "token", 1 - token_prop, height=len(col))
-        lf.sink_parquet(
-            pl.PartitionMaxSize(
-                base_path=self.dir,
-                file_path=lambda x: x.full_path.parent.joinpath(
-                    f"{self.prefix}_{x.file_idx}.parquet"
-                ),
-                max_size=n_rows,
-            )
-        )
+    def rewrite(
+        self,
+        keep_only: Sequence | None = None,
+        size: int | str = "500MB",
+    ) -> None:
+        """
+        Read all entries into memory, remove duplicates and re-write cache to contain N parquet files.
+
+        Parameters
+        ----------
+        keep_only : Sequence | None
+            Keep only the texts in this sequence when rewriting
+        size : int
+            Size of saved files in bytes
+        """
+        size_str = f"'{size}'" if isinstance(size, str) else size
+        copy_str = f"(FORMAT parquet, FILENAME_PATTERN '{self.prefix}', FILE_SIZE_BYTES {size_str})"
+        tmpdir = self.dir / "tmp"
+        tmpdir.mkdir()
+        if keep_only:
+            keep = pl.DataFrame({"k": list(keep_only)})
+            query = f"""
+            COPY
+                (SELECT DISTINCT ON (key) *
+                FROM '{self._glob()}'
+                WHERE key IN (SELECT k FROM keep))
+            TO '{str(tmpdir)}' {copy_str}
+            """
+        else:
+            query = f"""
+            COPY
+                (SELECT DISTINCT ON (key) *
+                FROM '{self._glob()}')
+            TO '{str(tmpdir)}' {copy_str}
+            """
+        duckdb.query(query)
+        for f in self.dir.glob(self._glob(False)):
+            f.unlink()
+        for f in tmpdir.iterdir():
+            f.rename(self.dir / f.name)
+        tmpdir.rmdir()
+        self._set_seen()
 
     def _glob(self, with_dir: bool = True) -> str:
         if with_dir:
