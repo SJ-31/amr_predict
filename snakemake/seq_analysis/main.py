@@ -777,6 +777,12 @@ def get_embeddings():
         kws["pooling_kws"] = {}
     kws["save_proba"] = PARAMS["level"] == "tokens"
     embedder: ModelEmbedder = ModelEmbedder.new(model, only_cache=True, **kws)
+    if ENV.rewrite_cache is not None:
+        if ENV.rewrite_cache.keep_only:
+            keep = df["sequence"]
+        else:
+            keep = None
+        embedder.cache.rewrite(keep_only=keep, size=ENV.rewrite_cache.size)
     embedder.embed(dataset=Dataset.from_polars(df))
     out.write_text("completed")
 

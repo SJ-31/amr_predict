@@ -32,6 +32,12 @@ class Metadata:
 
 
 @define
+class Rewrite:
+    keep_only: bool = False
+    size: str | int = "500MB"
+
+
+@define
 class AblationSpec:
     seqtype: ae.SeqTypes
     level: Levels
@@ -347,6 +353,7 @@ class SnakeEnv:
     log_wandb: bool = True
     wandb_project: str | None = None
     embedding_key: str = "x"
+    rewrite_cache: Rewrite | None = None
     embedding_max_lengths: dict = field(default={"esm": 2048, "seqLens": 512})
     test: bool = False
     seqtypes: list[ae.SeqTypes] = field(
