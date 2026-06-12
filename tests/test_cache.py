@@ -199,6 +199,31 @@ def test_cache1(make_default_cache):
     print(cache.retrieve(pl.Series(["cascade", "meadow", "spice"]), level="seqs"))
 
 
+def test_cache_rewrite(make_default_cache):
+    from mimesis import Food
+
+    food = Food()
+
+    cache: EmbeddingCache
+    cache, words = make_default_cache()
+    assert len(cache) == len(words)
+    # Add new words
+    to_add = {food.fruit().replace(" ", "") for _ in range(20)}
+    cache.save(to_add, embed_fn=dummy_embed, batch_size=3)
+    assert len(cache) == len(words) + len(to_add)
+    print(cache.to_pl().collect())
+    old_n = len(list(cache.dir.iterdir()))
+    cache.rewrite(keep_only=words)
+    new_n = len(list(cache.dir.iterdir()))
+    print(f"Old n files {old_n}, New n files {new_n}")
+    print(cache.to_pl().collect())
+    assert len(cache) == len(words), "Failed to remove unwanted words"
+    assert cache.to_pl().collect().height == len(
+        words
+    ), "Failed to remove unwanted words"
+    print(list(cache.dir.iterdir()))
+
+
 def test_cache2(make_default_cache):
     cache: EmbeddingCache
     cache, words = make_default_cache()
