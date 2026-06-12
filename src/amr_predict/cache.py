@@ -216,7 +216,7 @@ class EmbeddingCache:
             Size of saved files in bytes
         """
         size_str = f"'{size}'" if isinstance(size, str) else size
-        copy_str = f"(FORMAT parquet, FILENAME_PATTERN '{self.prefix}', FILE_SIZE_BYTES {size_str})"
+        copy_str = f"(FORMAT parquet, FILENAME_PATTERN '{self.prefix}_', FILE_SIZE_BYTES {size_str})"
         tmpdir = self.dir / "tmp"
         tmpdir.mkdir()
         if keep_only:

@@ -18,8 +18,9 @@ from yte import process_yaml
 Levels = Enum("Levels", (("TOKENS", "tokens"), ("SEQS", "seqs")))
 
 
+cattrs.register_structure_hook(Union[str, bool], Union[str, bool])
 cattrs.register_structure_hook(
-    Union[str, bool], Union[str, bool], Union[ae.BasicPoolings | str]
+    Union[ae.BasicPoolings, str], Union[ae.BasicPoolings, str]
 )
 
 
@@ -34,7 +35,7 @@ class Metadata:
 @define
 class Rewrite:
     keep_only: bool = False
-    size: str | int = "500MB"
+    size: str = "500MB"
 
 
 @define

@@ -50,7 +50,7 @@ def get_individually(batch) -> list[str]:
     return result
 
 
-if __name__ == "__main__":
+def get_sequences():
     for i, batch in enumerate(batched(ids, 500)):
         batch_number = start_from + i
         outfile = workdir / f"batch_{batch_number}.fasta"
@@ -67,3 +67,9 @@ if __name__ == "__main__":
         ):
             with open(file, "w") as f:
                 f.write("\n".join(to_write))
+
+
+# def get_dates()
+
+if __name__ == "__main__":
+    get_sequences()
