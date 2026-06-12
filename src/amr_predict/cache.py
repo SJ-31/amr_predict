@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import itertools
 from collections.abc import Sequence
 from pathlib import Path
@@ -357,7 +358,7 @@ class EmbeddingCache:
             save_into["token_pr"] = []
 
         for batch in itertools.chain([first_batch], batches):
-            tmp = save_into.copy()
+            tmp = copy.deepcopy(save_into)
             try:
                 gen = embed_fn(batch)
                 # REVIEW: you didn't wanna have to do this, but had trouble with
@@ -380,7 +381,7 @@ class EmbeddingCache:
                 if counter == self.save_interval:
                     logger.info("Writing batch into cache")
                     self._write(lfs)
-                    lfs, counter = [], 0
+                    counter = 0
                 else:
                     counter += 1
             except Exception as e:
@@ -394,6 +395,7 @@ class EmbeddingCache:
             file_count = len(list(self.dir.glob(self._glob(False))))
             save_path = self.dir.joinpath(f"{self.prefix}_{file_count}.parquet")
             pl.concat(lfs).sink_parquet(save_path)
+            lfs.clear()
 
     def to_dataset(
         self,
