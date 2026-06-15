@@ -1,0 +1,59 @@
+stress_responses: # Response to anything that could cause harm, which would include stress
+  - GO:0006979 # response to oxidative stress
+  - GO:0006950 # response to stress
+  - GO:0009636 # response to toxic substance
+  - GO:0006970 # response to osmotic stress
+  - GO:0042594 # response to starvation
+synaptic_processes:
+  - GO:0099560 # synaptic signaling
+  - GO:0048489 # synaptic vesicle transport
+embryonic_development:
+  - GO:0009790 # embryo development
+  - GO:0007398 # ectoderm development
+  - GO:0007492 # endoderm development
+environmental_response:
+  - GO:0009408 # response to heat
+  - GO:0009410 # response to xenobiotic stimulus
+  - GO:0009416 # response to light stimulus
+  - GO:0009606 # tropism
+cell_cell_communication:
+  - GO:0009988 # cell-cell recognition
+asexual_reproduction:
+  - GO:0009847 # spore germination
+sexual_reproduction:
+  - GO:0007276 # gamete generation
+  - GO:0007338 # single fertilization
+cell_adhesion:
+  - GO:0007155 # cell adhesion
+  - GO:0007160 # cell-matrix adhesion
+cellular_defenses: # Terms related to defense mechanisms
+  - GO:0097278 #  complement-dependent cytotoxicity
+  - GO:0002376 # immune system process
+  - GO:0002682 # regulation of immune system process
+carbohydrate_metabolism:
+  - GO:0005975 # carbohydrate metabolic process
+  - GO:0005976 # polysaccharide metabolic process
+endomembrane_system_transport:
+  - GO:0048193 # Golgi vesicle transport
+  - GO:0016192 # vesicle-mediated transport
+  - GO:0016197 # endosomal transport
+nutrient_transport:
+  - GO:0006869 # lipid transport
+  - GO:0006865 # amino acid transport
+  - GO:0008643 # carbohydrate transport
+  - GO:0015031 # protein transport
+  - GO:0015833 # peptide transport
+  - GO:0051180 # vitamin transport
+taxis:
+  - GO:0042330 # taxis
+protein_metabolism:
+  - GO:0006518 # peptide metabolic process
+  - GO:0006520 # amino acid metabolic process
+tissue_development:
+  - GO:0009888 # tissue development
+viral_life_cycle:
+  - GO:0019058 # viral life cycle
+  - GO:0019080 # viral gene expression
+  - GO:0035891 # exit from host cell
+  - GO:0046794 # transport of virus
+# inorganic_compound_metabolism:
