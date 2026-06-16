@@ -2,10 +2,72 @@ extracellular:
   - GO:0005576 # extracellular region
   - GO:0005615 # extracellular space
   - GO:0055044 # symplast
+transcription_factor:
+  - GO:0033256 # I-kappaB/NF-kappaB complex
+  - GO:0000439 # transcription factor TFIIH core complex
+  - GO:0005667 # transcription regulator complex
+  - GO:0017053 # transcription repressor complex
 vesicle:
   - GO:0031410 # cytoplasmic vesicle
-nucleosome:
+  - GO:0031982 # vesicle
+cytoplasm_cytosol:
+  - GO:0005737 # cytoplasm
+  - GO:0005829 # cytosol
+peroxisome:
+  - GO:0005777 # peroxisome
+ubiquitylation:
+  - GO:0000151 # ubiquitin ligase complex
+  - GO:0031371 # ubiquitin conjugating enzyme complex
+glycolysis:
+  - GO:0010316 # pyrophosphate-dependent phosphofructokinase complex
+  - GO:0045254 # pyruvate dehydrogenase complex
+  - GO:0045253 # pyruvate dehydrogenase (lipoamide) phosphatase complex
+  - GO:0000015 # phosphopyruvate hydratase complex
+  - GO:0010316 # pyrophosphate-dependent phosphofructokinase complex
+proteasome:
+  - GO:0000502 # proteasome complex
+  - GO:0005839 # proteasome core complex
+cytoskeleton:
+  - GO:0005856 # cytoskeleton
+  - GO:0008290 # F-actin capping protein complex
+receptor:
+  - GO:0043235 # receptor complex
+synapse:
+  - GO:0045202 # synapse
+  - GO:0098820 # trans-synaptic protein complex
+dna_replication:
+  - GO:0033202 # DNA helicase complex
+  - GO:0042575 # DNA polymerase complex
+  - GO:0005663 # DNA replication factor C complex
+dna_repair:
+  - GO:0048476 # Holliday junction resolvase complex
+  - GO:0000109 # nucleotide-excision repair complex
+  - GO:0033061 # DNA recombinase mediator complex
+  - GO:0032300 # mismatch repair complex
+chloroplast:
+  - GO:0009507 # chloroplast
+lipid_metabolism:
+  - GO:0009317 # acetyl-CoA carboxylase complex
+  - GO:0005835 # fatty acid synthase complex
+prokaryotic_genome:
+  - GO:0005727 # extrachromosomal circular DNA
+  - GO:0043590 # bacterial nucleoid
+plastid:
+  - GO:0009536 # plastid
+photosynthesis:
+  - GO:0009579 # thylakoid
+  - GO:0048492 # ribulose bisphosphate carboxylase complex
+  - GO:0030076 # light-harvesting complex
+nuclear_structures:
+  - GO:0005634 # nucleus
+  - GO:0005643 # nuclear pore
+chromatin:
   - GO:0000786 # nucleosome
+  - GO:0000776 # kinetochore
+  - GO:0000796 # condensin complex
+  - GO:0008278 # cohesin complex
+  - GO:0005694 # chromosome
+  - GO:0000782 # telomere cap complex
 respiratory_chain:
   - GO:0045251 # electron transfer flavoprotein complex
   - GO:0045273 # respiratory chain complex II (succinate dehydrogenase)
@@ -21,9 +83,10 @@ viral:
   - GO:0019031 # viral envelope
   - GO:0019013 # viral nucleocapsid
   - GO:0019028 # viral capsid
-immune_recognition_complex:
+immune_complex:
   - GO:0042824 # MHC class I peptide loading complex
   - GO:0042611 # MHC protein complex
+  - GO:0019814 # immunoglobulin complex
 membrane_transporter:
   - GO:0043190 # ATP-binding cassette (ABC) transporter complex
   - GO:0005891 # voltage-gated calcium channel complex
@@ -33,19 +96,28 @@ rna_processing:
   - GO:0030532 # small nuclear ribonucleoprotein complex
   - GO:0005732 # sno(s)RNA-containing ribonucleoprotein complex
   - GO:0045293 # mRNA editing complex
+cell_surface: # "gene products that are attached (integrated or loosely bound) to the plasma membrane or cell wall"
+  - GO:0009986 # cell surface
 membrane:
   - GO:0016020 # membrane
   - GO:0098796 # membrane protein complex
+  - GO:0031967 # organelle envelope
   - GO:0030112 # glycocalyx
   - GO:0005886 # plasma membrane
 ribosome:
   - GO:0005840 # ribosome
+  - GO:0030684 # preribosome
+vacuole:
+  - GO:0005773 # vacuole
+  - GO:0020003 # symbiont-containing vacuole
 transcription:
   - GO:0005849 # mRNA cleavage factor complex
   - GO:0030880 # RNA polymerase complex
   - GO:0008023 # transcription elongation factor complex
   - GO:0000346 # transcription export complex
-  - GO:0000439 # transcription factor TFIIH core complex
-  - GO:0005667 # transcription regulator complex
-  - GO:0017053 # transcription repressor complex
   - GO:0016591 # RNA polymerase II, holoenzyme
+catalytic_complex:
+  - GO:1902494 # catalytic complex
+other_organelle:
+  - GO:0033099 # attachment organelle
+  - GO:0043226 # organelle
