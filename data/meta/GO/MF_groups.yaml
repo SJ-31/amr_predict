@@ -1,0 +1,42 @@
+toxin:
+  - GO:0090729 # toxin activity
+transcription_regulation:
+  - GO:0003712 # transcription coregulator activity
+cytoskeleton_organization:
+  - GO:0005200 # structural constituent of cytoskeleton
+  - GO:0008092 # cytoskeletal protein binding
+  - GO:0003774 # cytoskeletal motor activity
+ecm_binding_structure:
+  - GO:0005201 #  extracellular matrix structural constituent
+  - GO:0050840 # extracellular matrix binding
+  - GO:0001968 # fibronectin binding
+nucleic_acid_binding:
+  - GO:0003677 # DNA binding
+  - GO:0003723 # RNA binding
+  - GO:0003729 # mRNA binding
+  - GO:0003676 # nucleic acid binding
+  - GO:0002054 # nucleobase binding
+  - GO:0001882 # nucleoside binding
+  - GO:0019843 # rRNA binding
+chromatin_binding:
+  - GO:0003682 # chromatin binding
+ribosome_structure:
+  - GO:0003735 # structural constituent of ribosome
+synapse_structure:
+  - GO:0098918 # structural constituent of synapse
+nutrient_molecule_degradation:
+  - GO:0008233 # peptidase activity
+  - GO:0016298 # lipase activity
+kinase:
+  - GO:0016301 # kinase activity
+immune_molecule_activity:
+  - GO:0005137 # interleukin-5 receptor binding
+  - GO:0005138 # interleukin-6 receptor binding
+  - GO:0005125 # cytokine activity
+  - GO:0019864 # IgG binding
+  - GO:0003823 # antigen binding
+ligase:
+  - GO:0016874 # ligase activity
+transmembrane_transport:
+  - GO:0044325 # transmembrane transporter binding
+  - GO:0022857 # transmembrane transporter activity
