@@ -1,0 +1,51 @@
+extracellular:
+  - GO:0005576 # extracellular region
+  - GO:0005615 # extracellular space
+  - GO:0055044 # symplast
+vesicle:
+  - GO:0031410 # cytoplasmic vesicle
+nucleosome:
+  - GO:0000786 # nucleosome
+respiratory_chain:
+  - GO:0045251 # electron transfer flavoprotein complex
+  - GO:0045273 # respiratory chain complex II (succinate dehydrogenase)
+  - GO:0045275 # respiratory chain complex III
+  - GO:0045277 # respiratory chain complex IV
+mitochondrion:
+  - GO:0005739 # mitochondrion
+cell_periphery:
+  - GO:0071944 # cell periphery
+viral:
+  - GO:0055036 # virion membrane
+  - GO:0044423 # virion component
+  - GO:0019031 # viral envelope
+  - GO:0019013 # viral nucleocapsid
+  - GO:0019028 # viral capsid
+immune_recognition_complex:
+  - GO:0042824 # MHC class I peptide loading complex
+  - GO:0042611 # MHC protein complex
+membrane_transporter:
+  - GO:0043190 # ATP-binding cassette (ABC) transporter complex
+  - GO:0005891 # voltage-gated calcium channel complex
+  - GO:0016472 # sodium ion-transporting two-sector ATPase complex
+rna_processing:
+  - GO:0005681 # spliceosomal complex
+  - GO:0030532 # small nuclear ribonucleoprotein complex
+  - GO:0005732 # sno(s)RNA-containing ribonucleoprotein complex
+  - GO:0045293 # mRNA editing complex
+membrane:
+  - GO:0016020 # membrane
+  - GO:0098796 # membrane protein complex
+  - GO:0030112 # glycocalyx
+  - GO:0005886 # plasma membrane
+ribosome:
+  - GO:0005840 # ribosome
+transcription:
+  - GO:0005849 # mRNA cleavage factor complex
+  - GO:0030880 # RNA polymerase complex
+  - GO:0008023 # transcription elongation factor complex
+  - GO:0000346 # transcription export complex
+  - GO:0000439 # transcription factor TFIIH core complex
+  - GO:0005667 # transcription regulator complex
+  - GO:0017053 # transcription repressor complex
+  - GO:0016591 # RNA polymerase II, holoenzyme
