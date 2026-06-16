@@ -60,6 +60,24 @@ snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
           --executor "${SMK_EXECUTOR}" 
 '''
 
+# * Running scripts
+[tasks.update_go_candidates]
+dir = "./scripts"
+run = '''
+python go_group_labelling.py -u
+'''
+
+[tasks.label_go]
+dir = "./scripts"
+run = '''
+python go_group_labelling.py -l
+'''
+
+[tasks.go_category_counts]
+dir = "./scripts"
+run = '''
+python go_group_labelling.py -g
+'''
 
 # * Nextflow runs
 [tasks.bacass]

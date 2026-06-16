@@ -3,57 +3,148 @@ stress_responses: # Response to anything that could cause harm, which would incl
   - GO:0006950 # response to stress
   - GO:0009636 # response to toxic substance
   - GO:0006970 # response to osmotic stress
+  - GO:0080135 # regulation of cellular response to stress
   - GO:0042594 # response to starvation
+mitochondrial_processes:
+  - GO:0006839 # mitochondrial transport
+locomotion:
+  - GO:0040011 # locomotion
+  - GO:0007626 # locomotory behavior
+  - GO:0050879 # multicellular organismal movement
+muscle_system:
+  - GO:0003012 # muscle system process
+energy_generation:
+  - GO:0006091 # generation of precursor metabolites and energy
 synaptic_processes:
   - GO:0099560 # synaptic signaling
+  - GO:1902803 # regulation of synaptic vesicle transport
+  - GO:0098810 # neurotransmitter reuptake
+  - GO:0006836 # neurotransmitter transport
+  - GO:0098693 # regulation of synaptic vesicle cycle
   - GO:0048489 # synaptic vesicle transport
 embryonic_development:
   - GO:0009790 # embryo development
   - GO:0007398 # ectoderm development
   - GO:0007492 # endoderm development
+digestive_system:
+  - GO:0022600 # digestive system process
 environmental_response:
-  - GO:0009408 # response to heat
   - GO:0009410 # response to xenobiotic stimulus
+  - GO:0070887 # cellular response to chemical stimulus
+  - GO:0031667 # response to nutrient levels
   - GO:0009416 # response to light stimulus
   - GO:0009606 # tropism
+cell_proliferation:
+  - GO:0008283 # cell population proliferation, the multicellular case
+  - GO:0042127 # regulation of cell population proliferation
+cytoskeleton_organization:
+  - GO:0007010 # cytoskeleton organization
 cell_cell_communication:
   - GO:0009988 # cell-cell recognition
-asexual_reproduction:
-  - GO:0009847 # spore germination
-sexual_reproduction:
-  - GO:0007276 # gamete generation
-  - GO:0007338 # single fertilization
+  - GO:0007154 # cell communication
+  - GO:0010646 # regulation of cell communication
+  - GO:0007267 # cell-cell signaling
+motility:
+  - GO:0048870 # Cell motility
+  - GO:2000145 # regulation of cell motility
+chromatin_organization:
+  - GO:0006325 # chromatin organization
 cell_adhesion:
   - GO:0007155 # cell adhesion
   - GO:0007160 # cell-matrix adhesion
 cellular_defenses: # Terms related to defense mechanisms
   - GO:0097278 #  complement-dependent cytotoxicity
   - GO:0002376 # immune system process
+  - GO:0061517 # macrophage proliferation
   - GO:0002682 # regulation of immune system process
 carbohydrate_metabolism:
   - GO:0005975 # carbohydrate metabolic process
   - GO:0005976 # polysaccharide metabolic process
+  - GO:1901135 # carbohydrate derivative metabolic process
 endomembrane_system_transport:
   - GO:0048193 # Golgi vesicle transport
   - GO:0016192 # vesicle-mediated transport
+  - GO:0035495 # regulation of SNARE complex disassembly
   - GO:0016197 # endosomal transport
-nutrient_transport:
+excretion:
+  - GO:0000050 # urea cycle
+  - GO:0007588 # excretion
+anatomical_structure_development:
+  - GO:0048856 # anatomical structure development
+nutrient_transport_localization:
   - GO:0006869 # lipid transport
   - GO:0006865 # amino acid transport
   - GO:0008643 # carbohydrate transport
+  - GO:1901264 # carbohydrate derivative transport
   - GO:0015031 # protein transport
+  - GO:0033037 # polysaccharide localization
+  - GO:0052575 # carbohydrate localization
+  - GO:0008104 # intracellular protein localization
+  - GO:0010876 # lipid localization
+  - GO:0045184 # establishment of protein localization
   - GO:0015833 # peptide transport
   - GO:0051180 # vitamin transport
-taxis:
+nucleic_acid_transport_localization: # also includes transport and
+  # localization of nucleic acid monomers
+  - GO:1904823 # purine nucleobase transmembrane transport
+  - GO:0050658 # RNA transport
+  - GO:0050657 # nucleic acid transport
+  - GO:0006403 # RNA localization
+  - GO:0035928 # rRNA import into mitochondrion
+developmental_growth:
+  - GO:0048589 # developmental growth
+  - GO:0048771 # tissue remodeling
+organelle_movement_localization:
+  - GO:0051640 # organelle localization
+  - GO:0006996 # organelle organization
+proteostasis:
+  - GO:0050821 # protein stabilization
+  - GO:0035966 # response to topologically incorrect protein
+  - GO:0006457 # protein folding
+photosynthesis:
+  - GO:0015979 # photosynthesis
+cell_cycle_phase_transition:
+  - GO:0045023 # G0 to G1 transition
+  - GO:0051726 # regulation of cell cycle
+  - GO:0044770 # cell cycle phase transition
+  - GO:0070314 # G1 to G0 transition
+  - GO:0000320 # re-entry into mitotic cell cycle
+reproduction_multicellular:
+  - GO:0048609 # multicellular organismal reproductive process
+  - GO:0007276 # gamete generation
+  - GO:0007338 # single fertilization
+  - GO:0007565 # female pregnancy
+  - GO:0009856 # pollination
+  # - GO:0009847 # spore germination
+hormone_metabolism:
+  - GO:0042445 # hormone metabolic process
+cell_killing: # All forms of cell death
+  - GO:0001906 # cell killing
+taxis_kinesis:
+  - GO:0050920 # regulation of chemotaxis
   - GO:0042330 # taxis
+  - GO:0042465 # kinesis
 protein_metabolism:
   - GO:0006518 # peptide metabolic process
   - GO:0006520 # amino acid metabolic process
+recognition_of_environment:
+  - GO:0051606 # detection of stimulus
+  - GO:0008037 # cell recognition
+  - GO:0007600 # sensory perception
 tissue_development:
   - GO:0009888 # tissue development
+symbiont_life_cycle:
+  - GO:0044409 # symbiont entry into host
+  - GO:0052008 # symbiont-mediated disruption of host cellular anatomical structure
+  - GO:0001907 # symbiont-mediated killing of host cell
+  - GO:0044003 # symbiont-mediated perturbation of host process
 viral_life_cycle:
   - GO:0019058 # viral life cycle
+  - GO:0016032 # viral process
   - GO:0019080 # viral gene expression
   - GO:0035891 # exit from host cell
+  - GO:1903900 # regulation of viral life cycle
   - GO:0046794 # transport of virus
+horizontal_gene_transfer:
+  - GO:0009292 # horizontal gene transfer
 # inorganic_compound_metabolism:
