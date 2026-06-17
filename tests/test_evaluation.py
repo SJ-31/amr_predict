@@ -293,12 +293,21 @@ def test_score_latents():
         {"labels": ["A", "A", "A", "B", "B", "B"], "sample": range(6)}
     )
     eval = EvalSAE(acts, threshold=0.3)
-    scores = eval.score_latents(labels, label_col="labels")
+    scores = eval.score_latents(labels, label_col="labels", normalize=False)
+    # print(scores.mcc)
     report = scores.report(k=1)
     assert report["label"].to_list() == ["B", "A", "A", "B", "B"]
     assert report["sensitivity"].to_list() == pytest.approx(
         [2 / 3, 2 / 3, 2 / 3, 1 / 3, 2 / 3]
     )
+    scores2 = eval.score_latents(
+        labels, label_col="labels", normalize=False, thresholds=np.linspace(0, 1, 10)
+    )
+    prec_recall = scores2.precision_recall_curve(0, ["A", "B"])
+    # prec_recall.show()
+    fpr_tpr = scores2.roc_curve(0, ["A", "B"])
+    # fpr_tpr.show()
+
 
 
 @pytest.mark.parametrize(

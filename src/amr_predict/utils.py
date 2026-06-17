@@ -41,7 +41,7 @@ def sum_to_one(x: jaxtyping.Shaped[Any, "a"]) -> jaxtyping.Shaped[Any, "a"]:
     if isinstance(x, np.ndarray):
         x = x.copy()
     else:
-        x = x.clone()
+        x = x.detach().clone()
     x[-1] = 1 - x[:-1].sum()
     return x
 
