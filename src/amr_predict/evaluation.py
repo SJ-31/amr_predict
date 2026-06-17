@@ -633,9 +633,62 @@ class SaeMetrics:
             **tmp,
         )
 
-    # def average_precision(self, latent_idx):
+    def _label_idx(self, labels: Sequence[str]) -> np.ndarray:
+        return np.array([self.labels.index_of(l) for l in labels])
 
-    # def precision_recall_curve(self, latent_idx: str, labels: Sequence[str]):
+    def _curve_helper(
+        self,
+        latent: str | int,
+        labels: Sequence[str],
+        x_attr: str,
+        y_attr: str,
+        x_label: str,
+        y_label: str,
+    ) -> gg.ggplot:
+        idx = self._label_idx(labels)
+        # Shape of the following is (n thresholds, n labels), each
+        # row is the precision/recall of `latent` across all labels
+        # for that threshold
+        lidx = latent if isinstance(latent, int) else self.lidx.index_of(latent)
+        x: TENSOR2D_FLOAT = getattr(self, x_attr)[:, idx, lidx]
+        y: TENSOR2D_FLOAT = getattr(self, y_attr)[:, idx, lidx]
+
+        tmp = [
+            pl.DataFrame(data, schema=labels)
+            .with_columns(pl.Series(self.thresholds).alias("threshold"))
+            .unpivot(index=["threshold"], variable_name="label", value_name=m)
+            for data, m in zip((x, y), (x_attr, y_attr))
+        ]
+        df = tmp[0].join(tmp[1], on=["threshold", "label"])
+        return (
+            gg.ggplot(df, gg.aes(x=x_attr, y=y_attr, color="label"))
+            + gg.geom_point()
+            + gg.geom_line()
+            + gg.xlab(x_label)
+            + gg.ylab(y_label)
+        )
+
+    def roc_curve(self, latent: str | int, labels: Sequence[str]) -> gg.ggplot:
+        return self._curve_helper(
+            latent,
+            labels,
+            y_attr="fpr",
+            x_attr="sensitivity",
+            x_label="False Positive Rate",
+            y_label="True Positive Rate",
+        )
+
+    def precision_recall_curve(
+        self, latent: str | int, labels: Sequence[str]
+    ) -> gg.ggplot:
+        return self._curve_helper(
+            latent,
+            labels,
+            y_attr="precision",
+            x_attr="sensitivity",
+            x_label="Recall",
+            y_label="Precision",
+        )
 
     def report(
         self, k: int = 1, by: str = "activation_prop", threshold: float | None = None
