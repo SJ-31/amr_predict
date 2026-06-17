@@ -14,6 +14,7 @@ import pandera.polars as pa
 import plotnine as gg
 import polars as pl
 import polars.selectors as cs
+import sklearn.metrics as sm
 import sklearn.model_selection as ms
 import torch
 import torch.nn as nn
@@ -28,6 +29,7 @@ from amr_predict.models import Baseline
 from amr_predict.sae import BaseSAE
 from amr_predict.utils import TASK_TYPES, Preprocessor, load_as, read_tabular
 from attrs import Factory, define, field, fields_dict, validators
+from attrs.validators import instance_of
 from beartype import beartype
 from datasets import Dataset, DatasetDict
 from loguru import logger
@@ -36,11 +38,6 @@ from numpy.random import Generator
 from polars.functions import random
 from sklearn.base import BaseEstimator
 from sklearn.cluster import KMeans
-from sklearn.metrics import (
-    calinski_harabasz_score,
-    silhouette_samples,
-    silhouette_score,
-)
 from sklearn.preprocessing import LabelBinarizer, LabelEncoder, OneHotEncoder
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -56,6 +53,7 @@ References
 
 
 TENSOR2D_FLOAT = jaxtyping.Float[Tensor, "a b"]
+TENSOR3D_FLOAT = jaxtyping.Float[Tensor, "a b c"]
 
 
 @define
@@ -555,18 +553,93 @@ class SaeMetrics:
     labels: pl.Series = field(
         converter=lambda val: val if isinstance(val, pl.Series) else pl.Series(val)
     )
-    sensitivity: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
-    fpr: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
-    fnr: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
-    specificity: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
-    precision: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
-    negative_predictive_value: Tensor = field(
-        validator=validators.instance_of(TENSOR2D_FLOAT)
+    thresholds: jaxtyping.Float[Tensor, "a"]
+    sensitivity: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
+    fpr: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
+    fnr: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
+    specificity: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
+    precision: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
+    negative_predictive_value: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
+    mcc: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
+    accuracy: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
+    activation_prop: Tensor = field(validator=instance_of(TENSOR2D_FLOAT))
+    _threshold_map: dict[float, int] = field(
+        init=False,
+        default=Factory(
+            lambda self: {t: i for i, t in enumerate(self.thresholds)}, takes_self=True
+        ),
     )
-    accuracy: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
-    activation_prop: Tensor = field(validator=validators.instance_of(TENSOR2D_FLOAT))
 
-    def report(self, k: int = 1, by: str = "activation_prop") -> pl.DataFrame:
+    @classmethod
+    def new(
+        cls,
+        activations: Tensor,
+        thresholds: Sequence[float],
+        anno_occurence: Tensor,
+        activation_prop: Tensor,
+        labels: pl.Series,
+    ):
+        lidx = pl.Series([f"l{i}" for i in range(activations.shape[1])])
+
+        acts_dtype = activations.dtype
+        metrics = (
+            "mcc",
+            "sensitivity",
+            "specificity",
+            "fpr",
+            "fnr",
+            "precision",
+            "accuracy",
+            "negative_predictive_value",
+        )
+        tmp: dict[str, TENSOR3D_FLOAT] = {
+            k: torch.zeros(len(thresholds), len(labels), activations.shape[1])
+            for k in metrics
+        }
+        if not isinstance(thresholds, Tensor):
+            thresholds = torch.tensor(thresholds)
+        thresholds = sorted(thresholds)
+        for i, t in enumerate(thresholds):
+            pred_active = (activations >= t).to(acts_dtype)
+            pred_dead = torch.where(pred_active == 1, 0, 1).to(acts_dtype)
+            anno_inverted = torch.where(anno_occurence == 1, 0, 1).to(acts_dtype)
+
+            # All matrices below of shape G x dim_size
+            true_pos = torch.matmul(anno_occurence, pred_active)
+            false_pos = torch.matmul(anno_inverted, pred_active)
+            false_neg = torch.matmul(anno_occurence, pred_dead)
+            true_neg = torch.matmul(anno_inverted, pred_dead)
+
+            mcc = (true_pos * true_neg - false_pos * false_neg) / torch.sqrt(
+                (true_pos + false_pos)
+                * (true_pos + false_neg)
+                * (true_neg + false_pos)
+                * (true_neg + false_neg)
+            )
+            tmp["mcc"][i] = mcc
+            tmp["sensitivity"][i] = true_pos / (true_pos + false_neg)
+            tmp["specificity"][i] = true_neg / (true_neg + false_pos)
+            tmp["fnr"][i] = false_neg / (false_neg + true_pos)
+            tmp["fpr"][i] = false_pos / (false_pos + true_neg)
+            tmp["precision"][i] = true_pos / (true_pos + false_pos)
+            tmp["accuracy"][i] = (true_pos + true_neg) / activations.shape[0]
+            tmp["negative_predictive_value"][i] = true_neg / (true_neg + false_neg)
+
+        return cls(
+            lidx=lidx,
+            labels=labels,
+            thresholds=thresholds,
+            activation_prop=activation_prop,
+            **tmp,
+        )
+
+    # def average_precision(self, latent_idx):
+
+    # def precision_recall_curve(self, latent_idx: str, labels: Sequence[str]):
+
+    def report(
+        self, k: int = 1, by: str = "activation_prop", threshold: float | None = None
+    ) -> pl.DataFrame:
         """Produce a dataframe which for each latent, reports the top k labels for each
         metric
 
@@ -606,16 +679,26 @@ class SaeMetrics:
         If k > 1, the results for the top k labels are returned in lists
         """
         metric_fields = [
-            f for f in fields_dict(SaeMetrics).keys() if f not in {"labels", "lidx"}
+            f
+            for f in fields_dict(SaeMetrics).keys()
+            if f not in {"labels", "lidx", "thresholds", "_threshold_map"}
         ]
+        if threshold is None:
+            index = 0
+        else:
+            index = self._threshold_map[threshold]
         assert by in metric_fields, f"`by` must be one of {metric_fields} "
         data: Tensor = getattr(self, by)
+        if len(data.shape) > 2:
+            data = data[index]
         topk_vals, topk_idx = data.topk(k=k, dim=0)
         tmp = {"latent_idx": self.lidx, by: topk_vals.transpose(0, 1)}
         topk_idx = topk_idx.numpy()
         for metric in metric_fields:
             if metric != by:
                 cur = getattr(self, metric).numpy()
+                if len(cur.shape) > 2:
+                    cur = cur[index]
                 tmp[metric] = [cur[topk_idx[:, i], i] for i in range(len(self.lidx))]
         tmp["label"] = [self.labels[topk_idx[:, i]] for i in range(len(self.lidx))]
         tmp["frac_active"] = (self.activation_prop > 0).sum(
@@ -863,10 +946,14 @@ class EvalSAE:
         n_samples = acts.shape[0]
         tmp = {"latent_idx": lnames, "cluster": assignments}
         if silhouette:
-            tmp["silhouette_samples"] = silhouette_samples(acts, assignments)
-            tmp["silhouette_score"] = [silhouette_score(acts, assignments)] * n_samples
+            tmp["silhouette_samples"] = sm.silhouette_samples(acts, assignments)
+            tmp["silhouette_score"] = [
+                sm.silhouette_score(acts, assignments)
+            ] * n_samples
         if ch_index:
-            tmp["ch_index"] = [calinski_harabasz_score(acts, assignments)] * n_samples
+            tmp["ch_index"] = [
+                sm.calinski_harabasz_score(acts, assignments)
+            ] * n_samples
         return pl.DataFrame(tmp)
 
     def group_by_labels(
@@ -889,51 +976,15 @@ class EvalSAE:
             grouped, schema=list(unique_labels)
         ).with_columns(pl.Series(self.lidx).alias("latent_idx"))
 
-    def _compute_metrics(
-        self,
-        anno_occurence: Tensor,
-        activation_prop: Tensor,
-        labels: pl.Series,
-    ) -> SaeMetrics:
-        """
-        Calculate standard classification metrics for each latent's activation on the
-        a series of concepts.
-
-        Parameters
-        ----------
-        anno_occurence : Tensor
-            Binary matrix of shape n_concepts x n_samples, where the i,j entry is
-            1 if sample j has concept i
-        """
-        pred_active = (self.acts >= self.threshold).to(self.acts_dtype)
-        pred_dead = torch.where(pred_active == 1, 0, 1).to(self.acts_dtype)
-        anno_inverted = torch.where(anno_occurence == 1, 0, 1).to(self.acts_dtype)
-
-        # All matrices below of shape G x dim_size
-        true_pos = torch.matmul(anno_occurence, pred_active)
-        false_pos = torch.matmul(anno_inverted, pred_active)
-        false_neg = torch.matmul(anno_occurence, pred_dead)
-        true_neg = torch.matmul(anno_inverted, pred_dead)
-
-        return SaeMetrics(
-            lidx=self.lidx,
-            labels=labels,
-            sensitivity=true_pos / (true_pos + false_neg),
-            specificity=true_neg / (true_neg + false_pos),
-            fnr=false_neg / (false_neg + true_pos),
-            fpr=false_pos / (false_pos + true_neg),
-            precision=true_pos / (true_pos + false_pos),
-            accuracy=(true_pos + true_neg) / self.n,
-            negative_predictive_value=true_neg / (true_neg + false_neg),
-            activation_prop=activation_prop,
-        )
-
     def score_latents(
         self,
         labels: pl.DataFrame,
         label_col: str,
         sample_col: str = "sample",
         label_sep: str = ";",
+        acts: Tensor | None = None,
+        thresholds: Sequence[float] | None = None,
+        normalize: bool = True,
     ) -> SaeMetrics:
         """Score SAE latents for samples annotated with multiple labels
         i.e. labels that aren't mutually exclusive
@@ -946,16 +997,21 @@ class EvalSAE:
             String column in `labels` containing 0 or more labels for the sample,
             delimited by `label_sep`
         """
+        acts = self.acts.detach().clone() if acts is None else acts
+        if normalize:
+            acts = torch.nn.functional.normalize(acts)
         occurrences: pl.LazyFrame = to_binary_form(
             labels, label_col=label_col, sample_col=sample_col, sep=label_sep
         )
         # occurences is shape G x n where G is the total number of labels
         occur_vals: Tensor = occurrences.transpose().to_torch().to(self.acts_dtype)
-        sum_acts = torch.matmul(occur_vals / occur_vals.sum(dim=0), self.acts)
+        sum_acts = torch.matmul(occur_vals / occur_vals.sum(dim=0), acts)
 
-        return self._compute_metrics(
-            anno_occurence=occur_vals,
+        return SaeMetrics.new(
+            activations=acts,
+            thresholds=[self.threshold] if thresholds is None else thresholds,
             labels=occurrences.collect_schema().names(),
+            anno_occurence=occur_vals,
             activation_prop=sum_acts / sum_acts.sum(dim=0),
         )
 
