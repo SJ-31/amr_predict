@@ -64,19 +64,19 @@ snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
 [tasks.update_go_candidates]
 dir = "./scripts"
 run = '''
-python go_group_labelling.py -u
+python finalize_labels.py -u
 '''
 
 [tasks.label_go]
 dir = "./scripts"
 run = '''
-python go_group_labelling.py -l
+python finalize_labels.py -l
 '''
 
 [tasks.go_category_counts]
 dir = "./scripts"
 run = '''
-python go_group_labelling.py -g
+python finalize_labels.py -g
 '''
 
 # * Nextflow runs

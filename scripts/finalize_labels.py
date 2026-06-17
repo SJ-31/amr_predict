@@ -10,7 +10,6 @@ import polars as pl
 import yaml
 from amr_predict.utils import read_tabular
 from attrs import define, field
-from polars import meta
 from pyhere import here
 from yte import process_yaml
 
@@ -20,6 +19,7 @@ DF = pl.read_csv(WD / "go_attrs.csv", null_values="NA")
 METADATA_FILE = here(
     "data", "remote", "datasets", "2026-04-21_uniprot_swissprot_goa.tsv"
 )
+WRITE_TO = here("data", "meta", "2026-06-17_uniprot_swissprot_goa_labelled.tsv")
 G = nx.read_gml(WD / "go.gml", label="name")
 
 
@@ -72,7 +72,7 @@ def update_candidate_files():
                 return True
         return False
 
-    dist_thresholds = {"CC": 5, "BP": 4, "MF": 5}
+    dist_thresholds = {"CC": 5, "BP": 4, "MF": 7}
 
     dfs = {
         ns: DF.filter(
@@ -172,6 +172,21 @@ class GoGroup:
         return "NA"
 
 
+def add_sae_col(meta: pl.DataFrame) -> pl.DataFrame:
+    columns_to_combine = ["Gene Ontology IDs", "InterPro"]
+    # [2026-06-17 Wed] TODO: you downloaded a whole lot more features
+    # Parse them into simpler  formats and add them here
+    # they could also be used for probing tasks
+    # https://www.uniprot.org/help/return_fields
+    # https://www.uniprot.org/help/sequence_annotation
+    together = meta.with_columns(
+        pl.concat_str(columns_to_combine, separator=";", ignore_nulls=True).alias(
+            "All annotations"
+        )
+    )
+    return together
+
+
 def label_terms() -> tuple[pl.DataFrame, dict[str, pl.DataFrame]]:
     with open(here("snakemake", "seq_analysis", "env.yaml")) as f:
         env = process_yaml(f)
@@ -193,7 +208,9 @@ def label_terms() -> tuple[pl.DataFrame, dict[str, pl.DataFrame]]:
         for ns in ["BP", "CC", "MF"]
         if ns in label_df.columns
     }
-    return label_df, count_dfs
+    label_df = label_df.rename({ns: f"{ns}_custom" for ns in ["BP", "CC", "MF"]})
+    metadata = metadata.join(label_df, on=id_col)
+    return metadata, count_dfs
 
 
 def parse_args():
@@ -220,7 +237,8 @@ if __name__ == "__main__":
         for k, v in groups.items():
             print(f"{k}: {len(v)}")
     elif args["label"]:
-        labelled, counts = label_terms()
-        labelled.write_csv(WD / "labelled.csv")
-        for ns, DF in counts.items():
-            DF.write_csv(WD / f"{ns}_label_counts.csv")
+        labelled, counts, combined = label_terms()
+        for ns, df in counts.items():
+            df.write_csv(WD / f"{ns}_label_counts.csv")
+        labelled = add_sae_col(labelled)
+        labelled.write_csv(WRITE_TO)
