@@ -7,6 +7,7 @@ import numpy as np
 import polars as pl
 import polars.selectors as cs
 from attrs import Factory, define, field
+from loguru import logger
 
 # Taxonomic distance measured using shortest path between nodes
 # (basically the patristic distance but without summing)
@@ -105,7 +106,9 @@ class TaxonomyTree:
     rank_weights: dict = field(factory=lambda: {"species": 9})
 
     def species_or_lower(self, id: int) -> bool:
-        rank: str = self.G.nodes[id]["rank"]
+        rank: str = self.G.nodes[id].get("rank")
+        if not rank:
+            logger.debug("Missing rank for id {}", id)
         return rank in {
             "species",
             "subspecies",
@@ -123,11 +126,17 @@ class TaxonomyTree:
             "serotype",
         }
 
-    def dist(self, a: int, b: int) -> int:
-        lca: int = fast_lca(self.G, a, b)
+    def dist(self, a: int, b: int) -> float:
+        try:
+            lca: int = fast_lca(self.G, a, b)
+        except nx.NetworkXError:
+            return np.inf
         if self.species_or_lower(lca):
             return 0
-        lca_rank: str = self.G.nodes[lca]["rank"]
+        lca_rank: str = self.G.nodes[lca].get("rank")
+        if not lca_rank:
+            logger.debug("Missing rank for lca {}", lca)
+            return np.inf
         return RANK2LEVEL[lca_rank] - RANK2LEVEL["species"]
 
     @staticmethod
