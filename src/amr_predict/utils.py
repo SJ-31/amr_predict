@@ -37,6 +37,15 @@ logger.disable("amr_predict")
 TASK_TYPES: TypeAlias = Literal["classification", "regression", "reconstruction"]
 
 
+def sum_to_one(x: jaxtyping.Shaped[Any, "a"]) -> jaxtyping.Shaped[Any, "a"]:
+    if isinstance(x, np.ndarray):
+        x = x.copy()
+    else:
+        x = x.clone()
+    x[-1] = 1 - x[:-1].sum()
+    return x
+
+
 def expand_annotations(col: pl.Series | pd.Series, split: str = ";") -> np.ndarray:
     """
     Expand a series of string annotations e.g. ["anno1;anno2", "anno35;anno9;anno10", ...]

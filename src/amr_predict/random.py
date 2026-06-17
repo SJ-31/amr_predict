@@ -9,6 +9,7 @@ import amr_predict.enums as ae
 import dnachisel as dc
 import numpy as np
 import polars as pl
+from amr_predict.utils import sum_to_one
 from attrs import Factory, define, field, validators
 from loguru import logger
 from numpy.random import Generator
@@ -76,6 +77,7 @@ class Randomizer:
                     [counts[seq_col].index_of(c) for c in self.token_choices]
                 )
                 p = counts["count"][indices]
+                p = sum_to_one(p)
                 assert p.sum() == 1, f"Counts should sum to 1..., got {p.sum()} instead"
             else:
                 p = None
