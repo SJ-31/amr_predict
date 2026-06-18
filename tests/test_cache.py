@@ -65,6 +65,16 @@ WORDS = [
     "flame",
     "harbor",
 ]
+WORDS2 = [
+    "cascade",
+    "meadow",
+    "pillar",
+    "linen",
+    "throne",
+    "spice",
+    "amber",
+    "whisk",
+]
 
 
 @pytest.fixture
@@ -176,16 +186,7 @@ def test_cache1(make_default_cache):
     assert (c2["novel"] == torch.tensor([13, 14, 21])).all()
     assert (c2["harbor"] == torch.tensor([7, 0, 17])).all()
 
-    words2 = [
-        "cascade",
-        "meadow",
-        "pillar",
-        "linen",
-        "throne",
-        "spice",
-        "amber",
-        "whisk",
-    ]
+    words2 = copy.deepcopy(WORDS2)
     cache.save(words2, embed_fn=dummy_embed, batch_size=5)
     assert (cache["harbor"] == torch.tensor([7, 0, 17])).all()
     assert (cache["linen"] == torch.tensor([11, 8, 13])).all()
@@ -245,9 +246,18 @@ def test_multicache(tmp_path):
             tmp_path / m, save_mode="seqs", pooling=BasicPoolings[m.upper()]
         )
         ds = LinkedDataset(meta=df, cache=cache, text_key="key", x_key="x")
-        dfs.append(ds.to_pl())
-        assert (ds.to_pl()["key"].sort() == pl.Series(words).sort()).all()
+        cur = ds.to_pl()
+        dfs.append(cur)
+        assert (cur["key"].sort() == pl.Series(words).sort()).all()
+        print(cache.to_pl().collect())
     assert (dfs[0]["seq"][0] != dfs[1]["seq"][0]).any()
+    words2 = copy.deepcopy(WORDS2)
+    multicache.save(words2, embed_fn=dummy_embed, batch_size=2)
+
+    all_words = pl.Series(words + words2).sort()
+    for cache in multicache.caches.values():
+        cache_words = cache.to_pl().collect()["key"].sort()
+        assert (all_words == cache_words).all()
 
 
 def test_cache2(make_default_cache):

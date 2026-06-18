@@ -537,26 +537,28 @@ class MultiCache:
         schema, save_into = EmbeddingCache.gen_save_template(
             self.save_mode, False, first_batch, embed_fn
         )
+        save_into = {p: [] for p in self.spec}
+        save_into["key"] = []
         for batch in itertools.chain([first_batch], batches):
-            tmps: dict[BasicPoolings, dict] = {
-                k: copy.deepcopy(save_into) for k in self.spec
-            }
+            tmp = copy.deepcopy(save_into)
             try:
                 gen = embed_fn(batch)
                 for k, t, l in gen:
-                    for pooling_method, store in tmps.items():
-                        cur_lfs = lfs[pooling_method]
-                        store["key"].append(k)
-                        store["seq"].append(
+                    tmp["key"].append(k)
+                    for pooling in self.spec:
+                        tmp[pooling].append(
                             pool_tensor(
-                                t,
-                                method=pooling_method,
-                                **self.pooling_kws.get(pooling_method, {}),
+                                t, method=pooling, **self.pooling_kws.get(pooling, {})
                             )
                         )
-                        lf = pl.LazyFrame(store, schema=schema)
-                        self.seen |= set(store["key"])
-                        cur_lfs.append(lf)
+                for pooling in self.spec:
+                    lf = pl.LazyFrame(
+                        {"key": tmp["key"], "seq": tmp[pooling]}, schema=schema
+                    )
+                    keys = set(tmp["key"])
+                    self.caches[pooling].seen |= keys
+                    self.seen |= keys
+                    lfs[pooling].append(lf)
                 if counter == self.save_interval:
                     logger.info("Writing batch into cache")
                     self._write(lfs)
