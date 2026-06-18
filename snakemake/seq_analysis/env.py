@@ -380,16 +380,23 @@ class SnakeEnv:
             self.outdir / "cooccurrence_stats.yaml",
             self.outdir / "analyses/nn_all.csv",
             self.outdir / "analyses/covariate_correlation_all.csv",
-            self.outdir / "analyses/probing_permutation_tests.csv",
-            self.outdir / "analyses/nn_comparison.csv",
             self.outdir / "analyses/classifier_random_perf.csv",
             self.outdir / "analyses/sae_label_evaluation.csv",
             self.outdir / "analyses/classifiability.csv",
             self.outdir / "analyses/random_neighbor_score.csv",
             self.outdir / "analyses/distance_correlation.csv",
         ]
+        if (
+            self.neighbor_metrics.category_cols and self.neighbor_metrics.anno_cols
+        ) or self.test:
+            out.append(self.outdir / "analyses/nn_comparison.csv")
+        if self.probing.tasks or self.test:
+            out.append(self.outdir / "analyses/probing_permutation_tests.csv")
+        if self.test:
+            self.probing.tasks.append("dummy")
         if self.ablation_analysis.spec:
             out.append(self.outdir / "analyses/sae_ablations.csv")
+
         for st in self.seqtypes:
             embedding_prefix: str = f"{self.datasets}/embedded_{st.value}"
 
