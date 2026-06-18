@@ -16,6 +16,7 @@ from amr_predict.enums import (
     EmbeddingModels,
     EsmModels,
     EsmSynthraModels,
+    NTv3Models,
     OmniNaModels,
     SeqLensModels,
 )
@@ -37,12 +38,25 @@ from transformers import (
 )
 from transformers.modeling_outputs import MaskedLMOutput
 
+AUTOTOKENIZER_FIELD = field(
+    init=False,
+    default=Factory(
+        lambda self: AutoTokenizer.from_pretrained(self.model.value),
+        takes_self=True,
+    ),
+)
+
 
 def embedding_size(model: EmbeddingModels) -> int:
     if model == EmbeddingModels.esm3_open:
         raise NotImplementedError("figure this out")
     elif validate_model_group(model, SeqLensModels):
         return 512
+    elif validate_model_group(model, OmniNaModels):
+        return 3000
+    elif validate_model_group(model, NTv3Models):
+        return 128 * 7800  # Nearly 1MB
+    # https://github.com/instadeepai/nucleotide-transformer/blob/main/docs/nucleotide_transformer_v3.md#-sequence-length-requirements
     elif validate_model_group(model, EsmSynthraModels) or validate_model_group(
         model, EsmModels
     ):
@@ -151,7 +165,7 @@ class ModelEmbedder:
                 pooling=self.pooling,
                 pooling_kws=self.pooling_kws,
             )
-            if isinstance(self.pooling, dict)
+            if not isinstance(self.pooling, dict)
             else MultiCache(
                 spec=self.pooling,
                 pooling_kws=self.pooling_kws,
@@ -188,6 +202,15 @@ class ModelEmbedder:
         Returns a tuple of the embedded sequence, tensor of embedded tokens, and optionally
         tensor of token probabilities
         """
+        if hasattr(self, "m") and hasattr(self, "tokenizer"):
+            kws = {} if not hasattr(self, "tokenizer_kws") else self.tokenizer_kws
+            return automodel_embed(
+                sequences,
+                model=self.m,
+                tokenizer=self.tokenizer,
+                layer=self.hidden_layer,
+                tokenizer_kws=kws,
+            )
         raise NotImplementedError()
 
     @classmethod
@@ -263,7 +286,26 @@ class OmniNA(ModelEmbedder):
             takes_self=True,
         ),
     )
-    tokenizer: AutoTokenizer = field(
+    tokenizer: AutoTokenizer = AUTOTOKENIZER_FIELD
+    default_pad_token = "[PAD]"
+    default_eos_token = "</s>"
+    default_bos_token = "<s>"
+    default_unk_token = "<unk>"
+
+    def __attrs_post_init__(self):
+        special_tokens_dict = dict()
+        if self.tokenizer.pad_token is None:
+            special_tokens_dict["pad_token"] = self.default_pad_token
+        if self.tokenizer.eos_token is None:
+            special_tokens_dict["eos_token"] = self.default_eos_token
+        if self.tokenizer.bos_token is None:
+            special_tokens_dict["bos_token"] = self.default_bos_token
+        if self.tokenizer.unk_token is None:
+            special_tokens_dict["unk_token"] = self.default_unk_token
+        self.tokenizer.add_special_tokens(special_tokens_dict)
+        self.hf_setup(self.m)
+        super().__attrs_post_init__()
+
         init=False,
         default=Factory(
             lambda self: AutoTokenizer.from_pretrained(self.model.value),
