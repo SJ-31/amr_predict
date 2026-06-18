@@ -246,7 +246,7 @@ class WriteTrainingIndices:
 @define
 class FastaSpec:
     file: str
-    header_style: Literal["uniprot"] = "uniprot"
+    header_style: Literal["uniprot", "ensembl"] = "uniprot"
 
 
 # TODO: there's gotta be a better pattern for this... though it doesn't take that long to write
