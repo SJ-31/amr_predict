@@ -27,7 +27,7 @@ cattrs.register_structure_hook(
 @define
 class Metadata:
     file: Path = field(converter=Path)
-    sample_col: str
+    sample_col: dict
     label_col: str
     label_sep: str
 
@@ -378,8 +378,6 @@ class SnakeEnv:
         out: list = [
             self.outdir / "label_cooccurrence.csv",
             self.outdir / "cooccurrence_stats.yaml",
-            self.outdir / "analyses/nn_all.csv",
-            self.outdir / "analyses/covariate_correlation_all.csv",
             self.outdir / "analyses/classifier_random_perf.csv",
             self.outdir / "analyses/sae_label_evaluation.csv",
             self.outdir / "analyses/classifiability.csv",
@@ -389,6 +387,8 @@ class SnakeEnv:
         if (
             self.neighbor_metrics.category_cols and self.neighbor_metrics.anno_cols
         ) or self.test:
+            out.append(self.outdir / "analyses/nn_all.csv")
+            out.append(self.outdir / "analyses/covariate_correlation_all.csv")
             out.append(self.outdir / "analyses/nn_comparison.csv")
         if self.probing.tasks or self.test:
             out.append(self.outdir / "analyses/probing_permutation_tests.csv")

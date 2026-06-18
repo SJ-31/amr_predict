@@ -600,7 +600,7 @@ class SaeMetrics:
             thresholds = torch.tensor(thresholds)
         thresholds = sorted(thresholds)
         for i, t in enumerate(thresholds):
-            pred_active = (activations >= t).to(acts_dtype)
+            pred_active = (activations > t).to(acts_dtype)
             pred_dead = torch.where(pred_active == 1, 0, 1).to(acts_dtype)
             anno_inverted = torch.where(anno_occurence == 1, 0, 1).to(acts_dtype)
 
@@ -1037,7 +1037,7 @@ class EvalSAE:
         label_sep: str = ";",
         acts: Tensor | None = None,
         thresholds: Sequence[float] | None = None,
-        normalize: bool = True,
+        normalize: bool = False,
     ) -> SaeMetrics:
         """Score SAE latents for samples annotated with multiple labels
         i.e. labels that aren't mutually exclusive

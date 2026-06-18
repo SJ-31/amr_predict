@@ -77,7 +77,7 @@ class Randomizer:
                     [counts[seq_col].index_of(c) for c in self.token_choices]
                 )
                 p = counts["count"][indices]
-                p = sum_to_one(p)
+                p = sum_to_one(np.array(p))
                 assert p.sum() == 1, f"Counts should sum to 1..., got {p.sum()} instead"
             else:
                 p = None
