@@ -38,14 +38,6 @@ from transformers import (
 )
 from transformers.modeling_outputs import MaskedLMOutput
 
-AUTOTOKENIZER_FIELD = field(
-    init=False,
-    default=Factory(
-        lambda self: AutoTokenizer.from_pretrained(self.model.value),
-        takes_self=True,
-    ),
-)
-
 
 def embedding_size(model: EmbeddingModels) -> int:
     if model == EmbeddingModels.esm3_open:
@@ -155,22 +147,22 @@ class ModelEmbedder:
     valid_models: ClassVar[tuple[EmbeddingModels]] | None = None
     cache: EmbeddingCache = field(
         default=Factory(
-            lambda self: EmbeddingCache(
-                self.workdir,
-                save_mode=self.save_mode,
-                rng=self.rng,
-                save_proba=self.save_proba,
-                save_interval=self.save_interval,
-                token_amount=self.token_amount,
-                pooling=self.pooling,
-                pooling_kws=self.pooling_kws,
+            lambda x: EmbeddingCache(
+                x.workdir,
+                save_mode=x.save_mode,
+                rng=x.rng,
+                save_proba=x.save_proba,
+                save_interval=x.save_interval,
+                token_amount=x.token_amount,
+                pooling=x.pooling,
+                pooling_kws=x.pooling_kws,
             )
-            if not isinstance(self.pooling, dict)
+            if not isinstance(x.pooling, dict)
             else MultiCache(
-                spec=self.pooling,
-                pooling_kws=self.pooling_kws,
-                rng=self.rng,
-                save_interval=self.save_interval,
+                spec=x.pooling,
+                pooling_kws=x.pooling_kws,
+                rng=x.rng,
+                save_interval=x.save_interval,
             ),
             takes_self=True,
         )
@@ -282,11 +274,17 @@ class OmniNA(ModelEmbedder):
     m: AutoModelForCausalLM = field(
         init=False,
         default=Factory(
-            lambda self: AutoModelForCausalLM.from_pretrained(self.model.value),
+            lambda x: AutoModelForCausalLM.from_pretrained(x.model.value),
             takes_self=True,
         ),
     )
-    tokenizer: AutoTokenizer = AUTOTOKENIZER_FIELD
+    tokenizer: AutoTokenizer = field(
+        init=False,
+        default=Factory(
+            lambda x: AutoTokenizer.from_pretrained(x.model.value),
+            takes_self=True,
+        ),
+    )
     default_pad_token = "[PAD]"
     default_eos_token = "</s>"
     default_bos_token = "<s>"
@@ -309,16 +307,22 @@ class OmniNA(ModelEmbedder):
 
 @define
 class NTv3(ModelEmbedder):
-    model: EmbeddingModels = NTv3Models.M100_PRE
+    model: EmbeddingModels = NTv3Models.ntv3_100m_pre
     valid_models = tuple(NTv3Models)
     m: AutoModelForMaskedLM = field(
         init=False,
         default=Factory(
-            lambda self: AutoModelForMaskedLM.from_pretrained(self.model.value),
+            lambda x: AutoModelForMaskedLM.from_pretrained(x.model.value),
             takes_self=True,
         ),
     )
-    tokenizer = AUTOTOKENIZER_FIELD
+    tokenizer: AutoTokenizer = field(
+        init=False,
+        default=Factory(
+            lambda x: AutoTokenizer.from_pretrained(x.model.value),
+            takes_self=True,
+        ),
+    )
     tokenizer_kws: dict = {
         "add_special_tokens": False,
         "padding": True,
@@ -337,12 +341,12 @@ class EsmSynthyra(ModelEmbedder):
     m: AutoModelForMaskedLM = field(
         init=False,
         default=Factory(
-            lambda self: AutoModelForMaskedLM.from_pretrained(self.model.value),
+            lambda x: AutoModelForMaskedLM.from_pretrained(x.model.value),
             takes_self=True,
         ),
     )
     proba: TokenProbabilities = field(
-        init=False, default=Factory(lambda self: TokenProbabilities(self.m.tokenizer))
+        init=False, default=Factory(lambda x: TokenProbabilities(x.m.tokenizer))
     )
 
     def __attrs_post_init__(self):
@@ -390,7 +394,7 @@ class EsmOfficial(ModelEmbedder):
     token2idx: dict[str, int] | None = field(
         init=False,
         default=Factory(  # 33 is the size of ESM's vocab
-            lambda self: {self.tokenizer.decode(i): i for i in range(33)},
+            lambda x: {x.tokenizer.decode(i): i for i in range(33)},
             takes_self=True,
         ),
     )
@@ -449,22 +453,20 @@ class SeqLensEmbedder(ModelEmbedder):
     tokenizer: AutoTokenizer = field(
         init=False,
         default=Factory(
-            lambda self: AutoTokenizer.from_pretrained(self.model.value),
+            lambda x: AutoTokenizer.from_pretrained(x.model.value),
             takes_self=True,
         ),
     )
     m: AutoModelForMaskedLM = field(
         init=False,
         default=Factory(
-            lambda self: AutoModelForMaskedLM.from_pretrained(self.model.value),
+            lambda x: AutoModelForMaskedLM.from_pretrained(x.model.value),
             takes_self=True,
         ),
     )
     proba: TokenProbabilities = field(
         init=False,
-        default=Factory(
-            lambda self: TokenProbabilities(self.tokenizer), takes_self=True
-        ),
+        default=Factory(lambda x: TokenProbabilities(x.tokenizer), takes_self=True),
     )
 
     def __attrs_post_init__(self):

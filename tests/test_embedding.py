@@ -43,7 +43,7 @@ def test_embedding(tmp_path, model, seqtype, save_mode, lg):
         }
     )
     E = ModelEmbedder.new(
-        model,
+        model=model,
         batch_size=10,
         workdir=workdir,
         save_mode=save_mode,

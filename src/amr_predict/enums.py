@@ -84,5 +84,6 @@ EmbeddingModels = Enum(
         | {i.name: i.value for i in SeqLensModels}
         | {i.name: i.value for i in EsmModels}
         | {i.name: i.value for i in OmniNaModels}
+        | {i.name: i.value for i in NTv3Models}
     ),
 )
