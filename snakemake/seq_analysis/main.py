@@ -45,7 +45,11 @@ if TYPE_CHECKING:
 ENV: SnakeEnv = SnakeEnv.new(snakemake.config)
 PARAMS: dict = snakemake.params
 INPUT = snakemake.input
-SCOL = ENV.metadata.sample_col
+if PARAMS.get("seqtype"):
+    SCOL: str = ENV.metadata.sample_col[PARAMS["seqtype"]]
+else:
+    SCOL = ENV.metadata.sample_col["default"]
+
 LABEL_SEP = ENV.metadata.label_sep
 LCOL = ENV.metadata.label_col
 os.environ["HF_HOME"] = ENV.huggingface
@@ -73,8 +77,19 @@ def pooling_from_params() -> BasicPoolings:
     return BasicPoolings[PARAMS["pooling"].upper()]
 
 
+def clean_ensembl(df: pl.DataFrame) -> pl.DataFrame:
+    df = (
+        df.filter(pl.col(SCOL).is_not_null())
+        .with_columns(pl.col(SCOL).str.split(";"))
+        .explode(SCOL)
+        .unique(SCOL)
+        .with_columns(pl.col(SCOL).str.extract("(^ENS[A-Z]+[0-9]+).*"))
+    )
+    return df
+
+
 @beartype
-def read_fasta(file: str, header_style: Literal["uniprot"]) -> pl.DataFrame:
+def read_fasta(file: str, header_style: Literal["uniprot", "ensembl"]) -> pl.DataFrame:
     tmp = {"id": [], "sequence": []}
     for record in SeqIO.parse(file, "fasta"):
         if header_style == "uniprot":
@@ -84,6 +99,8 @@ def read_fasta(file: str, header_style: Literal["uniprot"]) -> pl.DataFrame:
                 raise ValueError(
                     f"FASTA entry {record} does not have a UniProt-style header"
                 )
+        elif header_style == "ensembl":
+            id = record.id
         tmp["id"].append(id)
         tmp["sequence"].append(str(record.seq))
     df: pl.DataFrame = pl.DataFrame(tmp)
@@ -121,8 +138,10 @@ def load_embeddings(
     lm = ENV.embedding_methods[SeqTypes[seqtype.upper()]][embedding_method].model
     pooling = BasicPoolings[pooling] if level == "seqs" else None
     if with_metadata and ENV.metadata.file.exists():
+        meta = read_tabular(ENV.metadata.file).unique(SCOL)
+        meta = meta if seqtype == "aa" else clean_ensembl(meta)
         seq_df = seq_df.join(
-            read_tabular(ENV.metadata.file).unique(SCOL),
+            meta,
             how="left",
             left_on="id",
             right_on=SCOL,
@@ -320,7 +339,7 @@ def make_dummy_embeddings():
 
 
 def sae_label_eval_dummy():
-    metadata = read_tabular(ENV.metadata.file).unique(ENV.metadata.sample_col)
+    metadata = read_tabular(ENV.metadata.file).unique(SCOL)
     activations, loss = get_from_sae(
         load_from_disk(INPUT["embeddings"]).with_format("torch", dtype=torch.float32),
     )
