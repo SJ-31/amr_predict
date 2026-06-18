@@ -82,6 +82,13 @@ use rule base as get_embeddings with:  # NOTE: this saves them as an embedding c
     params:
         log=f"{logdir}/embeddings.log",
     output:
+        f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{variation}}-{{method}}/{{embedding_method}}.all.completed",
+
+
+use rule base as get_embeddings_extract with:
+    input:
+        rules.get_embeddings.output,
+    output:
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/{{variation}}-{{method}}/{{embedding_method}}-{{pooling}}.completed",
 
 

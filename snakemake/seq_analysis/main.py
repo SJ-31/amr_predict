@@ -782,22 +782,26 @@ def get_embeddings():
     from amr_predict.embedding import EmbeddingModels, ModelEmbedder
 
     df: pl.DataFrame = load_from_disk(INPUT[0]).to_polars()
-    spec = ENV.embedding_methods[seqtype_from_params()][PARAMS["embedding_method"]]
+    embedding_method = PARAMS["embedding_method"]
+    spec = ENV.embedding_methods[seqtype_from_params()][embedding_method]
     model: EmbeddingModels = spec.model
     max_length = embedding_size(model)
     df = expand_max_len(df, max_len=max_length, seq_col="sequence")
     kws: dict = spec.kws
     out = Path(snakemake.output[0])
-    cache_path = out.with_suffix("")
-    if not cache_path.exists():
-        cache_path.mkdir()
-    kws["workdir"] = cache_path
     kws["huggingface"] = ENV.huggingface
     kws["save_mode"] = PARAMS["level"]
+
     if PARAMS["level"] == "seqs":
-        kws["pooling"] = pooling_from_params()
-        kws["pooling_kws"] = spec.poolings[pooling_from_params()] or {}
+        kws["pooling"] = {
+            k: out.with_name(f"{embedding_method}-{k.value}") for k in spec.poolings
+        }
+        kws["pooling_kws"] = spec.poolings
     else:
+        cache_path = out.with_name(f"{embedding_method}-0")
+        if not cache_path.exists():
+            cache_path.mkdir()
+        kws["workdir"] = cache_path
         kws["pooling"] = None
         kws["pooling_kws"] = {}
     kws["save_proba"] = PARAMS["level"] == "tokens"
@@ -810,6 +814,15 @@ def get_embeddings():
         embedder.cache.rewrite(keep_only=keep, size=ENV.rewrite_cache.size)
     embedder.embed(dataset=Dataset.from_polars(df))
     out.write_text("completed")
+
+
+def get_embeddings_extract():
+    completion_marker: Path = Path(INPUT)
+    new_name = f"{PARAMS["embedding_method"]}-{PARAMS['pooling']}.completed"
+    if (completion_marker.parent / new_name.stem).exists():
+        Path(snakemake.output[0]).write_text("completed")
+    else:
+        raise ValueError(f"The cache for {snakemake.output[0]} doesn't exist")
 
 
 # * Entry
