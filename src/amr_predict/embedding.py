@@ -10,7 +10,7 @@ from typing import ClassVar, Generator, Literal, override
 import jaxtyping
 import polars as pl
 import torch
-from amr_predict.cache import EmbeddingCache
+from amr_predict.cache import EmbeddingCache, MultiCache
 from amr_predict.enums import (
     BasicPoolings,
     EmbeddingModels,
@@ -132,7 +132,7 @@ class ModelEmbedder:
     rng: int | None = None
     save_proba: bool = False
     save_interval: int = 10
-    pooling: BasicPoolings | None = None
+    pooling: BasicPoolings | None | dict[BasicPoolings | Path] = None
     pooling_kws: dict = field(factory=dict)
     only_cache: bool = True
     choose_hidden: bool = field(
@@ -150,6 +150,13 @@ class ModelEmbedder:
                 token_amount=self.token_amount,
                 pooling=self.pooling,
                 pooling_kws=self.pooling_kws,
+            )
+            if isinstance(self.pooling, dict)
+            else MultiCache(
+                spec=self.pooling,
+                pooling_kws=self.pooling_kws,
+                rng=self.rng,
+                save_interval=self.save_interval,
             ),
             takes_self=True,
         )
@@ -164,7 +171,7 @@ class ModelEmbedder:
     def __attrs_post_init__(self):
         if self.huggingface:
             os.environ["HF_HOME"] = self.huggingface
-        if not self.workdir.exists():
+        if not self.workdir.exists() and isinstance(self.cache, EmbeddingCache):
             self.workdir.mkdir()
         self.hidden_layer = 0 if self.hidden_layer < 0 else self.hidden_layer
 

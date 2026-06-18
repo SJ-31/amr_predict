@@ -569,6 +569,12 @@ class MultiCache:
 
         self._write(lfs)
 
+    def rewrite(
+        self, keep_only: Sequence | None = None, size: int | str = "500MB"
+    ) -> None:
+        for cache in self.caches.values():
+            cache.rewrite(keep_only, size)
+
     def _write(self, lfs: dict[BasicPoolings, list[pl.LazyFrame]]) -> None:
         for k, v in lfs.items():
             cur_cache = self.caches[k]
