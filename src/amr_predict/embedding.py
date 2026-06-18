@@ -306,16 +306,28 @@ class OmniNA(ModelEmbedder):
         self.hf_setup(self.m)
         super().__attrs_post_init__()
 
+
+@define
+class NTv3(ModelEmbedder):
+    model: EmbeddingModels = NTv3Models.M100_PRE
+    valid_models = tuple(NTv3Models)
+    m: AutoModelForMaskedLM = field(
         init=False,
         default=Factory(
-            lambda self: AutoTokenizer.from_pretrained(self.model.value),
+            lambda self: AutoModelForMaskedLM.from_pretrained(self.model.value),
             takes_self=True,
         ),
     )
+    tokenizer = AUTOTOKENIZER_FIELD
+    tokenizer_kws: dict = {
+        "add_special_tokens": False,
+        "padding": True,
+        "pad_to_multiple_of": 128,
+    }
 
     def __attrs_post_init__(self):
-        super().__attrs_post__init()
         self.hf_setup(self.m)
+        super().__attrs_post_init__()
 
 
 @define
@@ -464,7 +476,9 @@ class SeqLensEmbedder(ModelEmbedder):
     ) -> Generator[
         tuple[str, jaxtyping.Float[Tensor, "a b"], jaxtyping.Float[Tensor, "a"] | None]
     ]:
-        return automodel_embed(sequences, self.tokenizer, layer=self.hidden_layer)
+        return automodel_embed(
+            sequences, model=self.m, tokenizer=self.tokenizer, layer=self.hidden_layer
+        )
 
 
 @define

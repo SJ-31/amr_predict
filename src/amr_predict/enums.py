@@ -50,6 +50,14 @@ class OmniNaModels(Enum):
     omniNA_1p7b = "XLS/OmniNA-1.7b"
 
 
+class NTv3Models(Enum):
+    ntv3_8m_pre = "InstaDeepAI/NTv3_8M_pre"
+    ntv3_100m_pre = "InstaDeepAI/NTv3_100M_pre"
+    ntv3_650m_pre = "InstaDeepAI/NTv3_650M_pre"
+    ntv3_100m_pos = "InstaDeepAI/NTv3_100M_pos"
+    ntv3_650m_pos = "InstaDeepAI/NTv3_650M_pos"
+
+
 EsmModels = Enum(
     "EsmModels",
     {

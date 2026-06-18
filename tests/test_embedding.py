@@ -4,6 +4,7 @@ import numpy as np
 import polars as pl
 import pytest
 from amr_predict.embedding import EmbeddingModels, ModelEmbedder
+from amr_predict.enums import BasicPoolings
 from loguru import logger
 from numpy.random import Generator
 from pyhere import here
@@ -21,6 +22,8 @@ logger.enable("amr_predict")
         (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "seqs", False),
         (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "tokens", False),
         (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "tokens", False),
+        (EmbeddingModels.omniNA_66m, "nuc", "seqs", False),
+        (EmbeddingModels.ntv3_100m_pre, "nuc", "seqs", False),
         (EmbeddingModels.esmc_600m, "aa", "seqs", False),
         (EmbeddingModels.esmc_600m, "aa", "tokens", True),
     ],
@@ -45,6 +48,7 @@ def test_embedding(tmp_path, model, seqtype, save_mode, lg):
         workdir=workdir,
         save_mode=save_mode,
         save_proba=lg,
+        pooling=BasicPoolings.MEAN,
         only_cache=True,
         hidden_layer=0,
         huggingface=str(HF),
