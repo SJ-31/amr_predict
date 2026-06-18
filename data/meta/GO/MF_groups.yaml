@@ -2,6 +2,12 @@ toxin:
   - GO:0090729 # toxin activity
 transcription_regulation:
   - GO:0003712 # transcription coregulator activity
+isomerase:
+  - GO:0016853 # isomerase activity
+catalytic_activity:
+  - GO:0003824 # catalytic activity
+other_binding:
+  - GO:0005488 # binding
 cytoskeleton_organization:
   - GO:0005200 # structural constituent of cytoskeleton
   - GO:0008092 # cytoskeletal protein binding
@@ -20,13 +26,21 @@ hydrolase:
   - GO:0016787 # hydrolase activity
 protein_catalytic_activity:
   - GO:0140096 # catalytic activity, acting on a protein
+lipid_binding:
+  - GO:0008289 # lipid binding
 nucleic_acid_catalytic_activity:
   - GO:0140097 # catalytic activity, acting on DNA
   - GO:0140098 # catalytic activity, acting on RNA
+  - GO:0000166 # nucleotide binding
 ecm_binding_structure:
   - GO:0005201 #  extracellular matrix structural constituent
   - GO:0050840 # extracellular matrix binding
   - GO:0001968 # fibronectin binding
+transferase:
+  - GO:0016740 # transferase activity
+protein_binding:
+  - GO:0005515 # protein binding
+  - GO:0042277 # peptide binding
 nucleic_acid_binding:
   - GO:0003677 # DNA binding
   - GO:0003723 # RNA binding

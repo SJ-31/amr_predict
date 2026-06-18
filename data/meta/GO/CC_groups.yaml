@@ -10,9 +10,14 @@ transcription_factor:
 vesicle:
   - GO:0031410 # cytoplasmic vesicle
   - GO:0031982 # vesicle
-cytoplasm_cytosol:
-  - GO:0005737 # cytoplasm
+cytosol:
   - GO:0005829 # cytosol
+other_cytoplasm:
+  - GO:0005737 # cytoplasm
+golgi_apparatus:
+  - GO:0005794 # Golgi apparatus
+endoplasmic_reticulum:
+  - GO:0005783 # Endoplasmic reticulum
 peroxisome:
   - GO:0005777 # peroxisome
 ubiquitylation:

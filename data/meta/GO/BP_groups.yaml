@@ -1,10 +1,13 @@
-stress_responses: # Response to anything that could cause harm, which would include stress
+oxidative_stress_response:
   - GO:0006979 # response to oxidative stress
-  - GO:0006950 # response to stress
+toxin_response:
   - GO:0009636 # response to toxic substance
-  - GO:0006970 # response to osmotic stress
+stress_response_regulation:
   - GO:0080135 # regulation of cellular response to stress
-  - GO:0042594 # response to starvation
+other_stress_responses: # Response to anything that could cause harm, which would include stress
+  - GO:0006950 # response to stress
+inflammatory_response:
+  - GO:0006954 # inflammatory response
 mitochondrial_processes:
   - GO:0006839 # mitochondrial transport
 locomotion:
@@ -39,10 +42,11 @@ cell_proliferation:
   - GO:0042127 # regulation of cell population proliferation
 cytoskeleton_organization:
   - GO:0007010 # cytoskeleton organization
+cell_cell_communication_regulation:
+  - GO:0010646 # regulation of cell communication
 cell_cell_communication:
   - GO:0009988 # cell-cell recognition
   - GO:0007154 # cell communication
-  - GO:0010646 # regulation of cell communication
   - GO:0007267 # cell-cell signaling
 motility:
   - GO:0048870 # Cell motility
