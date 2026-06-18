@@ -19,7 +19,7 @@ import torch.utils.data as td
 from amr_predict.compat import torch2pl
 from amr_predict.enums import BasicPoolings
 from amr_predict.pooling import pool_tensor
-from attrs import define, field, validators
+from attrs import Factory, define, field, validators
 from beartype import beartype
 from datasets import Dataset
 from loguru import logger
@@ -329,6 +329,41 @@ class EmbeddingCache:
             new.rewrite(**(rewrite_kws or {}))
         return new
 
+    @staticmethod
+    @beartype
+    def gen_save_template(
+        save_mode: Literal["both", "seqs", "tokens"],
+        save_proba: bool,
+        batch: tuple,
+        embed_fn: Callable,
+    ) -> tuple[dict, dict[str, list]]:
+        """
+        Generate schema and dictionary for saving embeddings
+        """
+        token: jaxtyping.Float[Tensor, "a b"]
+        dtype = torch2pl(torch.get_default_dtype())
+        schema: dict = {"key": pl.String}
+        save_into = {"key": []}
+        _, token, logits = next(embed_fn(batch))
+        assert isinstance(token, jaxtyping.Float[Tensor, "a b"])
+        if save_proba:
+            assert isinstance(
+                logits, jaxtyping.Float[Tensor, "a"]
+            ), f"Probabilities should be tensor floats, got {type(logits)}"
+
+        if save_mode in ("seqs", "both"):
+            schema["seq"] = pl.Array(dtype, token.shape[1])
+            save_into["seq"] = []
+        if save_mode in ("tokens", "both"):
+            schema["token"] = pl.List(pl.Array(dtype, token.shape[1]))
+            save_into["token"] = []
+            schema["token_idx"] = pl.List(pl.Int64)
+            save_into["token_idx"] = []
+        if save_proba:
+            schema["token_pr"] = pl.List(dtype)
+            save_into["token_pr"] = []
+        return schema, save_into
+
     def save(
         self,
         to_embed: Sequence,
@@ -354,35 +389,14 @@ class EmbeddingCache:
         to_embed = as_set - self.seen
         logger.info(f"Embedding {len(to_embed)} new strings")
         counter, lfs = 0, []
-        dtype = torch2pl(torch.get_default_dtype())
-        token: jaxtyping.Float[Tensor, "a b"]
-
         batches = itertools.batched(set(to_embed), n=batch_size)
         try:
             first_batch = next(batches)
         except StopIteration:
             return
-        schema: dict = {"key": pl.String}
-        save_into = {"key": []}
-        _, token, logits = next(embed_fn(first_batch))
-        assert isinstance(token, jaxtyping.Float[Tensor, "a b"])
-        if self.save_proba:
-            assert isinstance(
-                logits, jaxtyping.Float[Tensor, "a"]
-            ), f"Probabilities should be tensor floats, got {type(logits)}"
-
-        if self.save_mode in ("seqs", "both"):
-            schema["seq"] = pl.Array(dtype, token.shape[1])
-            save_into["seq"] = []
-        if self.save_mode in ("tokens", "both"):
-            schema["token"] = pl.List(pl.Array(dtype, token.shape[1]))
-            save_into["token"] = []
-            schema["token_idx"] = pl.List(pl.Int64)
-            save_into["token_idx"] = []
-        if self.save_proba:
-            schema["token_pr"] = pl.List(dtype)
-            save_into["token_pr"] = []
-
+        schema, save_into = EmbeddingCache.gen_save_template(
+            self.save_mode, self.save_proba, first_batch, embed_fn
+        )
         for batch in itertools.chain([first_batch], batches):
             tmp = copy.deepcopy(save_into)
             try:
@@ -451,6 +465,114 @@ class EmbeddingCache:
         return LinkedDataset(
             meta=df, text_key=key_col, cache=self, level=level, x_key=new_col, **kws
         )
+
+
+@define
+class MultiCache:
+    """
+    Extension of EmbeddingCache to save pooled embeddings to multiple
+    different directories so that model inference only needs to occur
+    once
+    """
+
+    spec: dict[BasicPoolings, Path]
+    pooling_kws: dict[BasicPoolings, dict] = field(factory=dict)
+    save_mode: Literal["both", "seqs"] = "seqs"
+    rng: Generator = field(
+        default=4243, converter=lambda val: np.random.default_rng(val)
+    )
+    prefix: str = "batch"
+    save_interval: int = 10
+    seen: set = field(init=False, factory=set)
+    caches: dict[BasicPoolings, EmbeddingCache] = field(
+        init=False,
+        default=Factory(
+            lambda self: {
+                k: EmbeddingCache(
+                    dir=v,
+                    prefix=self.prefix,
+                    rng=self.rng,
+                    save_interval=self.save_interval,
+                    save_mode=self.save_mode,
+                    pooling=k,
+                    pooling_kws=self.pooling_kws.get(k, {}),
+                )
+                for k, v in self.spec.items()
+            },
+            takes_self=True,
+        ),
+    )
+
+    def __attrs_post_init__(self):
+        for p in self.spec.values():
+            if not p.exists():
+                p.mkdir()
+
+    def _set_seen(self) -> None:
+        tmp = set()
+        for i, v in enumerate(self.caches.values()):
+            v._set_seen()
+            tmp &= v.seen
+        self.seen = tmp
+
+    def save(
+        self,
+        to_embed: Sequence,
+        embed_fn: Callable,
+        batch_size: int = 50,
+        write_fn: Callable | None = None,
+    ):
+        as_set = set(to_embed)
+        n_old = len(as_set & self.seen)
+        if n_old:
+            logger.info(f"{n_old} found in cache")
+        to_embed = as_set - self.seen
+        logger.info(f"Embedding {len(to_embed)} new strings")
+        counter, lfs = 0, {k: [] for k in self.spec}
+        batches = itertools.batched(set(to_embed), n=batch_size)
+        try:
+            first_batch = next(batches)
+        except StopIteration:
+            return
+        schema, save_into = EmbeddingCache.gen_save_template(
+            self.save_mode, False, first_batch, embed_fn
+        )
+        for batch in itertools.chain([first_batch], batches):
+            tmps: dict[BasicPoolings, dict] = {
+                k: copy.deepcopy(save_into) for k in self.spec
+            }
+            try:
+                gen = embed_fn(batch)
+                for k, t, l in gen:
+                    for pooling_method, store in tmps.items():
+                        cur_lfs = lfs[pooling_method]
+                        store["key"].append(k)
+                        store["seq"].append(
+                            pool_tensor(
+                                t,
+                                method=pooling_method,
+                                **self.pooling_kws.get(pooling_method, {}),
+                            )
+                        )
+                        lf = pl.LazyFrame(store, schema=schema)
+                        self.seen |= set(store["key"])
+                        cur_lfs.append(lf)
+                if counter == self.save_interval:
+                    logger.info("Writing batch into cache")
+                    self._write(lfs)
+                    counter = 0
+                else:
+                    counter += 1
+            except Exception as e:
+                self._write(lfs)
+                raise e
+
+        self._write(lfs)
+
+    def _write(self, lfs: dict[BasicPoolings, list[pl.LazyFrame]]) -> None:
+        for k, v in lfs.items():
+            cur_cache = self.caches[k]
+            cur_cache._write(v)
 
 
 @define

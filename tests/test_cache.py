@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import copy
 from pathlib import Path
 from string import ascii_letters
 from typing import Callable
@@ -9,7 +10,7 @@ import numpy as np
 import polars as pl
 import pytest
 import torch
-from amr_predict.cache import EmbeddingCache, LinkedDataset, expand_max_len
+from amr_predict.cache import EmbeddingCache, LinkedDataset, MultiCache, expand_max_len
 from amr_predict.enums import BasicPoolings
 from datasets import Dataset
 from loguru import logger
@@ -47,6 +48,25 @@ def rng():
     return np.random.default_rng()
 
 
+WORDS = [
+    "forest",
+    "crane",
+    "marble",
+    "silver",
+    "tiger",
+    "planet",
+    "shadow",
+    "bridge",
+    "coral",
+    "ember",
+    "novel",
+    "quartz",
+    "raven",
+    "flame",
+    "harbor",
+]
+
+
 @pytest.fixture
 def make_default_cache(tmp_path, rng) -> Callable:
     def fn(
@@ -64,23 +84,7 @@ def make_default_cache(tmp_path, rng) -> Callable:
             save_proba=save_proba,
             pooling=BasicPoolings.MEAN,
         )
-        words = [
-            "forest",
-            "crane",
-            "marble",
-            "silver",
-            "tiger",
-            "planet",
-            "shadow",
-            "bridge",
-            "coral",
-            "ember",
-            "novel",
-            "quartz",
-            "raven",
-            "flame",
-            "harbor",
-        ]
+        words = copy.deepcopy(WORDS)
         if with_random:
             new_words = [
                 word + "".join(rng.choice(list(ascii_letters), 5)) for word in words
@@ -222,6 +226,28 @@ def test_cache_rewrite(make_default_cache):
         words
     ), "Failed to remove unwanted words"
     print(list(cache.dir.iterdir()))
+
+
+def test_multicache(tmp_path):
+    multicache = MultiCache(
+        {
+            BasicPoolings.MEAN: tmp_path / "mean",
+            BasicPoolings.MAX: tmp_path / "max",
+            BasicPoolings.SUM: tmp_path / "sum",
+        },
+    )
+    words = copy.deepcopy(WORDS)
+    df = pl.DataFrame({"key": words}).with_row_index("id")
+    multicache.save(words, embed_fn=dummy_embed, batch_size=2)
+    dfs = []
+    for m in ("mean", "max", "sum"):
+        cache = EmbeddingCache(
+            tmp_path / m, save_mode="seqs", pooling=BasicPoolings[m.upper()]
+        )
+        ds = LinkedDataset(meta=df, cache=cache, text_key="key", x_key="x")
+        dfs.append(ds.to_pl())
+        assert (ds.to_pl()["key"].sort() == pl.Series(words).sort()).all()
+    assert (dfs[0]["seq"][0] != dfs[1]["seq"][0]).any()
 
 
 def test_cache2(make_default_cache):
