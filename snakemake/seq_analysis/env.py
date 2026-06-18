@@ -219,6 +219,7 @@ class DummyEmbeddings:
 class SaeCfg:
     source: str | None = None
     variant: str = field(default="BatchTopK", validator=validators.in_(["BatchTopK"]))
+    scale_dict_size: bool = True
     kws: dict[str, Any] = field(factory=dict)
     level: Levels | None = field(default=None, validator=needs_val_if_not_custom)
     embedding: str | None = field(default=None, validator=needs_val_if_not_custom)

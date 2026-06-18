@@ -167,6 +167,11 @@ def from_pretrained(dset: LinkedDataset):
 def lookup_sae(spec: str, act_size: int) -> BaseNN:
     from_env = ENV.saes["custom"][spec]
     sae_cfg = get_default_cfg()
+    if from_env.scale_dict_size:
+        spec = ENV.embedding_methods[seqtype_from_params()][PARAMS["embedding_method"]]
+        from_env.kws["dict_size"] = from_env.kws["dict_size"] * embedding_size(
+            spec.model
+        )
     from_env.kws["device"] = "gpu" if torch.cuda.is_available() else "cpu"
     from_env.kws["act_size"] = act_size
     from_env.kws["dtype"] = torch.get_default_dtype()
@@ -633,6 +638,7 @@ def probing_permutation_tests():
         .to_pl()
         .rename({level: "x"})
         .select(["x", task])
+        .filter(pl.col(task).is_not_null())
         .with_columns(pl.col(task).cast(pl.String))
     )
     if ENV.test:
