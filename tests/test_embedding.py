@@ -11,9 +11,16 @@ from loguru import logger
 from numpy.random import Generator
 from pyhere import here
 
-logger.enable("amr_predict")
-
-# [2026-04-23 Thu] TODO: run this test
+logger.add(
+    "embedding_info.log",
+    format=(
+        "[<red>{time:HH:mm:ss}</red>] "
+        "<yellow>{level}</yellow>: "
+        "<cyan>{message}</cyan>"
+        "  {extra}"
+    ),
+    level="TRACE",
+)
 
 
 @pytest.mark.parametrize(
@@ -23,7 +30,9 @@ logger.enable("amr_predict")
         (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "tokens", False),
         (EmbeddingModels.seqLens_4096_512_46M_Mp, "nuc", "tokens", False),
         (EmbeddingModels.omniNA_66m, "nuc", "seqs", False),
+        (EmbeddingModels.omniNA_220m, "nuc", "seqs", False),
         (EmbeddingModels.ntv3_8m_pre, "nuc", "seqs", False),
+        (EmbeddingModels.ntv3_100m_pre, "nuc", "seqs", False),
         (EmbeddingModels.esmc_600m, "aa", "seqs", False),
         (EmbeddingModels.esmc_600m, "aa", "tokens", True),
     ],
@@ -45,7 +54,7 @@ def test_embedding(tmp_path, model, seqtype, save_mode, lg):
         }
     )
     E = ModelEmbedder.new(
-        model=model,
+        model,
         batch_size=10,
         workdir=workdir,
         save_mode=save_mode,
@@ -55,5 +64,6 @@ def test_embedding(tmp_path, model, seqtype, save_mode, lg):
         hidden_layer=0,
         huggingface=None,
     )
-    E.embed(dataset)
-    print(E.cache.to_pl().collect())
+    with logger.contextualize(model=model, cls=E.model):
+        E.embed(dataset)
+    df = E.cache.to_pl().collect()

@@ -89,6 +89,12 @@ def automodel_embed(
     inputs = tokenizer(sequences, **tokenizer_kws)
     with torch.no_grad():
         output = model(**inputs)
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        if "hidden_states" in dir(output):
+            logger.info("n hidden_states {}", len(output.hidden_states))
+            logger.info("hidden state shape {}", output.hidden_states[0].shape)
+        if "logits" in dir(output):
+            logger.info("logits shape {}", output.logits.shape)
     embeddings: Tensor = (
         output.hidden_states[layer]
         if layer is not None
@@ -312,14 +318,18 @@ class NTv3(ModelEmbedder):
     m: AutoModelForMaskedLM = field(
         init=False,
         default=Factory(
-            lambda x: AutoModelForMaskedLM.from_pretrained(x.model.value),
+            lambda x: AutoModelForMaskedLM.from_pretrained(
+                x.model.value, trust_remote_code=True
+            ),
             takes_self=True,
         ),
     )
     tokenizer: AutoTokenizer = field(
         init=False,
         default=Factory(
-            lambda x: AutoTokenizer.from_pretrained(x.model.value),
+            lambda x: AutoTokenizer.from_pretrained(
+                x.model.value, trust_remote_code=True
+            ),
             takes_self=True,
         ),
     )
@@ -448,6 +458,7 @@ class EsmOfficial(ModelEmbedder):
 
 @define
 class SeqLensEmbedder(ModelEmbedder):
+    # 7 hidden states
     model: EmbeddingModels = EmbeddingModels.seqLens_4096_512_46M_Mp
     valid_models = tuple(SeqLensModels)
     tokenizer: AutoTokenizer = field(

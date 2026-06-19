@@ -13,6 +13,7 @@ import pytest
 import tomllib
 import torch
 import yaml
+from loguru import logger
 
 sys.path.append("/py_lib")
 
@@ -20,6 +21,19 @@ from amr_predict.cache import EmbeddingCache, LinkedDataset
 from amr_predict.enums import BasicPoolings
 from datasets import Dataset
 from pyhere import here
+
+logger.remove(0)
+logger.enable("amr_predict")
+logger.add(
+    sys.stdout,
+    format=(
+        "[<red>{time:HH:mm:ss}</red>] "
+        "<yellow>{level}</yellow>: "
+        "<cyan>{message}</cyan>"
+        "  {extra}"
+    ),
+    level="TRACE",
+)
 
 
 @pytest.fixture

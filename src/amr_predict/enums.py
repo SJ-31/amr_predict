@@ -45,14 +45,14 @@ EsmSynthraModels = Enum(
 
 
 class OmniNaModels(Enum):
-    omniNA_66m = "XLS/OmniNA-66m"
-    omniNA_220m = "XLS/OmniNA-220m"
+    omniNA_66m = "XLS/OmniNA-66m"  # 9 hidden states
+    omniNA_220m = "XLS/OmniNA-220m"  # 17 hidden states
     omniNA_1p7b = "XLS/OmniNA-1.7b"
 
 
 class NTv3Models(Enum):
-    ntv3_8m_pre = "InstaDeepAI/NTv3_8M_pre"
-    ntv3_100m_pre = "InstaDeepAI/NTv3_100M_pre"
+    ntv3_8m_pre = "InstaDeepAI/NTv3_8M_pre"  # 16 hidden states
+    ntv3_100m_pre = "InstaDeepAI/NTv3_100M_pre"  # 20 hidden states
     ntv3_650m_pre = "InstaDeepAI/NTv3_650M_pre"
     ntv3_100m_pos = "InstaDeepAI/NTv3_100M_pos"
     ntv3_650m_pos = "InstaDeepAI/NTv3_650M_pos"
@@ -75,7 +75,7 @@ EsmModels = Enum(
 
 SeqLensModels = Enum(
     "SeqLensModels", {"seqLens_4096_512_46M_Mp": "omicseye/seqLens_4096_512_46M-Mp"}
-)
+)  # 7 hidden states
 
 EmbeddingModels = Enum(
     "EmbeddingModels",
