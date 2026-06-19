@@ -22,7 +22,7 @@ import sklearn.model_selection as ms
 import torch
 import yaml
 from amr_predict.cache import EmbeddingCache, LinkedDataset
-from amr_predict.embedding import embedding_size
+from amr_predict.embedding import embedding_dim, embedding_max_seq_len
 from amr_predict.enums import BasicPoolings, SeqTypes
 from amr_predict.models import BaseNN
 from amr_predict.sae import BatchTopK
@@ -153,7 +153,7 @@ def load_embeddings(
         key_col="sequence",
         level=level,
         new_col="x",
-        max_len=embedding_size(lm),
+        max_len=embedding_max_seq_len(lm),
         subseq_agg=pooling,
     )
     assert isinstance(dset, LinkedDataset)
@@ -169,7 +169,7 @@ def lookup_sae(spec: str, act_size: int) -> BaseNN:
     sae_cfg = get_default_cfg()
     if from_env.scale_dict_size:
         spec = ENV.embedding_methods[seqtype_from_params()][PARAMS["embedding_method"]]
-        from_env.kws["dict_size"] = from_env.kws["dict_size"] * embedding_size(
+        from_env.kws["dict_size"] = from_env.kws["dict_size"] * embedding_dim(
             spec.model
         )
     from_env.kws["device"] = "gpu" if torch.cuda.is_available() else "cpu"
@@ -348,6 +348,15 @@ def sae_label_eval_dummy():
     activations, loss = get_from_sae(
         load_from_disk(INPUT["embeddings"]).with_format("torch", dtype=torch.float32),
     )
+    metrics: SaeMetrics = label_eval_helper(activations, metadata)
+    # TODO: how should you compare to the ground truth?
+    # You know for certain that the embeddings encode the concepts in
+    # the dataset, but what next???
+    # TODO: use the ablation analysis
+    # Do you just treat this as just confirmation the SAE setup works,
+    # provided the embeddings contain the information?
+    # Need add an ablation assessment, but what should be the target?
+
 
 def sae_label_eval():
     dset: LinkedDataset = load_embeddings(
@@ -785,7 +794,7 @@ def get_embeddings():
     embedding_method = PARAMS["embedding_method"]
     spec = ENV.embedding_methods[seqtype_from_params()][embedding_method]
     model: EmbeddingModels = spec.model
-    max_length = embedding_size(model)
+    max_length = embedding_max_seq_len(model)
     df = expand_max_len(df, max_len=max_length, seq_col="sequence")
     kws: dict = spec.kws
     out = Path(snakemake.output[0])
@@ -796,7 +805,7 @@ def get_embeddings():
         kws["pooling"] = {
             k: out.with_name(f"{embedding_method}-{k.value}") for k in spec.poolings
         }
-        kws["pooling_kws"] = spec.poolings
+        kws["pooling_kws"] = {k: v if v else {} for k, v in spec.poolings.items()}
     else:
         cache_path = out.with_name(f"{embedding_method}-0")
         if not cache_path.exists():

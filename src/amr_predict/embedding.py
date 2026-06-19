@@ -39,11 +39,38 @@ from transformers import (
 from transformers.modeling_outputs import MaskedLMOutput
 
 
-def embedding_size(model: EmbeddingModels) -> int:
+def embedding_dim(model: EmbeddingModels) -> int:
+    "The dimension of embeddings produced by each model"
     if model == EmbeddingModels.esm3_open:
         raise NotImplementedError("figure this out")
     elif validate_model_group(model, SeqLensModels):
+        return 768
+    elif model == OmniNaModels.omniNA_66m:
         return 512
+    elif model == OmniNaModels.omniNA_220m:
+        return 1024
+    elif validate_model_group(model, OmniNaModels):
+        return 2048
+    elif model == NTv3Models.ntv3_100m_pos or model == NTv3Models.ntv3_100m_pre:
+        return 768
+    elif model == NTv3Models.ntv3_8m_pre:
+        return 256
+    elif validate_model_group(model, NTv3Models):
+        return 1536
+    elif validate_model_group(model, EsmSynthraModels) or validate_model_group(
+        model, EsmModels
+    ):
+        return 1152
+    raise NotImplementedError()
+
+
+def embedding_max_seq_len(model: EmbeddingModels) -> int:
+    """Maximum sequence length supported by each model"""
+    if model == EmbeddingModels.esm3_open:
+        raise NotImplementedError("figure this out")
+    elif validate_model_group(model, SeqLensModels):
+        return 3000
+    # Source: https://github.com/omicsEye/seqLens
     elif validate_model_group(model, OmniNaModels):
         return 3000
     elif validate_model_group(model, NTv3Models):
@@ -214,7 +241,7 @@ class ModelEmbedder:
     @classmethod
     def new(_cls, model: EmbeddingModels, **kws):
         cls = ModelEmbedder._registry[model.name]
-        return cls(**kws)
+        return cls(model=model, **kws)
 
     def embed(
         self,
@@ -337,6 +364,7 @@ class NTv3(ModelEmbedder):
         "add_special_tokens": False,
         "padding": True,
         "pad_to_multiple_of": 128,
+        "return_tensors": "pt",
     }
 
     def __attrs_post_init__(self):
