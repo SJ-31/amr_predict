@@ -30,7 +30,7 @@ logger.enable("amr_predict")
 )
 def test_embedding(tmp_path, model, seqtype, save_mode, lg):
     HF = here("data", "remote", "cache", "huggingface")
-    # os.environ["HF_HOME"] = str(HF)
+    os.environ["HF_HOME"] = str(HF)
     rng: Generator = np.random.default_rng()
     workdir = tmp_path / "cache"
     choices = list("ATCG" if seqtype == "nuc" else "FRILSPEGYNA")

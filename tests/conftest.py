@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from string import ascii_uppercase
@@ -12,6 +13,9 @@ import pytest
 import tomllib
 import torch
 import yaml
+
+sys.path.append("/py_lib")
+
 from amr_predict.cache import EmbeddingCache, LinkedDataset
 from amr_predict.enums import BasicPoolings
 from datasets import Dataset
