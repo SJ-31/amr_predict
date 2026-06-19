@@ -60,6 +60,12 @@ snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
           --executor "${SMK_EXECUTOR}" 
 '''
 
+[tasks.apptainer_build]
+env = { APPTAINER_TMPDIR = "/home/shannc/Bio_SDD/build" }
+run = '''
+apptainer build image_new.sif build_editable.def 
+'''
+
 # * Running scripts
 [tasks.update_go_candidates]
 dir = "./scripts"

@@ -6,6 +6,9 @@
 /data/processed
 /tests/data/*
 /tests/*out
+/data/meta/GO/*csv
+/data/meta/GO/*gml
+snakemake/seq_analysis/logs*
 /tests/*log
 /tests/tmp*
 /tests/*pth
@@ -39,3 +42,6 @@ snakemake/lightning_logs
 *sif
 *.cache
 /pyproject.toml
+/tests/pytest.sh
+/snakemake/seq_analysis/run.sh
+/snakemake/seq_analysis/test.sh
