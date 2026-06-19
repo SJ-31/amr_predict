@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Literal
 
 import networkx as nx
@@ -172,8 +173,9 @@ class GoGroup:
         return "NA"
 
 
-def add_sae_col(meta: pl.DataFrame) -> pl.DataFrame:
+def add_extra_cols(meta: pl.DataFrame) -> pl.DataFrame:
     columns_to_combine = ["Gene Ontology IDs", "InterPro"]
+    to_binarize = [""]
     # [2026-06-17 Wed] TODO: you downloaded a whole lot more features
     # Parse them into simpler  formats and add them here
     # they could also be used for probing tasks
@@ -220,6 +222,13 @@ def parse_args():
     parser.add_argument("-u", "--update", action="store_true")
     parser.add_argument("-l", "--label", action="store_true")
     parser.add_argument("-g", "--group_info", action="store_true")
+    parser.add_argument(
+        "-o",
+        "--read_prev",
+        default=False,
+        help="Whether to read from the previous file instead of writing new",
+        action="store_true",
+    )
     args = vars(parser.parse_args())  # convert to dict
     return args
 
@@ -237,8 +246,11 @@ if __name__ == "__main__":
         for k, v in groups.items():
             print(f"{k}: {len(v)}")
     elif args["label"]:
-        labelled, counts, combined = label_terms()
-        for ns, df in counts.items():
-            df.write_csv(WD / f"{ns}_label_counts.csv")
-        labelled = add_sae_col(labelled)
+        if Path(WRITE_TO).exists() and args["read_prev"]:
+            labelled = read_tabular(WRITE_TO)
+        else:
+            labelled, counts = label_terms()
+            for ns, df in counts.items():
+                df.write_csv(WD / f"{ns}_label_counts.csv")
+        labelled = add_extra_cols(labelled)
         labelled.write_csv(WRITE_TO)

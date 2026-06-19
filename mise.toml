@@ -69,8 +69,15 @@ python finalize_labels.py -u
 
 [tasks.label_go]
 dir = "./scripts"
+usage = '''
+flag "--prev" help="Read from previous output file" default="false"
+'''
 run = '''
-python finalize_labels.py -l
+if [[ "${usage_prev}" == "true" ]]; then
+   python finalize_labels.py -l -r
+else
+   python finalize_labels.py --read_prev
+fi
 '''
 
 [tasks.go_category_counts]
