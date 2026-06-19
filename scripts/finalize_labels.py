@@ -8,9 +8,11 @@ from typing import Literal
 import networkx as nx
 import numpy as np
 import polars as pl
+import polars.selectors as cs
 import yaml
 from amr_predict.utils import read_tabular
 from attrs import define, field
+from loguru import logger
 from pyhere import here
 from yte import process_yaml
 
@@ -20,7 +22,7 @@ DF = pl.read_csv(WD / "go_attrs.csv", null_values="NA")
 METADATA_FILE = here(
     "data", "remote", "datasets", "2026-04-21_uniprot_swissprot_goa.tsv"
 )
-WRITE_TO = here("data", "meta", "2026-06-17_uniprot_swissprot_goa_labelled.tsv")
+WRITE_TO = here("data", "meta", "2026-06-17_uniprot_swissprot_goa_labelled.csv")
 G = nx.read_gml(WD / "go.gml", label="name")
 
 
@@ -33,11 +35,9 @@ GS = nx.subgraph_view(
     G, filter_edge=lambda x, y, z: relation_filter(x, y, z, {"is_a", "part_of"})
 )
 
-# TODO: use the blacklist to get rid of highly specific terms, then
-# go through the remaining list manually to keep what you think
-# is relevant
+MIN_COUNT = 250
 
-blacklist = [
+BLACKLIST = [
     # "nChildrenIsA",
     # "nChildrenPartOf",
     # "nChildrenRegulates",
@@ -77,7 +77,7 @@ def update_candidate_files():
 
     dfs = {
         ns: DF.filter(
-            (~pl.any_horizontal([pl.col(b) > 0 for b in blacklist]))
+            (~pl.any_horizontal([pl.col(b) > 0 for b in BLACKLIST]))
             & (pl.col("maxDistanceToNs") <= dist_thresholds.get(ns, 4))
             & (pl.col("namespace") == ns)
             & (~pl.col("subset").str.contains("gocheck_do_not_annotate"))
@@ -175,17 +175,52 @@ class GoGroup:
 
 def add_extra_cols(meta: pl.DataFrame) -> pl.DataFrame:
     columns_to_combine = ["Gene Ontology IDs", "InterPro"]
-    to_binarize = [""]
-    # [2026-06-17 Wed] TODO: you downloaded a whole lot more features
-    # Parse them into simpler  formats and add them here
-    # they could also be used for probing tasks
-    # https://www.uniprot.org/help/return_fields
-    # https://www.uniprot.org/help/sequence_annotation
-    together = meta.with_columns(
-        pl.concat_str(columns_to_combine, separator=";", ignore_nulls=True).alias(
-            "All annotations"
+    to_binarize = [
+        "Helix",
+        "Signal peptide",
+        "Transit peptide",
+        "Initiator methionine",
+        "Transmembrane",
+        "Coiled coil",
+        "Repeat",
+        "DNA binding",
+        "Zinc finger",
+    ]
+    binarize_expr = []
+    for col in to_binarize:
+        name = f"has_{col.lower().replace(" ", "_")}"
+        expr = (
+            pl.when(pl.col(col).is_not_null())
+            .then(pl.lit(name.upper()))
+            .otherwise(None)
+            .alias(name)
         )
+        binarize_expr.append(expr)
+        columns_to_combine.append(name)
+    meta = meta.with_columns(*binarize_expr)
+    a_col = "All annotations"
+    together = meta.with_columns(
+        pl.concat_str(columns_to_combine, separator=";", ignore_nulls=True).alias(a_col)
     )
+    all_annotations = (
+        together[a_col].str.split(";").explode().str.strip_chars().value_counts()
+    )
+    together = together.drop(cs.starts_with("has_"))
+    logger.info("N annotations before filtering: {}", all_annotations.height)
+    all_annotations = all_annotations.filter(pl.col("count") >= MIN_COUNT)
+    logger.info("N annotations after filtering: {}", all_annotations.height)
+    kept = set(all_annotations[a_col])
+    tmp = (
+        together.select(["Entry", a_col])
+        .with_columns(pl.col(a_col).str.split(";"))
+        .explode(a_col)
+        .with_columns(pl.col(a_col).str.strip_chars())
+        .filter(pl.col(a_col).is_in(kept))
+        .group_by("Entry")
+        .agg(a_col)
+        .with_columns(pl.col(a_col).list.join(";"))
+    )
+    together = together.drop(a_col).join(tmp, on="Entry", how="left")
     return together
 
 
@@ -223,7 +258,7 @@ def parse_args():
     parser.add_argument("-l", "--label", action="store_true")
     parser.add_argument("-g", "--group_info", action="store_true")
     parser.add_argument(
-        "-o",
+        "-r",
         "--read_prev",
         default=False,
         help="Whether to read from the previous file instead of writing new",
@@ -232,10 +267,6 @@ def parse_args():
     args = vars(parser.parse_args())  # convert to dict
     return args
 
-
-# BUG: there is some label that is the empty string
-# TODO: alternative labelling approach is unsupervised clustering
-# of sequences by annotation overlap and manually label
 
 if __name__ == "__main__":
     args = parse_args()
