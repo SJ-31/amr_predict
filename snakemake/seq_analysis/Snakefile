@@ -226,6 +226,8 @@ use rule base as embedding_metrics with:
         f"{DATASETS}/sequences/{{seqtype}}-natural-0",
     params:
         analysis=get_wc("analysis"),
+    resources:
+        mem="80G",
     wildcard_constraints:
         analysis="nn|corr",
     output:
@@ -258,6 +260,8 @@ use rule base as find_baseline with:
 use rule base as probing_permutation_tests with:
     input:
         f"{DATASETS}/embedded_{{seqtype}}_{{level}}/natural-0/{{embedding_method}}-{{pooling}}.completed",
+    resources:
+        mem="80G",
     output:
         f"{env.outdir}/analyses/.probing_permutation_tmp/{{seqtype}}_{{level}}/{{method}}-{{variation}}/{{embedding_method}}-{{pooling}}.csv",
         # `method` is the classification model name
@@ -406,8 +410,3 @@ use rule base as collect_sae_ablations with:
         ],
     output:
         f"{OUTDIR}/analyses/sae_ablations.csv",
-
-
-# rule sae_metrics:
-# This rule should also get activation metrics
-# TODO: report metrics on train set, including L0, MSE loss etc.

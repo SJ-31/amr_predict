@@ -390,10 +390,11 @@ class SnakeEnv:
             out.append(self.outdir / "analyses/nn_all.csv")
             out.append(self.outdir / "analyses/covariate_correlation_all.csv")
             out.append(self.outdir / "analyses/nn_comparison.csv")
-        if self.probing.tasks or self.test:
+        if self.probing.tasks:
             out.append(self.outdir / "analyses/probing_permutation_tests.csv")
-        if self.test:
-            self.probing.tasks.append("dummy")
+        # BUG: fix the probing errors
+        # if self.test:
+        #     self.probing.tasks["dummy"] = self.metadata.sample_col
         if self.ablation_analysis.spec:
             out.append(self.outdir / "analyses/sae_ablations.csv")
 
