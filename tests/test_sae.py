@@ -155,7 +155,7 @@ def tester(
         report = metric_obj.report(k=k + 1, by=m)
         to_append = (
             report.with_columns(pl.lit(m).alias("by"), cs.list().list.join(","))
-            .select(["latent_idx", "by", "label", m])
+            .select(["latent_idx", "by", "label", "label_cooccur", m])
             .rename({m: "value"})
         )
         reports.append(to_append)

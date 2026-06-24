@@ -563,6 +563,7 @@ class SaeMetrics:
     mcc: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
     accuracy: Tensor = field(validator=instance_of(TENSOR3D_FLOAT))
     activation_prop: Tensor = field(validator=instance_of(TENSOR2D_FLOAT))
+    anno_occurence: Tensor = field(validator=instance_of(TENSOR2D_FLOAT))
     _threshold_map: dict[float, int] = field(
         init=False,
         default=Factory(
@@ -578,8 +579,13 @@ class SaeMetrics:
         anno_occurence: Tensor,
         activation_prop: Tensor,
         labels: pl.Series,
+        lidx: pl.Series | None = None,
     ):
-        lidx = pl.Series([f"l{i}" for i in range(activations.shape[1])])
+        lidx = (
+            pl.Series([f"l{i}" for i in range(activations.shape[1])])
+            if lidx is None
+            else lidx
+        )
 
         acts_dtype = activations.dtype
         metrics = (
@@ -599,6 +605,7 @@ class SaeMetrics:
         if not isinstance(thresholds, Tensor):
             thresholds = torch.tensor(thresholds)
         thresholds = sorted(thresholds)
+
         for i, t in enumerate(thresholds):
             pred_active = (activations > t).to(acts_dtype)
             pred_dead = torch.where(pred_active == 1, 0, 1).to(acts_dtype)
@@ -630,6 +637,7 @@ class SaeMetrics:
             labels=labels,
             thresholds=thresholds,
             activation_prop=activation_prop,
+            anno_occurence=anno_occurence,
             **tmp,
         )
 
@@ -757,6 +765,11 @@ class SaeMetrics:
         tmp["frac_active"] = (self.activation_prop > 0).sum(
             dim=0
         ) / self.activation_prop.shape[0]
+        n = self.anno_occurence.shape[1]
+        tmp["label_cooccur"] = [
+            (self.anno_occurence[topk_idx[:, i], :].all(dim=0).sum() / n).item()
+            for i in range(len(self.lidx))
+        ]
         if k != 1:
             return pl.DataFrame(tmp)
         return pl.DataFrame(tmp).with_columns(
@@ -776,7 +789,6 @@ class EvalSAE:
     acts_grouped: pl.DataFrame = field(init=False)
     categories: dict = field(factory=dict, init=False)
     lidx: pl.Series = field(
-        init=False,
         default=Factory(
             lambda self: pl.Series([f"l{i}" for i in range(self.acts.shape[1])]),
             takes_self=True,
@@ -1053,7 +1065,7 @@ class EvalSAE:
         acts = self.acts.detach().clone() if acts is None else acts
         if normalize:
             acts = torch.nn.functional.normalize(acts)
-        occurrences: pl.LazyFrame = to_binary_form(
+        occurrences: pl.DataFrame = to_binary_form(
             labels, label_col=label_col, sample_col=sample_col, sep=label_sep
         )
         # occurences is shape G x n where G is the total number of labels
@@ -1061,9 +1073,10 @@ class EvalSAE:
         sum_acts = torch.matmul(occur_vals / occur_vals.sum(dim=0), acts)
 
         return SaeMetrics.new(
+            lidx=self.lidx,
             activations=acts,
             thresholds=[self.threshold] if thresholds is None else thresholds,
-            labels=occurrences.collect_schema().names(),
+            labels=occurrences.columns,
             anno_occurence=occur_vals,
             activation_prop=sum_acts / sum_acts.sum(dim=0),
         )
@@ -1345,13 +1358,20 @@ class LabelCooccur:
     sample_col: str = "sample"
     sep: str = ";"
     max_fpr: float = 0.2
+    by: str = "activation_prop"
+
+    def _get_top_and_filter(self, k: int) -> pl.DataFrame:
+        return (
+            self.sae_metrics.report(k=k, by=self.by)
+            .with_columns(pl.col("label").list.sort())
+            .filter(pl.col("fpr").arr.min() <= self.max_fpr)
+        )
 
     @beartype
     def higher_order(
         self,
         k: int = 4,
         min_sup: int | float = 0.4,
-        by: str = "activation_prop",
         tmp_file: str | None = None,
         p_overlap: float = 0.8,
         pami_previous: str | Path | None = None,
@@ -1420,12 +1440,7 @@ class LabelCooccur:
             )
             pattern_stats = None
 
-        top_latents = (
-            self.sae_metrics.report(k=k, by=by)
-            .with_columns(pl.col("label").list.sort())
-            .filter(pl.col("fpr").arr.min() <= self.max_fpr)
-            .lazy()
-        )
+        top_latents = self._get_top_and_filter(k).lazy()
         to_join = (
             frequent_patterns.lazy()
             .with_columns(
