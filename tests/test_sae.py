@@ -1,6 +1,8 @@
 import copy
+from typing import Literal
 
 import numpy as np
+import plotnine as gg
 import polars as pl
 import polars.selectors as cs
 import torch
@@ -117,6 +119,7 @@ def tester(
     fire_prop=1.0,
     fpr=0.0,
     fnr=0.0,
+    join_vals: bool = True,
 ):
     label_args = label_args or {}
     latents = {
@@ -153,11 +156,16 @@ def tester(
     reports = []
     for m in metrics:
         report = metric_obj.report(k=k + 1, by=m)
-        to_append = (
-            report.with_columns(pl.lit(m).alias("by"), cs.list().list.join(","))
-            .select(["latent_idx", "by", "label", "label_cooccur", m])
-            .rename({m: "value"})
-        )
+        if join_vals:
+            to_append = report.with_columns(
+                pl.lit(m).alias("by"), cs.list().list.join(",")
+            )
+        else:
+            to_append = report.with_columns(pl.lit(m).alias("by"))
+        to_append = to_append.select(
+            ["latent_idx", "by", "label", "label_cooccur", m]
+        ).rename({m: "value"})
+
         reports.append(to_append)
         for latent, truth in true_firing.items():
             length = len(truth) if truth is not None else 2
@@ -169,7 +177,10 @@ def tester(
             else:
                 truth = sorted(truth)
                 acc = accuracy_score(y_true=truth, y_pred=top_labels)
-                template["truth_labels"].append(",".join(truth))
+                if join_vals:
+                    template["truth_labels"].append(",".join(truth))
+                else:
+                    template["truth_labels"].append(truth)
             template["by"].append(m)
             template["latent_idx"].append(latent)
             template["top_label_acc"].append(acc)
@@ -230,3 +241,78 @@ for k, v in label_params.items():
     dfs.append(df)
 result = pl.concat(dfs)
 result.write_csv(wd / "data" / "test_sae_output.csv")
+
+
+def plot_relation(
+    to_vary: Literal["fpr", "fnr", "fire_prop", "co-occur"] = "fpr",
+    vals=np.arange(0, 1, 0.1),
+    poly: bool = False,
+):
+    """
+    Show the relationship between SAE metrics and
+    increasing noise represented by changing the values of `to_vary`
+
+    In this function, the latent is monosemantic for the label "a"
+    unless poly is True
+    """
+    tmp = []
+    latent_labs = ["a", "b"] if poly else ["a"]
+    for val in vals:
+        if to_vary == "co-occur":
+            kws = {
+                "true_firing": {"l1": latent_labs},
+                "label_args": {
+                    "together": {0: ([1], val)},
+                },
+            }
+        else:
+            kws = {
+                "true_firing": {"l1": latent_labs},
+                to_vary: val,
+                "label_args": {
+                    "together": {0: ([1], 0.3)},
+                },
+            }
+        kws["join_vals"] = False
+        cur = (
+            tester(**kws)
+            .with_columns(pl.lit(val).alias("vary"))
+            .drop("truth_labels")
+            .explode(["value", "label"])
+            .pivot("label", values="value")
+        )
+        tmp.append(cur)
+    df = pl.concat(tmp, how="diagonal_relaxed")
+    plot = (
+        gg.ggplot(df, gg.aes(x="b", y="a", color="vary"))
+        + gg.geom_point(size=2)
+        + gg.facet_wrap("by")
+        + gg.ylim(0, 1)
+        + gg.xlim(0, 1)
+        + gg.scale_color_continuous("cividis")
+        + gg.theme_minimal()
+    )
+    return plot
+
+
+# [2026-06-24 Wed] In the monosemantic version of these plots,
+# the best metric has points that are to the top-left when noise is low,
+# (since any time the latent fires on 'b' it is noise)
+# and to the bottom-left when noise is high
+
+plot_relation("fpr", poly=False).show()
+plot_relation("fnr", poly=False).show()
+
+plot_relation("co-occur", poly=False).show()
+# No metric robust to perfect co-occurence, as expected
+# But sensitivity, mcc, and precision do allow distinguishing the
+# label when co-occurence is low
+#
+plot_relation("fire_prop", poly=False).show()
+
+plot_relation("fpr", poly=True).show()
+plot_relation("fnr", poly=True).show()
+plot_relation("co-occur", poly=True).show()
+
+
+# plot.figure.show()
