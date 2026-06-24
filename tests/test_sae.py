@@ -1,11 +1,14 @@
 from collections.abc import Sequence
+from functools import reduce
 
 import numpy as np
 import polars as pl
+import polars.selectors as cs
 import torch
 from amr_predict.evaluation import EvalSAE, SaeMetrics
 from attrs import define
 from beartype import beartype
+from sklearn.metrics import accuracy_score
 from torch import Tensor
 
 RNG = np.random.default_rng()
@@ -85,23 +88,82 @@ def test_multi_label(
     pass
 
 
-# * Case 1: Monosemantic latents, one for each label
+# * Case 1: Monosemantic latents, one
 
 
-def c1():
-    labels = gen_labels(N, together={0: ([1, 2], 0.8), 3: ([4], 0.9)})
-    latents: dict = {c: DummyLatent(threshold=0.5, labs=[c]) for c in CHOICES}
+def tester(
+    label_args: dict,
+    true_firing: dict[str, list[str]],
+    threshold: float = 0.3,
+    fire_prop=1.0,
+):
+    latents = {
+        key: DummyLatent(threshold=threshold, labs=v, fire_prop=fire_prop)
+        for key, v in true_firing.items()
+    }
+    k = max(map(len, true_firing.values()))
+    labels = gen_labels(N, **label_args)
     activations = torch.hstack(
         [l.activation(labels).reshape(-1, 1) for l in latents.values()]
     )
-    print(activations)
-    eva = EvalSAE(activations, threshold=0.5)
+    eva = EvalSAE(activations, threshold=threshold, lidx=true_firing.keys())
     df = pl.DataFrame({"labels": labels, "sample": range(N)})
-    metrics = eva.score_latents(labels=df, label_col="labels", label_sep=SEP)
-    return metrics
+    metric_obj = eva.score_latents(
+        labels=df,
+        label_col="labels",
+        label_sep=SEP,
+        normalize=False,
+    )
+    metrics = [
+        "accuracy",
+        "mcc",
+        "negative_predictive_value",
+        "precision",
+        "sensitivity",
+        "specificity",
+    ]
+    template = {"metric": [], "latent_idx": [], "acc": []}
+    reports = []
+    for m in metrics:
+        report = metric_obj.report(k=k, by=m)
+        to_append = report.with_columns(pl.lit(m).alias("by"), cs.list().list.join(","))
+        reports.append(to_append)
+        for latent, truth in true_firing.items():
+            top_labels = report.filter(pl.col("latent_idx") == latent)["label"][0]
+            if isinstance(top_labels, str):
+                top_labels = [top_labels]
+            else:
+                top_labels = top_labels.to_list()[: len(truth)]
+            acc = accuracy_score(y_true=truth, y_pred=top_labels)
+            template["metric"].append(m)
+            template["latent_idx"].append(latent)
+            template["acc"].append(acc)
+    metric_acc = pl.DataFrame(template)
+    return pl.concat(reports, how="diagonal_relaxed"), metric_acc
 
 
-# [2026-06-17 Wed] BUG: the values are weird, need to keep testing this
-# sensitivity and specificity should be 100% by how the data are generated,
-vals = c1()
-report = vals.report(k=2, by="sensitivity")
+# Only normalize if the real activations > 1 and less than 0
+
+# [2026-06-17 Wed] TODO: this works, now you wanna see if you can
+# recover the true latent label assignments
+# under different cases
+# TODO: Investigate which metric is most robust to co-occurence
+
+label_params = {
+    "mono": {
+        "label_args": {"together": {0: ([1, 2], 0.8), 3: ([4], 0.9)}},
+        "true_firing": {c: [c] for c in CHOICES},
+    },
+    "mono_perfect_co-occur": {
+        "label_args": {"together": {0: ([1, 2], 1.0), 3: ([4], 1.0)}},
+        "true_firing": {"l1": ["a"], "l2": ["d"], "l3": ["b"]},
+    },
+    "poly": {
+        "label_args": {"together": {0: ([1, 2], 1.0), 3: ([4], 1.0)}},
+        "true_firing": {"l1": CHOICES[:2], "l2": ["a"]},
+    },
+}
+
+results = {}
+for k, v in label_params.items():
+    results[k] = tester(**v)
