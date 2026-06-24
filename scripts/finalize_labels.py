@@ -36,7 +36,7 @@ GS = nx.subgraph_view(
 )
 
 MIN_COUNT = 250
-CHOSEN_RANK = "kingdom"
+CHOSEN_RANK = "family"
 BLACKLIST = [
     # "nChildrenIsA",
     # "nChildrenPartOf",
@@ -221,13 +221,13 @@ def add_taxonomic_rank(
         "subtribe",
     ] = "family",
 ) -> pl.DataFrame:
-    df = df.with_columns(
+    df = df.select(~cs.starts_with("taxonomy_")).with_columns(
         pl.col("Taxonomic lineage")
         .str.split(",")
         .list.filter(pl.element().str.ends_with(f"({rank})"))
         .list.first()
         .str.strip_suffix(f" ({rank})")
-        .alias(rank)
+        .alias(f"taxonomy_{rank}")
     )
     return df
 
@@ -291,10 +291,12 @@ def label_terms() -> tuple[pl.DataFrame, dict[str, pl.DataFrame]]:
     with open(here("snakemake", "seq_analysis", "env.yaml")) as f:
         env = process_yaml(f)
         metadata: pl.DataFrame = read_tabular(METADATA_FILE)
-    id_col = env["metadata"]["sample_col"]
-    go_col = metadata["Gene Ontology IDs"].str.split(";")
+    id_col = env["metadata"]["sample_col"]["default"]
+
+    has_go = metadata.filter(pl.col("Gene Ontology IDs").is_not_null())
+    go_col = has_go["Gene Ontology IDs"].str.split(";")
     ggs = get_groups()
-    tmp = {id_col: metadata[id_col]}
+    tmp = {id_col: has_go[id_col]}
     for ns, groups in ggs.items():
         obj = GoGroup(G=GS, ns=ns, groups=groups)
         mapped = go_col.map_elements(
@@ -308,8 +310,11 @@ def label_terms() -> tuple[pl.DataFrame, dict[str, pl.DataFrame]]:
         for ns in ["BP", "CC", "MF"]
         if ns in label_df.columns
     }
-    label_df = label_df.rename({ns: f"{ns}_custom" for ns in ["BP", "CC", "MF"]})
-    metadata = metadata.join(label_df, on=id_col)
+    label_df = label_df.rename(
+        {ns: f"{ns}_custom" for ns in ["BP", "CC", "MF"]}
+    ).with_columns(cs.ends_with("custom").replace("", None))
+
+    metadata = metadata.join(label_df, on=id_col, how="left")
     return metadata, count_dfs
 
 
@@ -341,8 +346,10 @@ if __name__ == "__main__":
             print(f"{k}: {len(v)}")
     elif args["label"]:
         if Path(WRITE_TO).exists() and args["read_prev"]:
+            logger.info("Using previous results...")
             labelled = read_tabular(WRITE_TO)
         else:
+            logger.info("Labelling terms...")
             labelled, counts = label_terms()
             for ns, df in counts.items():
                 df.write_csv(WD / f"{ns}_label_counts.csv")
