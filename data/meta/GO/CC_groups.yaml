@@ -7,6 +7,10 @@ transcription_factor:
   - GO:0000439 # transcription factor TFIIH core complex
   - GO:0005667 # transcription regulator complex
   - GO:0017053 # transcription repressor complex
+extracellular_protein_complex:
+  - GO:0140392 # extracellular protein-containing complex
+extracellular_organelle:
+  - GO:0043230 # extracellular organelle
 vesicle:
   - GO:0031410 # cytoplasmic vesicle
   - GO:0031982 # vesicle
@@ -63,8 +67,13 @@ photosynthesis:
   - GO:0009579 # thylakoid
   - GO:0048492 # ribulose bisphosphate carboxylase complex
   - GO:0030076 # light-harvesting complex
-nuclear_structures:
+other_nuclear_structures:
   - GO:0005634 # nucleus
+nuclear_envelope:
+  - GO:0005635 # nuclear envelope
+nuclear_lumen:
+  - GO:0031981 # nuclear lumen
+nuclear_pore:
   - GO:0005643 # nuclear pore
 chromatin:
   - GO:0000786 # nucleosome
@@ -80,8 +89,8 @@ respiratory_chain:
   - GO:0045277 # respiratory chain complex IV
 mitochondrion:
   - GO:0005739 # mitochondrion
-cell_periphery:
-  - GO:0071944 # cell periphery
+cell_cortex:
+  - GO:0005938 # cell cortex
 viral:
   - GO:0055036 # virion membrane
   - GO:0044423 # virion component
@@ -103,12 +112,16 @@ rna_processing:
   - GO:0045293 # mRNA editing complex
 cell_surface: # "gene products that are attached (integrated or loosely bound) to the plasma membrane or cell wall"
   - GO:0009986 # cell surface
+transmembrane_transporter:
+  - GO:1902495 # transmembrane transporter complex
+membrane_protein:
+  - GO:0098796 # membrane protein complex
+plasma_membrane:
+  - GO:0005886 # plasma membrane
 membrane:
   - GO:0016020 # membrane
-  - GO:0098796 # membrane protein complex
   - GO:0031967 # organelle envelope
   - GO:0030112 # glycocalyx
-  - GO:0005886 # plasma membrane
 ribosome:
   - GO:0005840 # ribosome
   - GO:0030684 # preribosome

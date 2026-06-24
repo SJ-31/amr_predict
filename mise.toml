@@ -57,13 +57,13 @@ snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
           in_date=${usage_in_date} embedding=esm \
           date=${usage_date} \
           --profile "${SMK_PROFILE}" \
-          --executor "${SMK_EXECUTOR}" 
+          --executor "${SMK_EXECUTOR}"
 '''
 
 [tasks.apptainer_build]
 env = { APPTAINER_TMPDIR = "/home/shannc/Bio_SDD/build" }
 run = '''
-apptainer build image_new.sif build_editable.def 
+apptainer build image_new.sif build_editable.def
 '''
 
 # * Running scripts
@@ -82,7 +82,7 @@ run = '''
 if [[ "${usage_prev}" == "true" ]]; then
    python finalize_labels.py -l -r
 else
-   python finalize_labels.py --read_prev
+   python finalize_labels.py -l
 fi
 '''
 

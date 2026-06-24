@@ -2,10 +2,16 @@ toxin:
   - GO:0090729 # toxin activity
 transcription_regulation:
   - GO:0003712 # transcription coregulator activity
+oxidoreductase:
+  - GO:0016491 # oxidoreductase activity
+regulation_of_catalytic_activity:
+  - GO:0050790 # regulation of catalytic activity
 isomerase:
   - GO:0016853 # isomerase activity
 catalytic_activity:
   - GO:0003824 # catalytic activity
+hormone_binding:
+  - GO:0042562 # hormone binding
 other_binding:
   - GO:0005488 # binding
 cytoskeleton_organization:
@@ -15,8 +21,6 @@ cytoskeleton_organization:
 carbohydrate_binding:
   - GO:0030246 # carbohydrate binding
   - GO:0097367 # carbohydrate derivative binding
-chemoattractant:
-  - GO:0042056 # chemoattractant activity
 enzyme_regulation:
   - GO:0019899 # enzyme binding
   - GO:0030234 # enzyme regulator activity
@@ -38,26 +42,32 @@ ecm_binding_structure:
   - GO:0001968 # fibronectin binding
 transferase:
   - GO:0016740 # transferase activity
-protein_binding:
+transcription_factor_binding:
+  - GO:0008134 # transcription factor binding
+histone_binding:
+  - GO:0042393 # histone binding
+enzyme_binding:
+  - GO:0019899 # enzyme binding
+protein_aa_binding:
   - GO:0005515 # protein binding
+  - GO:0016597 # amino acid binding
+  - GO:0072341 # modified amino acid binding
   - GO:0042277 # peptide binding
-nucleic_acid_binding:
+dna_binding:
   - GO:0003677 # DNA binding
+rna_binding:
   - GO:0003723 # RNA binding
   - GO:0003729 # mRNA binding
+  - GO:0019843 # rRNA binding
+other_nucleic_acid_binding:
   - GO:0003676 # nucleic acid binding
   - GO:0002054 # nucleobase binding
   - GO:0001882 # nucleoside binding
-  - GO:0019843 # rRNA binding
-chromatin_binding:
-  - GO:0003682 # chromatin binding
 misc_signal_transduction:
   - GO:0004930 # G protein-coupled receptor activity
   - GO:0005154 # epidermal growth factor receptor binding
 ribosome_structure:
   - GO:0003735 # structural constituent of ribosome
-synapse_structure:
-  - GO:0098918 # structural constituent of synapse
 nutrient_molecule_degradation:
   - GO:0008233 # peptidase activity
   - GO:0016298 # lipase activity
