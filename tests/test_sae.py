@@ -1,15 +1,17 @@
-from collections.abc import Sequence
-from functools import reduce
+import copy
 
 import numpy as np
 import polars as pl
 import polars.selectors as cs
 import torch
-from amr_predict.evaluation import EvalSAE, SaeMetrics
+from amr_predict.evaluation import EvalSAE
 from attrs import define
 from beartype import beartype
+from loguru import logger
 from sklearn.metrics import accuracy_score
 from torch import Tensor
+
+logger.enable("amr_predict")
 
 RNG = np.random.default_rng()
 
@@ -22,7 +24,9 @@ CHOICES = list("abcdef")
 
 @beartype
 def gen_labels(
-    n: int, together: dict[int, tuple[list, float]] | None = None
+    n: int,
+    together: dict[int, tuple[list, float]] | None = None,
+    reciprocate: bool = True,
 ) -> pl.Series:
     """
     Randomly generate label sets
@@ -31,20 +35,39 @@ def gen_labels(
     ----------
     together : dict[int, list] | None
         Dictionary mapping indices of CHOICES to a tuple of
-        other indices which must co-occur go together, followed by the
+        other indices which must co-occur whenever the key is seen, followed by the
         co-occurence proportion
         e.g. {1: ([0, 2], 0.8)} means that CHOICES[1] co-occurs with
         CHOICES[0] and CHOICES[2] 80% of the time
+
+    reciprocate : bool
+        If True (default behavior), the co-occuring indices also will co-occur
+        with their key implicitly
+        e.g. if True, {1: ([0, 2], 0.8)} means that CHOICES[1] co-occurs with
+        CHOICES[0] and CHOICES[2] 80% of the time, and
+        CHOICES[0] will co-occur with CHOICES[2] and CHOICES[1] 80%
+        of the time
+
     """
+    tgt = copy.deepcopy(together)
+    if reciprocate:
+        for k, v in together.items():
+            choices, prop = v
+            for choice in choices:
+                others = list(set(choices) - {choice})
+                if choice not in tgt:
+                    tgt[choice] = ([k] + others, prop)
+                elif k not in tgt[choice][0]:
+                    tgt[choice][0].extend([k] + others)
 
     def get():
-        if not together:
+        if not tgt:
             n_lab = RNG.integers(size=1, low=1, high=len(CHOICES), endpoint=True)
             return SEP.join(RNG.choice(CHOICES, size=n_lab))
         chosen = RNG.integers(size=1, low=0, high=len(CHOICES)).item()
-        if chosen not in together:
+        if chosen not in tgt:
             return CHOICES[chosen]
-        idx, prop = together[chosen]
+        idx, prop = tgt[chosen]
         others = [CHOICES[i] for i in idx]
         if RNG.random(1) <= prop:
             return SEP.join([CHOICES[chosen]] + others)
@@ -73,28 +96,10 @@ class DummyLatent:
         return result
 
 
-def test_multi_label(
-    n: int = 1000,
-    fire_prop: float = 0.9,
-    threshold=0.5,
-):
-    """
-    For each label, a latent will be generated that fires specifically
-        on that label. Naturally it will also fire on samples where that
-    label is also present
-
-    Goal will be to see if the metrics can distinguish between each latent
-    """
-    pass
-
-
-# * Case 1: Monosemantic latents, one
-
-
 def tester(
     label_args: dict,
     true_firing: dict[str, list[str]],
-    threshold: float = 0.3,
+    threshold: float = 0.5,
     fire_prop=1.0,
 ):
     latents = {
