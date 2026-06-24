@@ -36,7 +36,7 @@ GS = nx.subgraph_view(
 )
 
 MIN_COUNT = 250
-
+CHOSEN_RANK = "kingdom"
 BLACKLIST = [
     # "nChildrenIsA",
     # "nChildrenPartOf",
@@ -69,7 +69,11 @@ def update_candidate_files():
     def has_paths_with_prev(x, ns) -> bool:
         for node in in_group.get(ns, []):
             # Source must be the potential child node in this format
-            if nx.has_path(GS, source=x, target=node):
+            try:
+                has_path = nx.has_path(GS, source=x, target=node)
+            except nx.NodeNotFound:
+                continue
+            if has_path:
                 return True
         return False
 
@@ -156,7 +160,11 @@ class GoGroup:
                     group_tracker[cand].append(term)
                     break
                 for m in members:
-                    if nx.has_path(G, source=term, target=m):
+                    try:
+                        has_path = nx.has_path(G, source=term, target=m)
+                    except nx.NodeNotFound:
+                        has_path = False
+                    if has_path:
                         dist = nx.shortest_path_length(G, source=term, target=m)
                         path_len_tracker[cand] = min(
                             path_len_tracker.get(cand, np.inf), dist
@@ -170,7 +178,58 @@ class GoGroup:
                 print(group_tracker)
                 raise ValueError("Empty string")
             return chosen
-        return "NA"
+        return "unlabelled"
+
+
+def add_taxonomic_rank(
+    df: pl.DataFrame,
+    rank: Literal[
+        "superclass",
+        "infraclass",
+        "subclass",
+        "tribe",
+        "biotype",
+        "section",
+        "subcohort",
+        "subgenus",
+        "subphylum",
+        "subkingdom",
+        "subspecies",
+        "species",
+        "suborder",
+        "phylum",
+        "subsection",
+        "superfamily",
+        "serogroup",
+        "class",
+        "genus",
+        "subfamily",
+        "genotype",
+        "family",
+        "infraorder",
+        "strain",
+        "serotype",
+        "clade",
+        "domain",
+        "forma",
+        "order",
+        "cohort",
+        "parvorder",
+        "realm",
+        "kingdom",
+        "superorder",
+        "subtribe",
+    ] = "family",
+) -> pl.DataFrame:
+    df = df.with_columns(
+        pl.col("Taxonomic lineage")
+        .str.split(",")
+        .list.filter(pl.element().str.ends_with(f"({rank})"))
+        .list.first()
+        .str.strip_suffix(f" ({rank})")
+        .alias(rank)
+    )
+    return df
 
 
 def add_extra_cols(meta: pl.DataFrame) -> pl.DataFrame:
@@ -221,6 +280,10 @@ def add_extra_cols(meta: pl.DataFrame) -> pl.DataFrame:
         .with_columns(pl.col(a_col).list.join(";"))
     )
     together = together.drop(a_col).join(tmp, on="Entry", how="left")
+    if "Taxonomic lineage" in together.columns:
+        together = add_taxonomic_rank(together, CHOSEN_RANK)
+    if "OrthoDB" in together.columns:
+        together = together.with_columns(pl.col("OrthoDB").str.split(";").list.first())
     return together
 
 
