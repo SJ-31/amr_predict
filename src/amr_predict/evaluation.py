@@ -164,6 +164,7 @@ class Evaluator:
         dataset: Dataset,
         validation_kws: dict | None = None,
         stratify_by: str | None = None,
+        cache_subdir: str = "cv",
         **kws,
     ) -> pl.DataFrame:
         """
@@ -206,7 +207,7 @@ class Evaluator:
             split_indices[test_key] = test
 
         ddict = make_splits(dataset=dataset, split_methods=split_indices)
-        return self.holdout(ddict, split_names)
+        return self.holdout(ddict, split_names, cache_subdir=cache_subdir)
 
     def permutation_test(
         self,
@@ -316,12 +317,14 @@ class Evaluator:
                 dataset = process_fn(dataset)
             if use_cv:
                 result = (
-                    self.cv(dataset, **kws)
+                    self.cv(dataset, cache_subdir=f"error_estimate_{i}", **kws)
                     .group_by(["task", "metric"])
                     .agg(pl.col("value").mean())
                 )
             else:
-                result = self.holdout(dataset, **kws)
+                result = self.holdout(
+                    dataset, cache_subdir=f"error_estimate_{i}", **kws
+                )
             tmp.append(result.with_columns(pl.lit(i).alias(colname)))
         return pl.concat(tmp, how="vertical_relaxed")
 
@@ -330,6 +333,7 @@ class Evaluator:
         dataset: Path | DatasetDict | Dataset,
         splits: dict[str, list[str | None | Dataset]] | None = None,
         validation_kws: dict | None = None,
+        cache_subdir: str = "holdout",
         **kws,
     ) -> pl.DataFrame:
         """Holdout evaluation on a dataset dict, possibly saved on disk
@@ -411,7 +415,7 @@ class Evaluator:
 
         if self.cache is not None:
             nc: NamedCache | None = NamedCache(
-                dir=self.cache / "holdout",
+                dir=self.cache / cache_subdir,
                 writer=lambda f, x: x.write_csv(f),
                 reader=pl.read_csv,
                 suffix=".csv",
