@@ -10,7 +10,14 @@ import numpy as np
 import polars as pl
 import pytest
 import torch
-from amr_predict.cache import EmbeddingCache, LinkedDataset, MultiCache, expand_max_len
+from amr_predict.cache import (
+    EmbeddingCache,
+    LinkedDataset,
+    MultiCache,
+    NamedCache,
+    expand_max_len,
+    with_repeat_caching,
+)
 from amr_predict.enums import BasicPoolings
 from datasets import Dataset
 from loguru import logger
@@ -319,3 +326,26 @@ def test_dataset(make_default_cache):
     assert len(d2) == d2[:]["x"].shape[0]
     assert ds.meta.shape[0] == ds["x"].shape[0]
     assert ds.meta.shape[0] == ds[:]["x"].shape[0]
+
+
+def test_inter_cache(tmp_path, rng):
+    nc = NamedCache(
+        dir=tmp_path / "foo", writer=lambda f, x: x.write_csv(f), suffix=".csv"
+    )
+    bar = nc(lambda: pl.DataFrame(rng.random((9, 3))), "array1")
+    assert bar.shape == (9, 3)
+    baz = nc(lambda: pl.DataFrame(rng.random((9, 3))), "array3")
+
+
+def test_repeat_cache(tmp_path, rng):
+    result = with_repeat_caching(
+        cache_dir=tmp_path / "cache",
+        n=100,
+        writer=lambda i, f: pl.DataFrame(rng.random((9, 3)))
+        .with_columns(pl.lit(i).alias("iter"))
+        .write_csv(f),
+        reader=pl.read_csv,
+        combine=pl.concat,
+    )
+    assert result.height == 100 * 9
+    assert len(list((tmp_path / "cache").iterdir())) == 100

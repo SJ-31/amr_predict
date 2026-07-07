@@ -226,7 +226,7 @@ def test_evaluator_sklearn(task_type, cspec, toy_dset):
         ),
     ],
 )
-def test_baseline(toy_dset, task_type, tasks, cspec, keys):
+def test_baseline(toy_dset, task_type, tasks, cspec, keys, tmp_path):
     dset = toy_dset(n=2000, column_spec=cspec)
     x_key, sample_key = keys
     if task_type == "classification":
@@ -243,10 +243,15 @@ def test_baseline(toy_dset, task_type, tasks, cspec, keys):
     )
     model = Baseline(x_key=x_key, device="cpu", model=model, cfg=mconf)
     eva: Evaluator = Evaluator(
-        model=model, task_names=None, n_classes=None, task_type=None
+        model=model,
+        task_names=None,
+        n_classes=None,
+        task_type=None,
+        cache=tmp_path / "cache",
     )
     holdout = eva.holdout(dataset=dset)
     cv = eva.cv(dataset=dset, n_splits=5, n_repeats=2)
+    assert len(list((tmp_path / "cache").iterdir())) > 0
     logger.info("holdout: {}", holdout)
     logger.info("cv: {}", cv)
 
@@ -308,6 +313,22 @@ def test_score_latents():
     fpr_tpr = scores2.roc_curve(0, ["A", "B"])
     # fpr_tpr.show()
 
+
+@pytest.mark.parametrize("prop_together", [1, 0.9, 0.5, 0.2])
+def test_score_latents_multi(rng, prop_together):
+    extras = 500
+    n = 1000
+    d_sae = 5
+    n_together = n * prop_together
+    n_separate = n - n_together
+    labels = pl.Series(
+        ["A;B"] * n_together + list(rng.choice(["A", "B"], n_separate)) + ["C"] * extras
+    )
+    active = torch.nn.functional.normalize(torch.randn(n, d_sae) + 5)
+    other = torch.randn(extras, d_sae)
+    acts = torch.vstack([active, other])
+
+    # TODO: unfinished
 
 
 @pytest.mark.parametrize(

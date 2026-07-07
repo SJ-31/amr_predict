@@ -8,7 +8,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "numpy",
-  "torch",
+  "torch>=2.10",
   "torchmetrics",
   "wandb",
   "dnachisel",
@@ -16,6 +16,7 @@ dependencies = [
   "ipython",
   "pandera",
   "PAMI",
+  "jax[cuda12]",
   "beartype",
   "attrs",
   "polars",
