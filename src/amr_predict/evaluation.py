@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 import umap
 import umap.plot
+from amr_predict.cache import NamedCache
 from amr_predict.metrics import (
     multitask_all_cls,
     multitask_all_reg,
@@ -92,6 +93,7 @@ class Evaluator:
         default=None, converter=lambda x: (x,) if isinstance(x, int) else x
     )
     seed: int | None = None
+    cache: str | Path | None = None
     rng: Generator = field(
         init=False,
         default=Factory(lambda self: np.random.default_rng(self.seed), takes_self=True),
@@ -358,7 +360,7 @@ class Evaluator:
             dataset = dataset.train_test_split(**kws)
             splits = {"auto": ("train", "test", validation)}
 
-        for key, dsets in splits.items():
+        def do_one_round(key, dsets):
             val = None
             if len(dsets) == 2:
                 train, test = dsets
@@ -402,8 +404,26 @@ class Evaluator:
                     train_dset, test_dset, val_dset
                 )
             model = self._get_fitted(train=train_dset, val=val_dset)
-            metrics = self._eval_fitted(model, test_dset=test_dset)
-            results.append(metrics.with_columns(pl.lit(key).alias("test_set")))
+            metrics = self._eval_fitted(model, test_dset=test_dset).with_columns(
+                pl.lit(key).alias("test_set")
+            )
+            return metrics
+
+        if self.cache is not None:
+            nc: NamedCache | None = NamedCache(
+                dir=self.cache / "holdout",
+                writer=lambda f, x: x.write_csv(f),
+                reader=pl.read_csv,
+                suffix=".csv",
+            )
+        else:
+            nc = None
+        for k, ds in splits.items():
+            if nc is None:
+                cur_df = do_one_round(k, ds)
+            else:
+                cur_df = nc(do_one_round, name=k, key=k, dsets=ds)
+            results.append(cur_df)
         if not results:
             raise ValueError("no splits were given")
         return pl.concat(results)
