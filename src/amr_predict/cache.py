@@ -923,3 +923,34 @@ def gen_from_cached(
             yield give
 
     return f
+
+@define
+class NamedCache:
+    dir: Path = field(converter=lambda x: Path(x))
+    writer: Callable
+    reader: Callable = pl.read_csv
+    suffix: str = ".csv"
+
+    def __attrs_post_init__(self):
+        if not self.dir.exists():
+            self.dir.mkdir(parents=True)
+
+    def __call__(
+        self,
+        fn,
+        name: str,
+        suffix: str | None = None,
+        reader: Callable | None = None,
+        writer: Callable | None = None,
+        **kws,
+    ):
+        suffix: str = suffix or self.suffix
+        reader: Callable = self.reader if reader is None else reader
+        writer: Callable = self.writer if writer is None else writer
+        file = self.dir / f"{name}{suffix}"
+        if file.exists():
+            return reader(file)
+        obj = fn(**kws)
+        writer(file, obj)
+        assert file.exists(), f"Writer function did not write to {file}"
+        return obj
