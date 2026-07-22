@@ -393,8 +393,11 @@ def sae_ablation_analysis():
     model = classifier_dispatch(
         ENV.ablation_analysis.probe, **ENV.ablation_analysis.probe_kws
     )
+    cache_dir = Path(snakemake.output[0]).with_suffix("")
     ablator = LatentAblation(
-        eva=Evaluator(model=model, x_key="x", **ENV.ablation_analysis.loader_kws),
+        eva=Evaluator(
+            model=model, x_key="x", **ENV.ablation_analysis.loader_kws, cache=cache_dir
+        ),
         sae=sae,
         eval_kws=ENV.ablation_analysis.eval_kws,
     )
@@ -658,6 +661,7 @@ def probing_permutation_tests():
     dset, encoder = encode_strs(dset, task_names=(task,))
     dset = dset.with_format("torch")
     _, n_classes = data_spec(dset, (task,), x_key="x")
+    cache_dir = Path(snakemake.output[0]).with_suffix("")
     eva = Evaluator(
         model=model,
         x_key="x",
@@ -665,11 +669,16 @@ def probing_permutation_tests():
         seed=ENV.rng,
         task_names=(task,),
         n_classes=n_classes,
+        cache=cache_dir,
     )
-    t1 = eva.permutation_test(dset, "class_label").with_columns(
+    test_kws = {
+        k: v for k, v in asdict(ENV.probing.permutation_tests).items() if k != "cv_kws"
+    }
+    test_kws.update(ENV.probing.permutation_tests.cv_kws)
+    t1 = eva.permutation_test(dset, "class_label", **test_kws).with_columns(
         pl.lit("permutation_test_1").alias("test")
     )
-    t2 = eva.permutation_test(dset, "per_class_feature").with_columns(
+    t2 = eva.permutation_test(dset, "per_class_feature", **test_kws).with_columns(
         pl.lit("permutation_test_2").alias("test")
     )
     combined = pl.concat([t1, t2], how="vertical_relaxed")
@@ -826,7 +835,7 @@ def get_embeddings():
 
 
 def get_embeddings_extract():
-    completion_marker: Path = Path(INPUT)
+    completion_marker: Path = Path(str(INPUT[0]))
     new_name = f"{PARAMS["embedding_method"]}-{PARAMS['pooling']}.completed"
     if (completion_marker.parent / new_name.stem).exists():
         Path(snakemake.output[0]).write_text("completed")

@@ -197,6 +197,7 @@ class PermutationTesting:
     r: int = 10
     k: int = 100
     use_cv: bool = True
+    cv_kws: dict = field(factory=dict)
 
 
 @define
