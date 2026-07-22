@@ -1183,7 +1183,7 @@ class LatentAblation:
         For each task, the selected latents should be hypothesized to
         correspond to the attribute
 
-        EX: select latents with the highest recall on that attribute
+        EX: select latents with the highest mcc on that attribute
         """
         n_y: int = len(y) if isinstance(y, pl.Series) else y.shape[0]
         assert x.shape[0] == n_y, "Differing number of samples in x, y"
@@ -1382,7 +1382,7 @@ class LabelCooccur:
     sample_col: str = "sample"
     sep: str = ";"
     max_fpr: float = 0.2
-    by: str = "activation_prop"
+    by: str = "mcc"
 
     def _get_top_and_filter(self, k: int) -> pl.DataFrame:
         return (
@@ -1483,10 +1483,8 @@ class LabelCooccur:
         ).collect()
         return joined, frequent_patterns, pattern_stats
 
-    def pairs(self, by: str = "activation_prop") -> pl.DataFrame:
-        report = self.sae_metrics.report(k=2, by=by).filter(
-            pl.col("fpr").arr.min() <= self.max_fpr
-        )
+    def pairs(self) -> pl.DataFrame:
+        top = self._get_top_and_filter(2)
         binary = to_binary_form(
             self.label_df,
             sample_col=self.sample_col,
@@ -1495,8 +1493,8 @@ class LabelCooccur:
         )
         labels = pl.Series(binary.columns)
         mat = torch.matmul(binary.to_torch().transpose(0, 1), binary.to_torch())
-        report = (
-            report.with_columns(
+        top = (
+            top.with_columns(
                 pl.col("label")
                 .map_elements(
                     lambda x: mat[labels.index_of(x[0]), labels.index_of(x[1])],

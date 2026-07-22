@@ -924,6 +924,7 @@ def gen_from_cached(
 
     return f
 
+
 @define
 class NamedCache:
     dir: Path = field(converter=lambda x: Path(x))
@@ -944,9 +945,9 @@ class NamedCache:
         writer: Callable | None = None,
         **kws,
     ):
-        suffix: str = suffix or self.suffix
-        reader: Callable = self.reader if reader is None else reader
-        writer: Callable = self.writer if writer is None else writer
+        suffix = suffix or self.suffix
+        reader = self.reader if reader is None else reader
+        writer = self.writer if writer is None else writer
         file = self.dir / f"{name}{suffix}"
         if file.exists():
             return reader(file)
@@ -981,6 +982,7 @@ def with_repeat_caching(
         Function to combine cached results after reading them with `reader`.
         e.g. pl.concat
     """
+    cache_dir = Path(cache_dir) if isinstance(cache_dir, str) else cache_dir
     if not cache_dir.exists():
         cache_dir.mkdir(parents=True)
     n_previous = len(list(cache_dir.glob(f"*{suffix}")))
