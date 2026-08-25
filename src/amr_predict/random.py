@@ -11,6 +11,7 @@ import numpy as np
 import polars as pl
 from amr_predict.utils import sum_to_one
 from attrs import Factory, define, field, validators
+from Bio.Data.CodonTable import TranslationError
 from loguru import logger
 from numpy.random import Generator
 from skbio.sequence import SubstitutionMatrix
@@ -95,6 +96,7 @@ class Perturber:
     _registry: ClassVar[dict[ae.Perturbations, Perturber]] = {}
     seqtype: ae.SeqTypes = ae.SeqTypes.NUC
     cfg: ae.PerturbationCfg = field(factory=ae.PerturbationCfg)
+    ignore_errors: bool = True
 
     def __call__(self, sequence: str) -> str:
         raise NotImplementedError()
@@ -120,19 +122,25 @@ class CodonOptimizer(Perturber):
     method = ae.Perturbations.CODON_OPTIMIZATION
 
     def __call__(self, sequence: str) -> str:
-        problem = dc.DnaOptimizationProblem(
-            sequence=sequence,
-            constraints=[dc.EnforceTranslation()],
-            objectives=[
-                dc.CodonOptimize(
-                    species=self.cfg.species,
-                    method=self.cfg.optimization_method,
-                )
-            ],
-        )
-        problem.resolve_constraints()
-        problem.optimize()
-        return problem.sequence
+        try:
+            problem = dc.DnaOptimizationProblem(
+                sequence=sequence,
+                constraints=[dc.EnforceTranslation()],
+                objectives=[
+                    dc.CodonOptimize(
+                        species=self.cfg.species,
+                        method=self.cfg.optimization_method,
+                    )
+                ],
+            )
+            problem.resolve_constraints()
+            problem.optimize()
+            return problem.sequence
+        except (ValueError, TranslationError) as e:
+            if self.ignore_errors:
+                logger.warning(f"Ignoring error {e} for codon optimization")
+                return ""
+            raise e
 
 
 @define

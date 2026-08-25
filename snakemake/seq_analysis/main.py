@@ -530,7 +530,8 @@ def make_seq_dataset():
     elif PARAMS["variation"] == "perturbed":
         lookup = ENV.sequence_variants.perturbed[PARAMS["method"]]
         ptb = Perturber.new(lookup.method, seqtype=seqtype, cfg=lookup.kws)
-        combined = ptb.perturb(combined)
+        combined: pl.DataFrame = ptb.perturb(combined)
+        combined = combined.filter(pl.col(SCOL).str.len_chars() > 0)
     dset: Dataset = Dataset.from_polars(combined)
     dset.save_to_disk(dataset_path=snakemake.output[0])
 
