@@ -9,6 +9,7 @@ from collections.abc import Callable
 import numpy as np
 from amr_predict.evaluation import SaeMetrics
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import TensorBoardLogger
 
 sys.path.append("/py_lib")
 
@@ -239,12 +240,14 @@ def train_sae_helper(
         enable_version_counter=True,
         verbose=True,
     )
+    if log_dir.exists():
+        ckpt_dir = "last"
     if ENV.log_wandb:
         train_kws["logger"] = WandbLogger(
             run_name, project=ENV.wandb_project, save_dir=log_dir
         )
-        if log_dir.exists():
-            ckpt_dir = "last"
+    else:
+        train_kws["logger"] = TensorBoardLogger(save_dir=log_dir, name=run_name)
     sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
     load_kws = rconfig.dataloader.to_kws()
     trainer = L.Trainer(callbacks=[ckpt_callback], **train_kws)
