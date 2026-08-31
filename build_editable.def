@@ -1,5 +1,5 @@
 Bootstrap: docker
-From: pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime
+From: pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
 
 # Don't forget to export APPTAINER_TMPDIR
 # APPTAINER_TMPDIR=/home/shannc/Bio_SDD/build
@@ -12,12 +12,13 @@ From: pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime
     apt-get update && apt-get install -y curl && apt-get install -y git && rm -rf /var/lib/apt/lists/*
     curl -Lsf https://astral.sh/uv/install.sh | sh
     export PATH="/root/.local/bin:$PATH"
-    uv pip install -r /opt/pyproject.toml --system --break-system-packages
-    # Permits a system-wide install
-    # to /root/.local/bin with uv
     git clone https://github.com/instadeepai/nucleotide-transformer /opt/nucleotide-transformer
     cd /opt/nucleotide-transformer
     uv pip install . --system --break-system-packages
+    
+    uv pip install -r /opt/pyproject.toml --system --break-system-packages
+    # Permits a system-wide install
+    # to /root/.local/bin with uv
 
 %environment
     export PATH="/root/.local/bin:$PATH" # Required to make the image container work

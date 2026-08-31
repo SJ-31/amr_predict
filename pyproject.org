@@ -7,6 +7,8 @@ description = "TODO"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  "jax[cuda12]==0.11.1",
+  "jaxlib==0.11.1",
   "numpy",
   "torch>=2.10",
   "torchmetrics",
@@ -16,7 +18,6 @@ dependencies = [
   "ipython",
   "pandera",
   "PAMI",
-  "jax[cuda12]",
   "beartype",
   "attrs",
   "polars",
@@ -24,8 +25,8 @@ dependencies = [
   "mimesis",
   "lightning",
   "pyhere",
+  "esm@git+https://github.com/Biohub/esm.git@main",
   "rich-cli",
-  "esm",
   "loguru",
   "duckdb",
   "jaxtyping",
