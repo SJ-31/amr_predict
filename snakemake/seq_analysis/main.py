@@ -9,7 +9,7 @@ from collections.abc import Callable
 import numpy as np
 from amr_predict.evaluation import SaeMetrics
 from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.loggers import CSVLogger
 
 sys.path.append("/py_lib")
 
@@ -39,6 +39,9 @@ from scipy.cluster.hierarchy import cut_tree
 from torch.utils.data import DataLoader
 
 from env import SnakeEnv
+
+logger.info(f"Torch cuda available: {torch.cuda.is_available()}")
+
 
 if TYPE_CHECKING:
     from snakemake.iocontainers import snakemake
@@ -173,7 +176,7 @@ def lookup_sae(spec: str, act_size: int) -> BaseNN:
         from_env.kws["dict_size"] = from_env.kws["dict_size"] * embedding_dim(
             spec.model
         )
-    from_env.kws["device"] = "gpu" if torch.cuda.is_available() else "cpu"
+    from_env.kws["device"] = "cuda" if torch.cuda.is_available() else "cpu"
     from_env.kws["act_size"] = act_size
     from_env.kws["dtype"] = torch.get_default_dtype()
     variant = from_env.variant
@@ -247,7 +250,7 @@ def train_sae_helper(
             run_name, project=ENV.wandb_project, save_dir=log_dir
         )
     else:
-        train_kws["logger"] = TensorBoardLogger(save_dir=log_dir, name=run_name)
+        train_kws["logger"] = CSVLogger(save_dir=log_dir, name=run_name)
     sae = lookup_sae(sae_name, act_size=dset[0]["x"].shape[1])
     load_kws = rconfig.dataloader.to_kws()
     trainer = L.Trainer(callbacks=[ckpt_callback], **train_kws)
@@ -478,7 +481,8 @@ def train_sae():
     dset: LinkedDataset = load_embeddings(
         cache_completion_file=INPUT[0], variation="natural", vmethod="0"
     )
-    log_dir = outpath.parent / f".{outpath.name.removesuffix(".pt")}_wandb"
+    log_suffix = "_wandb" if ENV.log_wandb else "_train_log"
+    log_dir = outpath.parent / f".{outpath.name.removesuffix(".pt")}{log_suffix}"
     train_sae_helper(
         dset=dset,
         run_name=run_name,
@@ -577,6 +581,7 @@ def embedding_metrics():
 
         obj_fn = NeighborMetrics
         kws = asdict(ENV.neighbor_metrics)
+        kws["level"] = PARAMS["level"]
         run_kws["with_randomization"] = True
     else:
         from amr_predict.metrics import EmbeddingCorrelations
@@ -840,8 +845,8 @@ def get_embeddings():
 
 def get_embeddings_extract():
     completion_marker: Path = Path(str(INPUT[0]))
-    new_name = f"{PARAMS["embedding_method"]}-{PARAMS['pooling']}.completed"
-    if (completion_marker.parent / new_name.stem).exists():
+    new_name = f"{PARAMS["embedding_method"]}-{PARAMS['pooling']}"
+    if (completion_marker.parent / new_name).exists():
         Path(snakemake.output[0]).write_text("completed")
     else:
         raise ValueError(f"The cache for {snakemake.output[0]} doesn't exist")

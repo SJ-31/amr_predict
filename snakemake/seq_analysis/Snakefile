@@ -65,6 +65,8 @@ rule base:
 
 
 use rule base as make_seq_dataset with:
+    resources:
+        mem="100g",
     output:
         directory(f"{DATASETS}/sequences/{{seqtype}}-{{variation}}-{{method}}"),
         # Variation: random, natural, perturbed
@@ -167,6 +169,8 @@ use rule base as train_sae with:
             f"{OUTDIR}/training_indices/seqs_{{seqtype}}.pkl",
         ),
     retries: 5
+    resources:
+        **EMBEDDING_RES,
     params:
         log=f"{logdir}/sae_training.log",
     output:
