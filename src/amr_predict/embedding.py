@@ -98,6 +98,7 @@ def automodel_embed(
     layer: int | None = None,
     tokenizer_kws: dict | None = None,
     embedding_key: str = "last_hidden_state",
+    device: str = "cpu",
 ) -> Generator[
     tuple[str, jaxtyping.Float[Tensor, "a b"], jaxtyping.Float[Tensor, "a"] | None]
 ]:
@@ -113,7 +114,7 @@ def automodel_embed(
 
     """
     tokenizer_kws = tokenizer_kws or {"padding": True, "return_tensors": "pt"}
-    inputs = tokenizer(sequences, **tokenizer_kws)
+    inputs = tokenizer(sequences, **tokenizer_kws).to(device)
     with torch.no_grad():
         output = model(**inputs)
     if "PYTEST_CURRENT_TEST" in os.environ:
@@ -235,6 +236,7 @@ class ModelEmbedder:
                 tokenizer=self.tokenizer,
                 layer=self.hidden_layer,
                 tokenizer_kws=kws,
+                device=self.device,
             )
         raise NotImplementedError()
 
@@ -518,7 +520,11 @@ class SeqLensEmbedder(ModelEmbedder):
         tuple[str, jaxtyping.Float[Tensor, "a b"], jaxtyping.Float[Tensor, "a"] | None]
     ]:
         return automodel_embed(
-            sequences, model=self.m, tokenizer=self.tokenizer, layer=self.hidden_layer
+            sequences,
+            model=self.m,
+            tokenizer=self.tokenizer,
+            layer=self.hidden_layer,
+            device=self.device,
         )
 
 
