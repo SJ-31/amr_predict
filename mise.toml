@@ -81,8 +81,8 @@ build_if_not_exists evo_design
 build_if_not_exists evo
 build_if_not_exists ntv3
 build_if_not_exists genome_ocean
-
 '''
+
 
 [tasks.apptainer_build]
 env = { APPTAINER_TMPDIR = "/home/shannc/Bio_SDD/build" }
