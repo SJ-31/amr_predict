@@ -5,15 +5,34 @@ from __future__ import annotations
 from pathlib import Path
 
 import cattrs
+import pandera.polars as pa
 import polars as pl
 import yaml
 from attrs import asdict, define, field, validators
 from yte import process_yaml
 
+SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
+    {
+        "name": pa.Column(str, unique=True),
+        "perturbed": pa.Column(str, nullable=True),
+        "family": pa.Column(str, nullable=True),
+        "n": pa.Column(int, nullable=True),
+        "taxid": pa.Column(str),
+        "biotype": pa.Column(str),
+        "has_5p_utr": pa.Column(bool),
+        "proportion": pa.Column(float),
+        "coding": pa.Column(bool),
+        # "conservation": pa.Column(), # TODO: not sure how to do this yet
+    }
+)
+
 
 @define
 class ModelParams:
-    name: str
+    script: (
+        str  # the model generation script, either <name>.sh or <name>.py e.g. evo2.py
+    )
+    env: str  # Conda environment or path to environment yaml
     kws: dict = field(factory=dict)
 
 
@@ -30,7 +49,17 @@ class SnakeEnv:
     prefixes: list[str] = field(factory=list)
 
     def __attrs_post_init__(self):
-        self.prefixes.extend()
+        SCHEMA.validate(self.prefix_metadata)
+        self.prefixes.extend(self.prefix_metadata["name"].to_list())
+
+    def model_env(self, key: str) -> str:
+        return self.models[key].env
+
+    def model_script(self, key: str) -> str:
+        """
+        Return the `script` field for the entry in self.models
+        """
+        return self.models[key].script
 
     def get_outputs(self) -> dict:
         """Return a dictionary of all workflow outputs, as input to the top-level rule"""
