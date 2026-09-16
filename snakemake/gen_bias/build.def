@@ -1,0 +1,30 @@
+Bootstrap: docker
+From: anaconda/miniconda
+
+
+%files
+    # Only install project dependencies
+    requirements.txt /opt/requirements.txt
+
+%post
+    apt-get update && apt-get install -y build-essential curl && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+    curl -Lsf https://astral.sh/uv/install.sh | sh
+    export PATH="/root/.local/bin:$PATH"
+    export CONDA_PLUGINS_AUTO_ACCEPT_TOS=yes
+    
+    # source /opt/miniconda3/etc/profile.d/conda.sh    
+    # conda create -n ntv3 python==3.11
+    # git clone https://github.com/instadeepai/nucleotide-transformer /opt/nucleotide-transformer
+    # cd /opt/nucleotide-transformer
+    # conda activate ntv3
+    # uv pip install jax[cuda12]==0.11.1
+    # uv pip install .
+    # conda deactivate
+
+
+    uv pip install -r /opt/requirements.txt --system --break-system-packages
+
+%environment
+    export PATH="/root/.local/bin:$PATH" # Required to make the image container work
+    export PATH=/opt/conda/envs/conda-env/bin:$PATH
+    export CONDA_DEFAULT_ENV=conda-env

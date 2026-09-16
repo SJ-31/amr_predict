@@ -5,6 +5,7 @@ smk_test_args = "test=True log_wandb=False"
 SMK_EXECUTOR = "slurm"
 SMK_PROFILE = "profiles/test"
 
+
 [tasks.report]
 dir = "./snakemake"
 usage = '''
@@ -58,6 +59,13 @@ snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
           date=${usage_date} \
           --profile "${SMK_PROFILE}" \
           --executor "${SMK_EXECUTOR}"
+'''
+
+[tasks.apptainer_build_gen]
+env = { APPTAINER_TMPDIR = "/home/shannc/Bio_SDD/build" }
+dir = "./snakemake/gen_bias"
+run = '''
+apptainer build image.sif build.def
 '''
 
 [tasks.apptainer_build]
