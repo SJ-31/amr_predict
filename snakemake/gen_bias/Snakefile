@@ -1,0 +1,28 @@
+from pathlib import Path
+import time
+from env import SnakeEnv, expand_nested
+import os
+
+
+singularity: "../../image.sif"
+
+
+configfile: "env.yaml"
+
+
+"""
+Output is structured as
+
+<outdir>/
+├── generated/
+│   └── <model_name>/
+│       └── <prefix_name>.fasta
+├── prefix_comparison.csv
+├── perturbation_sensitivity.csv
+├── motifs_domains.csv
+└── physicochemical.csv
+"""
+
+ENV = SnakeEnv.new(config)
+OUTDIR = ENV.outdir
+DATASETS = ENV.datasets
