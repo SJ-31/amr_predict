@@ -11,10 +11,19 @@ import yaml
 from attrs import asdict, define, field, validators
 from yte import process_yaml
 
+
+def cols_not_all_null(data: pa.PolarsData, a: str, b: str) -> pl.LazyFrame:
+    return data.lazyframe.select(pl.col(a).is_not_null() | pl.col(b).is_not_null())
+
+
 SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
     {
         "name": pa.Column(str, unique=True),
         "perturbed": pa.Column(str, nullable=True),
+        "file": pa.Column(
+            str, nullable=True, checks=pa.Check(lambda x: x.exists(), element_wise=True)
+        ),
+        "seq": pa.Column(str, nullable=True),
         "family": pa.Column(str, nullable=True),
         "n": pa.Column(int, nullable=True),
         "taxid": pa.Column(str),
@@ -23,7 +32,8 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
         "proportion": pa.Column(float),
         "coding": pa.Column(bool),
         # "conservation": pa.Column(), # TODO: not sure how to do this yet
-    }
+    },
+    checks=pa.Check(cols_not_all_null, "file", "seq"),
 )
 
 
@@ -40,17 +50,17 @@ class ModelParams:
 class SnakeEnv:
     huggingface: str
     rng: int
-    outdir: Path = field(converter=Path)
-    prefix_metadata: pl.DataFrame = field(converter=pl.read_csv)
     models: dict[str, ModelParams]
     slurm_time_limit: str
     resources: dict = field(validator=validators.instance_of(dict[str, dict[str, str]]))
     n: int
+    meta: pl.DataFrame = field(converter=pl.read_csv)
+    outdir: Path = field(converter=Path)
     prefixes: list[str] = field(factory=list)
 
     def __attrs_post_init__(self):
-        SCHEMA.validate(self.prefix_metadata)
-        self.prefixes.extend(self.prefix_metadata["name"].to_list())
+        SCHEMA.validate(self.meta)
+        self.meta.extend(self.meta["name"].to_list())
 
     def model_env(self, key: str) -> str:
         return self.models[key].env
@@ -66,7 +76,7 @@ class SnakeEnv:
         results = {"generated": [], "metrics": []}
         gen_dir = self.outdir / "generated"
         for model in self.models:
-            for prefix in self.prefixes:
+            for prefix in self.meta:
                 results["generated"].append(str(gen_dir / model / prefix.name))
         results["metrics"].append("prefix_comparison.csv")
         results["metrics"].append("motifs_domains.csv")
