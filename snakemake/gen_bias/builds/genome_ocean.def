@@ -15,12 +15,12 @@ From: nvcr.io/nvidia/vllm:26.06-py3
     # We use --system because we want to install into the container's main python environment
     # mimicking the Dockerfile behavior
     uv pip install --system --no-cache-dir peft accelerate bitsandbytes pandas biopython scikit-learn pyrodigal \
-        cloudpickle msgspec outlines sentencepiece pydantic ray psutil
+        cloudpickle msgspec outlines sentencepiece pydantic ray psutil --break-system-packages
 
     # Install the package from local source (copied in %files)
     git clone https://github.com/jgi-genomeocean/genomeocean /opt/genomeocean
     cd /opt/genomeocean
-    uv pip install --system --no-deps .
+    uv pip install --system --no-deps . --break-system-packages
 
 
 %environment

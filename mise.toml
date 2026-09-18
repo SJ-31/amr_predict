@@ -62,10 +62,21 @@ snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
 '''
 
 [tasks.apptainer_build_gen]
-env = { APPTAINER_TMPDIR = "/home/shannc/Bio_SDD/build" }
+env = { APPTAINER_TMPDIR = "/home/shannc/.cache/apptainer_builds" }
 dir = "./snakemake/gen_bias"
 run = '''
-apptainer build image.sif build.def
+
+build_if_not_exists () {
+    if [[ ! -e "${1}.sif" ]]; then 
+       apptainer build "${1}.sif" builds/"${1}".def 
+    fi                    
+}
+
+build_if_not_exists evo_design
+build_if_not_exists evo
+build_if_not_exists ntv3
+build_if_not_exists genome_ocean
+
 '''
 
 [tasks.apptainer_build]

@@ -1,9 +1,9 @@
 Bootstrap: docker
-From: 
+From: pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
 
 %post
-
-    pip install flash-attn==2.7.4.post1
+    pip install flash-attn==2.7.4.post1 --break-system-packages
+    pip install evo-model --break-system-packages
 
 %environment
     export PATH="/root/.local/bin:$PATH"
