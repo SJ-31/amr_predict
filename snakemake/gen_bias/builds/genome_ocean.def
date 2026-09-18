@@ -1,0 +1,28 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/vllm:26.06-py3
+# https://github.com/jgi-genomeocean/genomeocean/blob/06fa433169539a3c84d7366a663933b888a5386b/apptainer/genomeocean.def
+
+%post
+   # Install system dependencies
+    apt-get update && apt-get install -y --no-install-recommends \
+        wget git curl bzip2 libx11-6 build-essential \
+        && apt-get clean && rm -rf /var/lib/apt/lists/*
+    
+    # Install uv
+    pip install uv --break-system-packages
+
+    # Install Python dependencies using uv (inheriting from base image's python)
+    # We use --system because we want to install into the container's main python environment
+    # mimicking the Dockerfile behavior
+    uv pip install --system --no-cache-dir peft accelerate bitsandbytes pandas biopython scikit-learn pyrodigal \
+        cloudpickle msgspec outlines sentencepiece pydantic ray psutil
+
+    # Install the package from local source (copied in %files)
+    git clone https://github.com/jgi-genomeocean/genomeocean /opt/genomeocean
+    cd /opt/genomeocean
+    uv pip install --system --no-deps .
+
+
+%environment
+    export PATH="/root/.local/bin:$PATH"
+

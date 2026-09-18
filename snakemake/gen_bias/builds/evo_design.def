@@ -1,0 +1,9 @@
+Bootstrap: docker
+From: 
+
+%post
+
+    pip install flash-attn==2.7.4.post1
+
+%environment
+    export PATH="/root/.local/bin:$PATH"
