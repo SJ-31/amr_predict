@@ -65,10 +65,15 @@ snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
 env = { APPTAINER_TMPDIR = "/home/shannc/.cache/apptainer_builds" }
 dir = "./snakemake/gen_bias"
 run = '''
-
+outdir=../../data/remote/images
+if [[ ! -e "${outdir}" ]]; then
+   echo "Directory not mounted!"
+   exit
+fi
 build_if_not_exists () {
-    if [[ ! -e "${1}.sif" ]]; then 
-       apptainer build "${1}.sif" builds/"${1}".def 
+    if [[ ! -e "${outdir}/${1}.sif" ]]; then 
+       apptainer build "${1}.sif" builds/"${1}".def
+       mv "${1}.sif" "${outdir}/${1}.sif"
     fi                    
 }
 
