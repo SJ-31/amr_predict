@@ -1,10 +1,7 @@
 from pathlib import Path
 import time
-from env import SnakeEnv, expand_nested
+from env import SnakeEnv
 import os
-
-
-singularity: "../../image.sif"
 
 
 configfile: "env.yaml"
@@ -26,3 +23,30 @@ Output is structured as
 ENV = SnakeEnv.new(config)
 OUTDIR = ENV.outdir
 DATASETS = ENV.datasets
+
+OUTPUTS = ENV.get_outputs()
+
+
+rule all:
+    input:
+        *OUTPUTS["generated"],
+        *OUTPUTS["motifs"],
+        *OUTPUTS["metrics"],
+
+
+rule generate:
+    output:
+        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+    singularity:
+        lambda wc: ENV.model_image(wc.get("model"))
+    shell:
+        lambda wc: ENV.model_script(wc.get("model"))
+
+
+rule find_motifs:
+    input:
+        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+    output:
+        tsv=f"{OUTDIR}/motifs/{{model}}/{{prefix}}.tsv",
+    params:
+        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
