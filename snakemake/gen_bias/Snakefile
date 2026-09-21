@@ -58,25 +58,49 @@ rule classify_taxonomy:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
     params:
         db=ENV.taxdb,
-        rdir=lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}",
+        outdir=lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}",
     threads: 4
     output:
-        lca=lambda wc: f"{OUTDIR}/taxonomy/{wc.get('prefix')}_lca.tsv",
-        top_hit=lambda wc: f"{OUTDIR}/taxonomy/{wc.get('prefix')}_top_hit.tsv",
+        lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}/mmseqs_tophit_aln",
+        lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}/mmseqs_report",
+        lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}/mmseqs_lca.tsv",
+        lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}/mmseqs_tophit_report",
     shell:
         f"""
         mmseqs easy-taxonomy {{input[0]}} {{params.db}} \
-                {{params.rdir}}/mmseqs
+                {{params.outdir}}/mmseqs
                 {OUTDIR}/taxonomy/.{{prefix}}_tmp
                 --tax-lineage 1 \
                 --format-mode 4 \
                 --search-type 3
-        mv {{params.rdir}}/mmseqs_lca.tsv {{output.lca}} 
-        mv {{params.rdir}}/mmseqs_tophit_aln {{output.top_hit}} 
         """
 
 
-# The header of the lca file is ["query", "ncbi_taxid", "lca_rank", "lca_scientific_name", "lineage"]
-# TODO: choose a metric to filter the top hit output e.g. bitscore or evalue.
-# then map
-#
+rule sort_taxonomy_hits:
+    input:
+        f"{OUTDIR}/taxonomy/.{{prefix}}/mmseqs_tophit_aln",
+    output:
+        lambda wc: f"{OUTDIR}/taxonomy/{wc.get('prefix')}_tophit.csv",
+    run:
+        import polars as pl
+
+        # Sort by evalue then bitscore ranking i.e. pick sequences with the lowest evalue,
+        # (likely to have multiple sequences with the same evalue)
+        # then get the best hit by bitscore
+
+        infile = f"{input[0]}/mmseqs_tophit_aln"
+        df = pl.read_csv(infile, separator="\t").with_columns(
+            rank=pl.col("evalue").rank().over("query")
+        )
+        best_evalue = df.group_by("query").agg(min_rank=pl.col("rank").min())
+        df = (
+            df.join(best_evalue, on="query")
+            .filter(pl.col("rank") == pl.col("min_rank"))
+            .drop(["rank", "min_rank"])
+        )
+        df = (
+            df.group_by("query")
+            .agg(pl.all().top_k_by(k=1, by="bits"))
+            .explode(pl.all().exclude("query"))
+        )
+        df.write_csv(output[0])
