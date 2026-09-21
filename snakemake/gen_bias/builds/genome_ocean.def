@@ -20,7 +20,9 @@ From: nvcr.io/nvidia/vllm:26.06-py3
     # Install the package from local source (copied in %files)
     git clone https://github.com/jgi-genomeocean/genomeocean /opt/genomeocean
     cd /opt/genomeocean
-    uv pip install --system --no-deps . --break-system-packages
+    # BUG: changing this installation method broke the package
+    uv pip install ".[all]" --system --break-system-packages
+
 
 
 %environment

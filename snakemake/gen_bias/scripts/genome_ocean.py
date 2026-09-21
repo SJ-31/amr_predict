@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Adapted from genomeocean/go_generate.py
 # https://github.com/jgi-genomeocean/genomeocean/blob/main/go_generate.py
 
@@ -29,10 +28,11 @@ def parse_args() -> dict:
         type=str,
         choices=["100M", "500M", "4B"],
         help="Predefined model to use.",
+        default="100M",
     )
 
     parser.add_argument(
-        "--promptfile", type=str, help="File containing DNA sequences as prompts."
+        "--prompt", type=str, help="File containing DNA sequences as prompts."
     )
     parser.add_argument(
         "--num",
@@ -47,7 +47,7 @@ def parse_args() -> dict:
         default=512,
     )
     parser.add_argument(
-        "--max_seq_len",
+        "--seq_len",
         type=int,
         default=10240,
         help="Maximum length of generated sequences in tokens.",
@@ -119,20 +119,16 @@ def parse_args() -> dict:
     )
 
     args: dict = vars(parser.parse_args())
-    # if zero_shot
-    if args.get("zero_shot"):
-        args["prompts"] = [""]
 
     # Determine the model directory based on the provided arguments
-    model_dir = args.get("model_dir")
     if args.get("model") == "4B":
-        model_dir = "pGenomeOcean/GenomeOcean-4B"
+        args["model_dir"] = "pGenomeOcean/GenomeOcean-4B"
     elif args.get("model") == "100M":
-        model_dir = "pGenomeOcean/GenomeOcean-100M"
+        args["model_dir"] = "pGenomeOcean/GenomeOcean-100M"
     elif args.get("model") == "500M":
-        model_dir = "pGenomeOcean/GenomeOcean-500M"
-    if not model_dir:
-        args["model_dir"] = "100M"
+        args["model_dir"] = "pGenomeOcean/GenomeOcean-500M"
+    if not args.get("model_dir"):
+        args["model_dir"] = "pGenomeOcean/GenomeOcean-100M"
 
     return args
 
@@ -141,11 +137,10 @@ def main(args: dict):
     # Initialize the SequenceGenerator with the provided arguments
     seq_gen = SequenceGenerator(
         model_dir=args["model_dir"],
-        prompts=args["prompts"],
-        promptfile=args["promptfile"],
+        promptfile=args["prompt"],
         num=args["num"],
         min_seq_len=args["min_seq_len"],
-        max_seq_len=args["max_seq_len"],
+        max_seq_len=args["seq_len"],
         temperature=args["temperature"],
         top_k=args["top_k"],
         top_p=args["top_p"],
