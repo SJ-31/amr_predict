@@ -50,3 +50,33 @@ rule find_motifs:
         tsv=f"{OUTDIR}/motifs/{{model}}/{{prefix}}.tsv",
     params:
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+
+
+# TODO: use the same method as `find_motifs` to get the prefix file
+rule classify_taxonomy:
+    input:
+        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+    params:
+        db=ENV.taxdb,
+        rdir=lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}",
+    threads: 4
+    output:
+        lca=lambda wc: f"{OUTDIR}/taxonomy/{wc.get('prefix')}_lca.tsv",
+        top_hit=lambda wc: f"{OUTDIR}/taxonomy/{wc.get('prefix')}_top_hit.tsv",
+    shell:
+        f"""
+        mmseqs easy-taxonomy {{input[0]}} {{params.db}} \
+                {{params.rdir}}/mmseqs
+                {OUTDIR}/taxonomy/.{{prefix}}_tmp
+                --tax-lineage 1 \
+                --format-mode 4 \
+                --search-type 3
+        mv {{params.rdir}}/mmseqs_lca.tsv {{output.lca}} 
+        mv {{params.rdir}}/mmseqs_tophit_aln {{output.top_hit}} 
+        """
+
+
+# The header of the lca file is ["query", "ncbi_taxid", "lca_rank", "lca_scientific_name", "lineage"]
+# TODO: choose a metric to filter the top hit output e.g. bitscore or evalue.
+# then map
+#
