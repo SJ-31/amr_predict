@@ -137,10 +137,10 @@ def parse_args() -> dict:
     return args
 
 
-def main(args: dict, model_dir: str):
+def main(args: dict):
     # Initialize the SequenceGenerator with the provided arguments
     seq_gen = SequenceGenerator(
-        model_dir=model_dir,
+        model_dir=args["model_dir"],
         prompts=args["prompts"],
         promptfile=args["promptfile"],
         num=args["num"],
