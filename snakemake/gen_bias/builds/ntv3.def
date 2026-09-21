@@ -8,7 +8,7 @@ From: pytorch/pytorch:2.11.0-cuda12.6-cudnn9-runtime
     git clone https://github.com/instadeepai/nucleotide-transformer /opt/nucleotide-transformer
     cd /opt/nucleotide-transformer
     uv pip install . --system --break-system-packages
-    uv pip install jax[cuda12]==0.11.1
+    uv pip install jax[cuda12]==0.11.1 --system --break-system-packages
     
 
 %environment

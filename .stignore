@@ -3,3 +3,5 @@ data/temp/cache*/*
 data/temp/ncbi-datasets/*
 .git/*
 .git
+.dvc/*
+.dvc
