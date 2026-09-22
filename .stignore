@@ -5,3 +5,5 @@ data/temp/ncbi-datasets/*
 .git
 .dvc/*
 .dvc
+.pytest_cache/*
+.pytest_cache
