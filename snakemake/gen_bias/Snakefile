@@ -62,7 +62,8 @@ rule describe_protein_seqs:
     params:
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
     output:
-        "foo",
+        mean=f"{OUTDIR}/protein_descriptor_means/{{model}}/{{prefix}}.csv",
+        vals=f"{OUTDIR}/protein_descriptor_raw/{{model}}/{{prefix}}.csv",
 
 
 # rule compare_protein_descriptors:

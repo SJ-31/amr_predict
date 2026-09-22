@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 PARAMS: dict = snakemake.params
 RCONFIG: dict = snakemake.config.get(snakemake.rule, {})
 RNG: int = snakemake.config.get("rng", 20021031)
+INPUT = snakemake.input
+OUTPUT = snakemake.output
 
 
 if rule_fn := globals().get(snakemake.rule):
@@ -59,16 +61,26 @@ def describe_protein_seqs() -> None:
     """
     from functools import reduce
 
-    from peptides import Peptide
+    from scipy.spatial.distance import cdist
 
     prefix: SeqRecord = next(SeqIO.parse(PARAMS["prefix_fasta"], "fasta"))
     ids, peps = [prefix.id], [translate(prefix)]
-    for seq in SeqIO.parse(input[0], "fasta"):
+    for seq in SeqIO.parse(INPUT[0], "fasta"):
         ids.append(seq.id)
         peps.append(translate(seq))
+    tmp_dist = {"descriptor": [], "value": []}
     dfs = []
     for descriptor, kws in RCONFIG.items():
         kws = kws or {}
         df = get_props(peps=peps, descriptor=descriptor, ids=ids, **kws)
         dfs.append(df)
+
+        prefix_val: np.ndarray = np.array([df.drop("id").row(0)])
+        vals: np.ndarray = df.drop("id").slice(1).to_numpy()
+        tmp_dist["descriptor"].append(descriptor)
+        tmp_dist["value"].append(cdist(prefix_val, vals).mean())
+
+    mean_dist: pl.DataFrame = pl.DataFrame(tmp_dist)
     combined: pl.DataFrame = reduce(lambda x, y: x.join(y, on="id"), dfs)
+    mean_dist.write_csv(OUTPUT["mean"])
+    combined.write_csv(OUTPUT["vals"])
