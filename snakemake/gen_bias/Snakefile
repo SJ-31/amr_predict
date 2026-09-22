@@ -50,14 +50,26 @@ rule find_motifs:
         tsv=f"{OUTDIR}/motifs/{{model}}/{{prefix}}.tsv",
     params:
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+        thresh=ENV.fimo.thresh,
+        motifs=lambda wc: ENV.get_motif_file(wc.get("prefix")),
+    shell:
+        """
+        fimo --thresh {params.thresh} \
+             --skip-matched-sequence \
+             {params.motifs} {params.prefix_fasta} | \
+             xan 
+        fimo --thresh {params.thresh} \
+             --skip-matched-sequence \
+        
+        """
 
 
-# TODO: use the same method as `find_motifs` to get the prefix file
 rule classify_taxonomy:
     input:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
     params:
         db=ENV.taxdb,
+        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
         outdir=lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}",
     threads: 4
     output:
@@ -67,7 +79,8 @@ rule classify_taxonomy:
         lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}/mmseqs_tophit_report",
     shell:
         f"""
-        mmseqs easy-taxonomy {{input[0]}} {{params.db}} \
+        mmseqs easy-taxonomy {{input[0]}} {{params.prefix_fasta}} \
+                {{params.db}} \
                 {{params.outdir}}/mmseqs
                 {OUTDIR}/taxonomy/.{{prefix}}_tmp
                 --tax-lineage 1 \
