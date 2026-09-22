@@ -31,7 +31,9 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
         "has_5p_utr": pa.Column(bool),
         "proportion": pa.Column(float),
         "coding": pa.Column(bool),
-        "motif": pa.Column(str, nullable=True),
+        "motif_file": pa.Column(
+            str, nullable=True, checks=pa.Check(lambda x: x.exists(), element_wise=True)
+        ),
         # "conservation": pa.Column(), # TODO: not sure how to do this yet
     },
     checks=pa.Check(cols_not_all_null, "file", "seq"),
@@ -49,7 +51,8 @@ class ModelParams:
 
 @define
 class FindMotifs:
-    default: Path
+    default: str
+    thresh: float = 1e-5
 
 
 @define
@@ -60,11 +63,13 @@ class SnakeEnv:
     slurm_time_limit: str
     resources: dict = field(validator=validators.instance_of(dict[str, dict[str, str]]))
     n: int
+    fimo: FindMotifs
     meta: pl.DataFrame = field(converter=pl.read_csv)
     outdir: Path = field(converter=Path)
     tmp: Path = field(converter=Path)
     prefixes: list[str] = field(init=False, factory=list)
     prefix2file: dict[str, str] = field(init=False, factory=dict)
+    prefix2motif = dict[str, str] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
         SCHEMA.validate(self.meta)
@@ -78,6 +83,12 @@ class SnakeEnv:
                 file = self.tmp / f"{prefix}.fasta"
                 file.write_text(f">{prefix}\n{seq}")
             self.prefix2file[prefix] = file
+        self.prefix2motif = {
+            k: str(v) for k, v in zip(self.meta["name"], self.meta["motif"])
+        }
+
+    def get_motif_file(self, prefix: str) -> str:
+        return self.prefix2motif.get(prefix, self.fimo.default)
 
     def model_image(self, key: str) -> str:
         return self.models[key].image
