@@ -48,11 +48,41 @@ rule similarity_stats:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
     params:
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+        funcname=config.get("parasail", "sw_stats_striped_16"),
+        pref=f"{OUTDIR}/similarity_raw/{{model}}",
+        cols=",".join(
+            [
+                "query",
+                "index",
+                "length1",
+                "length2",
+                "score",
+                "end_query",
+                "end_ref",
+                "n_matches",
+                "similarities",
+                "length",
+            ]
+        ),
+    output:
+        raw="{params.pref}/{prefix}.csv",
     shell:
         """
-        TODO: use parasail_aligner
-        https://github.com/jeffdaily/parasail/blob/master/apps/README.md
-        https://anaconda.org/channels/bioconda/packages/parasail/overview
+        parasail_aligner -d \
+                -q {params.prefix_fasta} \
+                -f {input[0]} \
+                -a {params.funcname} \
+                -g {params.pref}.tmp.csv
+        
+        grep '>' {input[0]} | sed 's/^>//' | xan -n rename id | \
+                xan enum > {params.pref}.seqnames.csv
+
+        xan rename -n {params.cols} {params.pref}.tmp.csv | \
+                xan join index {params.pref}.seqnames.csv - | \
+                xan drop index > {output.raw}
+
+        rm {params.pref}.seqnames.csv
+        rm {params.pref}.tmp.csv 
         """
 
 
