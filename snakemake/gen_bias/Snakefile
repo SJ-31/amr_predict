@@ -43,6 +43,33 @@ rule generate:
         lambda wc: ENV.model_script(wc.get("model"))
 
 
+rule similarity_stats:
+    input:
+        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+    params:
+        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+    shell:
+        """
+        TODO: use parasail_aligner
+        https://github.com/jeffdaily/parasail/blob/master/apps/README.md
+        https://anaconda.org/channels/bioconda/packages/parasail/overview
+        """
+
+
+rule describe_protein_seqs:
+    input:
+        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+    params:
+        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+    output:
+        "foo",
+
+
+# rule compare_protein_descriptors:
+# TODO: after getting the values from rule above, compare them
+# across prefix groups
+
+
 rule find_motifs:
     input:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
