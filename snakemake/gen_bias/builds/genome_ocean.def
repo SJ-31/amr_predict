@@ -21,7 +21,8 @@ From: nvcr.io/nvidia/vllm:26.06-py3
     git clone https://github.com/jgi-genomeocean/genomeocean /opt/genomeocean
     cd /opt/genomeocean
     # BUG: changing this installation method broke the package
-    uv pip install ".[all]" --system --break-system-packages
+    uv pip install . --no-deps --system --break-system-packages
+    uv pip install vllm==0.24 --system --break-system-packages
 
 
 
