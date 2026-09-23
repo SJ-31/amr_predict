@@ -20,9 +20,11 @@ def cols_not_all_null(data: pa.PolarsData, a: str, b: str) -> pl.LazyFrame:
 SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
     {
         "name": pa.Column(str, unique=True),
-        "perturbed": pa.Column(str, nullable=True),
+        "perturbed": pa.Column(bool, nullable=True),
         "file": pa.Column(
-            str, nullable=True, checks=pa.Check(lambda x: x.exists(), element_wise=True)
+            str,
+            nullable=True,
+            checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
         ),
         "seq": pa.Column(str, nullable=True),
         "family": pa.Column(str, nullable=True),
@@ -33,7 +35,9 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
         "proportion": pa.Column(float),
         "coding": pa.Column(bool),
         "motif_file": pa.Column(
-            str, nullable=True, checks=pa.Check(lambda x: x.exists(), element_wise=True)
+            str,
+            nullable=True,
+            checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
         ),
         # "conservation": pa.Column(), # TODO: not sure how to do this yet
     },
@@ -62,10 +66,10 @@ class SnakeEnv:
     rng: int
     models: dict[str, ModelParams]
     slurm_time_limit: str
-    resources: dict = field(validator=validators.instance_of(dict[str, dict[str, str]]))
+    resources: dict = field(validator=validators.instance_of(dict))
     n: int
     fimo: FindMotifs
-    meta: pl.DataFrame = field(converter=pl.read_csv)
+    meta: pl.DataFrame = field(converter=lambda x: pl.read_csv(x, null_values="NA"))
     outdir: Path = field(converter=Path)
     tmp: Path = field(converter=Path)
     prefixes: list[str] = field(init=False, factory=list)
@@ -87,7 +91,7 @@ class SnakeEnv:
         self.prefix2data = self.meta.rows_by_key("name", unique=True, named=True)
 
     def get_motif_file(self, prefix: str) -> str:
-        return self.prefix2data[prefix].get("motif", self.fimo.default)
+        return self.prefix2data[prefix].get("motif_file", self.fimo.default)
 
     def model_image(self, key: str) -> str:
         return self.models[key].image
