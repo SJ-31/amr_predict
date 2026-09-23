@@ -23,6 +23,7 @@ Output is structured as
 ENV = SnakeEnv.new(config)
 OUTDIR = ENV.outdir
 OUTPUTS = ENV.get_outputs()
+os.environ["HF_HOME"] = ENV.huggingface
 
 
 rule all:

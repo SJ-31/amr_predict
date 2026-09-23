@@ -16,6 +16,7 @@ models: # dictionary mapping model name
     image: ?f"{remote}/images/evo_design.sif"
     resources: "gpu40g"
     kws:
+      device: "cuda:0"
       seq_len: 512
       model_name: evo-1-8k-base
   genome_ocean_1:
