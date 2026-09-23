@@ -137,3 +137,14 @@ class SnakeEnv:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def test_env() -> SnakeEnv:
+    from pyhere import here
+
+    wd = here("snakemake", "gen_bias")
+    with open(wd / "env.yaml", "r") as f:
+        data = process_yaml(f)
+    with open(wd / "test_env.yaml", "r") as f:
+        data.update(process_yaml(f))
+    return SnakeEnv.new(data)

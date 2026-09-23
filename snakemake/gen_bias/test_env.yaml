@@ -3,12 +3,24 @@ __definitions__:
   - from pathlib import Path
   - import sys
   - from pyhere import here
+  - remote = "../../data/remote"
   - testdir = here() / "tests"
 
-n: 500
-meta: ?testdir / "gen_prefixes.csv"
+n: 10
+meta: ?testdir / "data"/ "gen_prefixes.csv"
+outdir: f"{remote}/tests/gen_bias"
+
 models: # dictionary mapping model name
-  ntv3_default:
-    script: "ntv3.py"
+  evo1:
+    script: scripts/evo_design.py
+    image: ?"{remote}/images/evo_design.sif"
+    kws:
+      seq_len: 512
+      model_name: evo-1-8k-base
+  genome_ocean_1:
+    script: scripts/genome_ocean.py
+    image: ?"{remote}/images/genome_ocean.sif"
     conda: ntv3
-    kws: {}
+    kws:
+      seq_len: 512
+      min_seq_len: 512
