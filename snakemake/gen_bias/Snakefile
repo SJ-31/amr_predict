@@ -22,8 +22,6 @@ Output is structured as
 
 ENV = SnakeEnv.new(config)
 OUTDIR = ENV.outdir
-DATASETS = ENV.datasets
-
 OUTPUTS = ENV.get_outputs()
 
 
@@ -32,7 +30,7 @@ rule all:
         *OUTPUTS["generated"],
         *OUTPUTS["motifs"],
         *OUTPUTS["taxonomy"],
-        # *OUTPUTS["metrics"],
+        # *OUTPUTS["metrics"], # TODO: uncomment after finishing
 
 
 rule generate:
@@ -60,7 +58,6 @@ rule similarity_stats:
     params:
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
         funcname=config.get("parasail", "sw_stats_striped_16"),
-        pref=f"{OUTDIR}/similarity_raw/{{model}}",
         cols=",".join(
             [
                 "query",
@@ -76,24 +73,23 @@ rule similarity_stats:
             ]
         ),
     output:
-        raw="{params.pref}/{prefix}.csv",
+        seqnames=temp(f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.seqnames.csv"),
+        tmp=temp(f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.tmp.csv"),
+        raw=f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.csv",
     shell:
         """
         parasail_aligner -d \
                 -q {params.prefix_fasta} \
                 -f {input[0]} \
                 -a {params.funcname} \
-                -g {params.pref}.tmp.csv
+                -g {output.tmp}
         
         grep '>' {input[0]} | sed 's/^>//' | xan -n rename id | \
-                xan enum > {params.pref}.seqnames.csv
+                xan enum > {output.seqnames}
 
-        xan rename -n {params.cols} {params.pref}.tmp.csv | \
-                xan join index {params.pref}.seqnames.csv - | \
+        xan rename -n {params.cols} {output.tmp} | \
+                xan join index {output.seqnames} - | \
                 xan drop index > {output.raw}
-
-        rm {params.pref}.seqnames.csv
-        rm {params.pref}.tmp.csv 
         """
 
 
@@ -139,19 +135,18 @@ rule classify_taxonomy:
     params:
         db=ENV.taxdb,
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
-        outdir=lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}",
     threads: 4
     output:
-        lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}/mmseqs_tophit_aln",
-        lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}/mmseqs_report",
-        lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}/mmseqs_lca.tsv",
-        lambda wc: f"{OUTDIR}/taxonomy/.{wc.get('prefix')}/mmseqs_tophit_report",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_tophit_aln",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_report",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_lca.tsv",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_tophit_report",
     shell:
         f"""
         mmseqs easy-taxonomy {{input[0]}} {{params.prefix_fasta}} \
                 {{params.db}} \
-                {{params.outdir}}/mmseqs
-                {OUTDIR}/taxonomy/.{{prefix}}_tmp
+                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prefix}}/mmseqs \
+                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prefix}}_tmp \
                 --tax-lineage 1 \
                 --format-mode 4 \
                 --search-type 3
@@ -160,9 +155,9 @@ rule classify_taxonomy:
 
 rule sort_taxonomy_hits:
     input:
-        f"{OUTDIR}/taxonomy/.{{prefix}}/mmseqs_tophit_aln",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_tophit_aln",
     output:
-        lambda wc: f"{OUTDIR}/taxonomy/{wc.get('prefix')}.csv",
+        f"{OUTDIR}/taxonomy/{{model}}/{{prefix}}.csv",
     run:
         import polars as pl
 
