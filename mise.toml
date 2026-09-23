@@ -6,6 +6,26 @@ SMK_EXECUTOR = "slurm"
 SMK_PROFILE = "profiles/test"
 
 
+[tasks.send_gen]
+dir = "snakemake/gen_bias"
+usage = '''
+arg "<file>" default="" help="File to send"
+'''
+run = '''
+if [[ -z "${usage_file}" ]]; then
+    rsync env.py $stem_ip:~/amr_predict/snakemake/gen_bias
+    rsync env.yaml $stem_ip:~/amr_predict/snakemake/gen_bias
+    rsync test_env.yaml $stem_ip:~/amr_predict/snakemake/gen_bias
+    rsync Snakefile $stem_ip:~/amr_predict/snakemake/gen_bias
+    rsync main.py $stem_ip:~/amr_predict/snakemake/gen_bias
+    rsync test.sh $stem_ip:~/amr_predict/snakemake/gen_bias
+    rsync run.sh $stem_ip:~/amr_predict/snakemake/gen_bias
+else
+    rsync "${usage_file}" $stem_ip:~/amr_predict/snakemake/gen_bias
+fi
+'''
+
+
 [tasks.report]
 dir = "./snakemake"
 usage = '''

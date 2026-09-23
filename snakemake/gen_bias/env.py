@@ -52,6 +52,7 @@ class ModelParams:
     )
     image: str  # Image file
     kws: dict = field(factory=dict)
+    resources: str | None = None
 
 
 @define
@@ -96,6 +97,10 @@ class SnakeEnv:
 
     def model_image(self, key: str) -> str:
         return self.models[key].image
+
+    def model_res(self, key: str) -> dict:
+        res = self.models[key].resources
+        return self.resources[res] if res else {}
 
     def model_kws(self, key: str) -> str:
         return " ".join(
