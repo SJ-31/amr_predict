@@ -29,7 +29,7 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
         "seq": pa.Column(str, nullable=True),
         "family": pa.Column(str, nullable=True),
         "n": pa.Column(int, nullable=True),
-        "taxid": pa.Column(str),
+        "taxid": pa.Column(str, coerce=True),
         "biotype": pa.Column(str),
         "has_5p_utr": pa.Column(bool),
         "proportion": pa.Column(float),
@@ -41,7 +41,7 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
         ),
         # "conservation": pa.Column(), # TODO: not sure how to do this yet
     },
-    checks=pa.Check(cols_not_all_null, "file", "seq"),
+    checks=pa.Check(cols_not_all_null, a="file", b="seq"),
 )
 
 
@@ -71,6 +71,7 @@ class SnakeEnv:
     fimo: FindMotifs
     meta: pl.DataFrame = field(converter=lambda x: pl.read_csv(x, null_values="NA"))
     outdir: Path = field(converter=Path)
+    taxdb: str
     tmp: Path = field(converter=Path)
     prefixes: list[str] = field(init=False, factory=list)
     prefix2data: dict[str, dict] = field(init=False, factory=dict)
@@ -117,8 +118,8 @@ class SnakeEnv:
         ]:
             results[d] = expand(
                 f"{self.outdir}/{d}/{{m}}/{{p}}.{ext}",
-                self.models.keys(),
-                self.prefixes,
+                m=self.models.keys(),
+                p=self.prefixes,
             )
         for m in ["prefix_comparison.csv", "physicochemical.csv"]:
             results["metrics"].append(f"{self.outdir}/{m}")
