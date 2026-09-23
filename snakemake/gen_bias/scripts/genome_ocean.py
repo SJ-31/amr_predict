@@ -99,15 +99,7 @@ def parse_args() -> dict:
         os.getcwd(), f"go_seq_{random.randint(1000, 9999)}"
     )
     parser.add_argument(
-        "--out_prefix", type=str, default=default_out_prefix, help="Output file prefix."
-    )
-
-    parser.add_argument(
-        "--out_format",
-        type=str,
-        choices=["fa", "txt"],
-        default="fa",
-        help="Output format (txt or fa).",
+        "--output", type=str, default=default_out_prefix, help="Output file prefix."
     )
 
     parser.add_argument(
@@ -149,19 +141,15 @@ def main(args: dict):
         repetition_penalty=args["repetition_penalty"],
         seed=args["seed"],
     )
-
-    # Generate sequences
     all_generated = seq_gen.generate_sequences(
         prepend_prompt_to_output=args["prepend_prompt_to_output"],
         max_repeats=args["max_repeats"],
     )
-
-    # Save the generated sequences to the specified output file
-    seq_gen.save_sequences(
-        all_generated,
-        out_prefix=args["out_prefix"],
-        out_format=args["out_format"],
-    )
+    with open(args["output"], "w") as f:
+        to_write = [
+            f">{row['id']}_{i}\n{row['seq']}" for i, row in all_generated.iterrows()
+        ]
+        f.write("\n".join(to_write))
 
 
 if __name__ == "__main__":
