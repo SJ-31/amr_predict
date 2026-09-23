@@ -99,7 +99,7 @@ class SnakeEnv:
 
     def model_kws(self, key: str) -> str:
         return " ".join(
-            [f"--{k} {v}" if v else f"--{k}" for k, v in self.models[key].kws]
+            [f"--{k} {v}" if v else f"--{k}" for k, v in self.models[key].kws.items()]
         )
 
     def model_script(self, key: str) -> str:

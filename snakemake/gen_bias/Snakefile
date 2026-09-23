@@ -41,7 +41,7 @@ rule generate:
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
         kws=lambda wc: ENV.model_kws(wc.get("model")),
         n=lambda wc: ENV.prefix2data[wc.get("prefix")].get("n", ENV.n),
-    singularity:
+    container:
         lambda wc: ENV.model_image(wc.get("model"))
     shell:
         """

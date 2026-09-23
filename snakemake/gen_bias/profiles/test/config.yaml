@@ -1,5 +1,6 @@
 rerun-triggers: mtime
 cores: 1
+slurm-logdir: "/data/home/shannc/amr_predict/snakemake/gen_bias/slurm_logs_test"
 keep-incomplete: True
 delete-all-output: False
 delete-temp-output: False
