@@ -31,16 +31,27 @@ rule all:
     input:
         *OUTPUTS["generated"],
         *OUTPUTS["motifs"],
-        *OUTPUTS["metrics"],
+        *OUTPUTS["taxonomy"],
+        # *OUTPUTS["metrics"],
 
 
 rule generate:
     output:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+    params:
+        script=lambda wc: ENV.model_script(wc.get("model")),
+        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+        kws=lambda wc: ENV.model_kws(wc.get("model")),
+        n=lambda wc: ENV.prefix2data[wc.get("prefix")].get("n", ENV.n),
     singularity:
         lambda wc: ENV.model_image(wc.get("model"))
     shell:
-        lambda wc: ENV.model_script(wc.get("model"))
+        """
+        python {params.script} {params.kws} \
+                --prompt {params.prefix_fasta} \
+                --output {output[0]} \
+                --num {params.n}
+        """
 
 
 rule similarity_stats:
@@ -151,7 +162,7 @@ rule sort_taxonomy_hits:
     input:
         f"{OUTDIR}/taxonomy/.{{prefix}}/mmseqs_tophit_aln",
     output:
-        lambda wc: f"{OUTDIR}/taxonomy/{wc.get('prefix')}_tophit.csv",
+        lambda wc: f"{OUTDIR}/taxonomy/{wc.get('prefix')}.csv",
     run:
         import polars as pl
 

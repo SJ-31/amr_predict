@@ -9,6 +9,7 @@ import pandera.polars as pa
 import polars as pl
 import yaml
 from attrs import asdict, define, field, validators
+from snakemake.io import expand
 from yte import process_yaml
 
 
@@ -68,8 +69,8 @@ class SnakeEnv:
     outdir: Path = field(converter=Path)
     tmp: Path = field(converter=Path)
     prefixes: list[str] = field(init=False, factory=list)
+    prefix2data: dict[str, dict] = field(init=False, factory=dict)
     prefix2file: dict[str, str] = field(init=False, factory=dict)
-    prefix2motif = dict[str, str] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
         SCHEMA.validate(self.meta)
@@ -83,15 +84,18 @@ class SnakeEnv:
                 file = self.tmp / f"{prefix}.fasta"
                 file.write_text(f">{prefix}\n{seq}")
             self.prefix2file[prefix] = file
-        self.prefix2motif = {
-            k: str(v) for k, v in zip(self.meta["name"], self.meta["motif"])
-        }
+        self.prefix2data = self.meta.rows_by_key("name", unique=True, named=True)
 
     def get_motif_file(self, prefix: str) -> str:
-        return self.prefix2motif.get(prefix, self.fimo.default)
+        return self.prefix2data[prefix].get("motif", self.fimo.default)
 
     def model_image(self, key: str) -> str:
         return self.models[key].image
+
+    def model_kws(self, key: str) -> str:
+        return " ".join(
+            [f"--{k} {v}" if v else f"--{k}" for k, v in self.models[key].kws]
+        )
 
     def model_script(self, key: str) -> str:
         """
@@ -101,17 +105,19 @@ class SnakeEnv:
 
     def get_outputs(self) -> dict:
         """Return a dictionary of all workflow outputs, as input to the top-level rule"""
-        results = {"generated": [], "metrics": [], "motifs": []}
-        for model in self.models:
-            for prefix in self.prefixes:
-                results["generated"].append(
-                    str(self.outdir / "generated" / model / f"{prefix.name}.fasta")
-                )
-                results["motifs"].append(
-                    str(self.outdir / "motifs" / model / f"{prefix.name}.tsv")
-                )
-        results["metrics"].append("prefix_comparison.csv")
-        results["metrics"].append("physicochemical.csv")
+        results = {"metrics": []}
+        for d, ext in [
+            ("generated", "fasta"),
+            ("motifs", "tsv"),
+            ("taxonomy", "csv"),
+        ]:
+            results[d] = expand(
+                f"{self.outdir}/{d}/{{m}}/{{p}}.{ext}",
+                self.models.keys(),
+                self.prefixes,
+            )
+        for m in ["prefix_comparison.csv", "physicochemical.csv"]:
+            results["metrics"].append(f"{self.outdir}/{m}")
         return results
 
     @classmethod
