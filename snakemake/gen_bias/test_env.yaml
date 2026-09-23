@@ -8,18 +8,18 @@ __definitions__:
 
 n: 10
 meta: ?testdir / "data"/ "gen_prefixes.csv"
-outdir: f"{remote}/tests/gen_bias"
+outdir: ?f"{remote}/tests/gen_bias"
 
 models: # dictionary mapping model name
   evo1:
     script: scripts/evo_design.py
-    image: ?"{remote}/images/evo_design.sif"
+    image: ?f"{remote}/images/evo_design.sif"
     kws:
       seq_len: 512
       model_name: evo-1-8k-base
   genome_ocean_1:
     script: scripts/genome_ocean.py
-    image: ?"{remote}/images/genome_ocean.sif"
+    image: ?f"{remote}/images/genome_ocean.sif"
     conda: ntv3
     kws:
       seq_len: 512
