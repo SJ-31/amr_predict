@@ -3,7 +3,7 @@ __definitions__:
   - from pathlib import Path
   - import sys
   - from pyhere import here
-  - remote = here() / "data/remote"
+  - remote = "/data/project/stemcell/shannc/repos/amr_predict"
   - testdir = here() / "tests"
 
 n: 10
