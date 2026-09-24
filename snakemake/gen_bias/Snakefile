@@ -39,7 +39,7 @@ rule generate:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
     params:
         script=lambda wc: ENV.model_script(wc.get("model")),
-        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"]),
         kws=lambda wc: ENV.model_kws(wc.get("model")),
         n=lambda wc: ENV.prefix2data[wc.get("prefix")].get("n", ENV.n) or ENV.n,
         hf=ENV.huggingface,
@@ -63,7 +63,7 @@ rule similarity_stats:
     singularity:
         ENV.singularity.get("similarity_stats")
     params:
-        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"], full=True),
         funcname=config.get("parasail", "sw_stats_striped_16"),
     output:
         temp(f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.tmp.csv"),
@@ -116,7 +116,7 @@ rule describe_protein_seqs:
     input:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
     params:
-        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"], full=True),
     output:
         mean=f"{OUTDIR}/protein_descriptor_means/{{model}}/{{prefix}}.csv",
         vals=f"{OUTDIR}/protein_descriptor_raw/{{model}}/{{prefix}}.csv",
@@ -135,14 +135,17 @@ rule find_motifs:
     output:
         tsv=f"{OUTDIR}/motifs/{{model}}/{{prefix}}.tsv",
     params:
-        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"], full=True),
         thresh=ENV.fimo.thresh,
-        motifs=lambda wc: ENV.get_motif_file(wc.get("prefix")),
+        motifs=lambda wc: ENV.get_motif_file(wc["prefix"]),
     shell:
         """
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
              {params.motifs} {params.prefix_fasta} > {output[0]}
+        fimo --thresh {params.thresh} \
+             --skip-matched-sequence \
+             {params.motifs} {input[0]} >> {output[0]}        
         """
 
 
@@ -151,7 +154,7 @@ rule classify_taxonomy:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
     params:
         db=ENV.taxdb,
-        prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
+        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"], full=True),
     threads: 4
     singularity:
         ENV.singularity.get("classify_taxonomy")
@@ -183,9 +186,7 @@ rule sort_taxonomy_hits:
         # Sort by evalue then bitscore ranking i.e. pick sequences with the lowest evalue,
         # (likely to have multiple sequences with the same evalue)
         # then get the best hit by bitscore
-
-        infile = f"{input[0]}/mmseqs_tophit_aln"
-        df = pl.read_csv(infile, separator="\t").with_columns(
+        df = pl.read_csv(input[0], separator="\t").with_columns(
             rank=pl.col("evalue").rank().over("query")
         )
         best_evalue = df.group_by("query").agg(min_rank=pl.col("rank").min())

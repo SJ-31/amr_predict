@@ -26,6 +26,11 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
             nullable=True,
             checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
         ),
+        "file_full": pa.Column(  # FASTA file containing the original
+            # sequence of the prefix
+            str,
+            checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
+        ),
         "seq": pa.Column(str, nullable=True),
         "family": pa.Column(str, nullable=True),
         "n": pa.Column(int, nullable=True),
@@ -92,8 +97,16 @@ class SnakeEnv:
             self.prefix2file[prefix] = file
         self.prefix2data = self.meta.rows_by_key("name", unique=True, named=True)
 
+    def get_prefix_file(self, prefix: str, full: bool = False):
+        if not full:
+            return self.prefix2file[prefix]
+        return self.prefix2data[prefix]["file_full"]
+
     def get_motif_file(self, prefix: str) -> str:
-        return self.prefix2data[prefix].get("motif_file", self.fimo.default)
+        return (
+            self.prefix2data[prefix].get("motif_file", self.fimo.default)
+            or self.fimo.default
+        )
 
     def model_image(self, key: str) -> str | None:
         val = self.singularity.get("generate", {})
