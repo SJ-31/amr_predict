@@ -99,6 +99,7 @@ build_if_not_exists () {
 
 build_if_not_exists evo_design
 build_if_not_exists meme
+build_if_not_exists parasail
 build_if_not_exists evo
 build_if_not_exists ntv3
 build_if_not_exists genome_ocean

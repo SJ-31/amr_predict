@@ -73,7 +73,7 @@ class SnakeEnv:
     outdir: Path = field(converter=Path)
     taxdb: str
     tmp: Path = field(converter=Path)
-    singularity: dict[str, str | dict] = field(factory=dict)
+    singularity: dict = field(factory=dict)
     prefixes: list[str] = field(init=False, factory=list)
     prefix2data: dict[str, dict] = field(init=False, factory=dict)
     prefix2file: dict[str, str] = field(init=False, factory=dict)
