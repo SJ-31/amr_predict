@@ -42,12 +42,14 @@ rule generate:
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
         kws=lambda wc: ENV.model_kws(wc.get("model")),
         n=lambda wc: ENV.prefix2data[wc.get("prefix")].get("n", ENV.n) or ENV.n,
+        hf=ENV.huggingface,
     resources:
         **ENV.resources["gpu40"],
     singularity:
         lambda wc: ENV.model_image(wc["model"])
     shell:
         """
+        export HF_HOME='{params.hf}'
         python {params.script} {params.kws} \
                 --prompt {params.prefix_fasta} \
                 --output {output[0]} \

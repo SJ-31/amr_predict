@@ -50,7 +50,6 @@ class ModelParams:
     script: (
         str  # the model generation script, either <name>.sh or <name>.py e.g. evo2.py
     )
-    image: str  # Image file
     kws: dict = field(factory=dict)
     resources: str | None = None
 
@@ -74,7 +73,7 @@ class SnakeEnv:
     outdir: Path = field(converter=Path)
     taxdb: str
     tmp: Path = field(converter=Path)
-    conda: dict[str, str] = field(factory=dict)
+    singularity: dict[str, str | dict] = field(factory=dict)
     prefixes: list[str] = field(init=False, factory=list)
     prefix2data: dict[str, dict] = field(init=False, factory=dict)
     prefix2file: dict[str, str] = field(init=False, factory=dict)
@@ -96,8 +95,11 @@ class SnakeEnv:
     def get_motif_file(self, prefix: str) -> str:
         return self.prefix2data[prefix].get("motif_file", self.fimo.default)
 
-    def model_image(self, key: str) -> str:
-        return self.models[key].image
+    def model_image(self, key: str) -> str | None:
+        val = self.singularity.get("generate", {})
+        if isinstance(val, dict):
+            return val.get(key)
+        return val
 
     def model_res(self, key: str) -> dict:
         res = self.models[key].resources
