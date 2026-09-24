@@ -25,6 +25,10 @@ OUTDIR = ENV.outdir
 OUTPUTS = ENV.get_outputs()
 os.environ["HF_HOME"] = ENV.huggingface
 
+CUDA_VISIBLE_DEVICES = os.environ.get("CUDA_VISIBLE_DEVICES", 0)
+# Pass the correct visible devices into the container
+# Is an issue when using the `--cleanenv` flag
+
 
 rule all:
     input:
@@ -43,6 +47,7 @@ rule generate:
         kws=lambda wc: ENV.model_kws(wc.get("model")),
         n=lambda wc: ENV.prefix2data[wc.get("prefix")].get("n", ENV.n) or ENV.n,
         hf=ENV.huggingface,
+        cvd=CUDA_VISIBLE_DEVICES,
     resources:
         **ENV.resources["gpu40"],
     singularity:
@@ -50,6 +55,7 @@ rule generate:
     shell:
         """
         export HF_HOME='{params.hf}'
+        export CUDA_VISIBLE_DEVICES={params.cvd}
         python {params.script} {params.kws} \
                 --prompt {params.prefix_fasta} \
                 --output {output[0]} \

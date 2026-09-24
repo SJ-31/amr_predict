@@ -10,9 +10,11 @@ n: 10
 meta: ?testdir / "data"/ "gen_prefixes.csv"
 outdir: ?f"{remote}/tests/gen_bias"
 
+taxdb: ?f"{remote}/blast/db_test/nt"
+
 resources:
   gpu40:
-    mem: 20g
+    mem: 32g
     qos: gpu40g
     gres: "gpu:7g.40gb:1"
     slurm_partition: gpu
@@ -30,7 +32,6 @@ models: # dictionary mapping model name
     script: scripts/genome_ocean.py
     image: ?f"{remote}/images/genome_ocean.sif"
     resources: "gpu40g"
-    conda: ntv3
     kws:
-      seq_len: 512
       min_seq_len: 512
+      seq_len: 1024
