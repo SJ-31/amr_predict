@@ -65,6 +65,25 @@ rule similarity_stats:
     params:
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
         funcname=config.get("parasail", "sw_stats_striped_16"),
+    output:
+        temp(f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.tmp.csv"),
+    shell:
+        """
+        parasail_aligner -d \
+                -q {params.prefix_fasta} \
+                -f {input[0]} \
+                -a {params.funcname} \
+                -g {output[0]}
+        """
+
+
+rule fmt_similarity_stats:
+    input:
+        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        tmp=f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.tmp.csv",
+    singularity:
+        ENV.singularity.get("fmt_similarity_stats")
+    params:
         cols=",".join(
             [
                 "query",
@@ -81,23 +100,16 @@ rule similarity_stats:
         ),
     output:
         seqnames=temp(f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.seqnames.csv"),
-        tmp=temp(f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.tmp.csv"),
         raw=f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.csv",
     shell:
         """
-        parasail_aligner -d \
-                -q {params.prefix_fasta} \
-                -f {input[0]} \
-                -a {params.funcname} \
-                -g {output.tmp}
-        
-        grep '>' {input[0]} | sed 's/^>//' | xan -n rename id | \
+        grep '>' {input.generated} | sed 's/^>//' | xan -n rename id | \
                 xan enum > {output.seqnames}
 
-        xan rename -n {params.cols} {output.tmp} | \
+        xan rename -n {params.cols} {input.tmp} | \
                 xan join index {output.seqnames} - | \
                 xan drop index > {output.raw}
-        """
+         """
 
 
 rule describe_protein_seqs:
@@ -130,10 +142,7 @@ rule find_motifs:
         """
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
-             {params.motifs} {params.prefix_fasta} | \
-             xan 
-        fimo --thresh {params.thresh} \
-             --skip-matched-sequence \
+             {params.motifs} {params.prefix_fasta} > {output[0]}
         """
 
 
