@@ -1,0 +1,41 @@
+Bootstrap: docker
+From: ubuntu:22.04
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Build dependencies:
+    #   - autoconf/automake/libtool: needed to run autoreconf -fi (building from git)
+    #   - build-essential: gcc/g++/make
+    #   - zlib1g-dev: optional, enables gzipped FASTA/FASTQ parsing (omit + pass --without-zlib to disable)
+    #   - git, ca-certificates: to clone the repo
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        autoconf \
+        automake \
+        libtool \
+        pkg-config \
+        zlib1g-dev \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+    git clone --depth 1 https://github.com/jeffdaily/parasail.git /opt/parasail
+
+    cd /opt/parasail
+    
+    autoreconf -fi
+    
+    ./configure
+    make -j"$(nproc)"
+    make install
+
+    ldconfig
+
+    cd /
+    rm -rf /opt/parasail
+
+%environment
+    export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+    export LIBRARY_PATH=/usr/local/lib:$LIBRARY_PATH
+    export CPATH=/usr/local/include:$CPATH
