@@ -58,6 +58,8 @@ rule generate:
 rule similarity_stats:
     input:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+    conda:
+        ENV.conda.get("similarity_stats")
     params:
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
         funcname=config.get("parasail", "sw_stats_striped_16"),
@@ -114,6 +116,8 @@ rule describe_protein_seqs:
 rule find_motifs:
     input:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+    conda:
+        ENV.conda.get("find_motifs")
     output:
         tsv=f"{OUTDIR}/motifs/{{model}}/{{prefix}}.tsv",
     params:
@@ -128,7 +132,6 @@ rule find_motifs:
              xan 
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
-        
         """
 
 
@@ -139,6 +142,8 @@ rule classify_taxonomy:
         db=ENV.taxdb,
         prefix_fasta=lambda wc: ENV.prefix2file[wc.get("prefix")],
     threads: 4
+    conda:
+        ENV.conda.get("classify_taxonomy")
     output:
         f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_tophit_aln",
         f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_report",
