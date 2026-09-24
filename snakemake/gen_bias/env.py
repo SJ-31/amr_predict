@@ -19,7 +19,13 @@ def cols_not_all_null(data: pa.PolarsData, a: str, b: str) -> pl.LazyFrame:
 
 SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
     {
-        "name": pa.Column(str, unique=True),
+        "name": pa.Column(
+            str,
+            unique=True,
+            checks=pa.Check(
+                lambda x: x.lazyframe.select(~pl.col(x.key).str.contains("-"))
+            ),
+        ),
         "perturbed": pa.Column(bool, nullable=True),
         "file": pa.Column(
             str,
