@@ -136,6 +136,7 @@ class SnakeEnv:
             ("generated", "fasta"),
             ("motifs", "tsv"),
             ("taxonomy", "csv"),
+            ("similarity", "csv"),
         ]:
             results[d] = expand(
                 f"{self.outdir}/{d}/{{m}}/{{p}}.{ext}",

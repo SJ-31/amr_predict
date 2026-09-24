@@ -35,6 +35,7 @@ rule all:
         *OUTPUTS["generated"],
         *OUTPUTS["motifs"],
         *OUTPUTS["taxonomy"],
+        *OUTPUTS["similarity"],
         # *OUTPUTS["metrics"], # TODO: uncomment after finishing
 
 
@@ -72,7 +73,7 @@ rule similarity_stats:
         prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"], full=True),
         funcname=config.get("parasail", "sw_stats_striped_16"),
     output:
-        temp(f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.tmp.csv"),
+        temp(f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}.csv"),
     shell:
         """
         parasail_aligner -d \
@@ -86,7 +87,7 @@ rule similarity_stats:
 rule fmt_similarity_stats:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        tmp=f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.tmp.csv",
+        tmp=f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}.csv",
     singularity:
         ENV.singularity.get("fmt_similarity_stats")
     params:
@@ -104,17 +105,19 @@ rule fmt_similarity_stats:
                 "length",
             ]
         ),
+        seqnames=f"{OUTDIR}/similarity/{{model}}/{{prefix}}_seqnames.csv",
     output:
-        seqnames=temp(f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.seqnames.csv"),
-        raw=f"{OUTDIR}/similarity_raw/{{model}}/{{prefix}}.csv",
+        raw=f"{OUTDIR}/similarity/{{model}}/{{prefix}}.csv",
     shell:
         """
         grep '>' {input.generated} | sed 's/^>//' | xan -n rename id | \
-                xan enum > {output.seqnames}
+                xan enum > {params.seqnames}
 
         xan rename -n {params.cols} {input.tmp} | \
-                xan join index {output.seqnames} - | \
+                xan join index {params.seqnames} - | \
                 xan drop index > {output.raw}
+
+        rm {params.seqnames}
          """
 
 
