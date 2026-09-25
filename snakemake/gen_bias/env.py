@@ -9,12 +9,21 @@ import pandera.polars as pa
 import polars as pl
 import yaml
 from attrs import asdict, define, field, validators
+from Bio import SeqIO
 from snakemake.io import expand
 from yte import process_yaml
 
 
 def cols_not_all_null(data: pa.PolarsData, a: str, b: str) -> pl.LazyFrame:
     return data.lazyframe.select(pl.col(a).is_not_null() | pl.col(b).is_not_null())
+
+
+def check_fasta(file: str) -> bool:
+    try:
+        record = SeqIO.read(file, "fasta")
+        return len(record) > 0
+    except (ValueError, FileNotFoundError):
+        return False
 
 
 SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
@@ -30,12 +39,12 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
         "file": pa.Column(
             str,
             nullable=True,
-            checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
+            checks=pa.Check(check_fasta, element_wise=True),
         ),
         "file_full": pa.Column(  # FASTA file containing the original
             # sequence of the prefix
             str,
-            checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
+            checks=pa.Check(check_fasta, element_wise=True),
         ),
         "seq": pa.Column(str, nullable=True),
         "family": pa.Column(str, nullable=True),
