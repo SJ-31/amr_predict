@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -52,6 +51,15 @@ def get_props(
     return df
 
 
+# * Rules
+
+
+def translate_fasta() -> None:
+    with open(OUTPUT[0], "w") as f:
+        gen = [f">{seq.id}\n{str(translate(seq))}" for seq in SeqIO.parse(INPUT[0])]
+        f.write("\n".join(gen))
+
+
 def describe_protein_seqs() -> None:
     """
     Compute the generated sequences' average distance from their prefix
@@ -61,11 +69,13 @@ def describe_protein_seqs() -> None:
 
     from scipy.spatial.distance import cdist
 
-    prefix: SeqRecord = next(SeqIO.parse(PARAMS["prefix_fasta"], "fasta"))
-    ids, peps = [prefix.id], [translate(prefix)]
-    for seq in SeqIO.parse(INPUT[0], "fasta"):
+    prefix: SeqRecord = SeqIO.read(INPUT["prefix"], "fasta")
+    ids, peps = [prefix.id], [Peptide(str(prefix.seq))]
+
+    for seq in SeqIO.parse(INPUT["generated"], "fasta"):
         ids.append(seq.id)
-        peps.append(translate(seq))
+        peps.append(Peptide(str(seq.seq)))
+
     tmp_dist = {"descriptor": [], "value": []}
     dfs = []
     for descriptor, kws in RCONFIG.items():
@@ -87,9 +97,12 @@ def describe_protein_seqs() -> None:
 def fmt_prefixes():
     data: dict = PARAMS["prefix2data"][WC["prefix"]]
     prefix_full = data["file_full"]
-    seq_full: str = str(SeqIO.read(prefix_full, "fasta").seq)
+    sr = SeqIO.read(prefix_full, "fasta")
+    seq_translated = translate(sr)
     with open(OUTPUT[1], "w") as f:
-        f.write(f">{WC['prefix']}-FULL\n{seq_full}")
+        f.write(f">{WC['prefix']}-FULL\n{str(sr.seq)}")
+    with open(OUTPUT[2], "w") as f:
+        f.write(f">{WC['prefix']}-FULL\n{str(seq_translated)}")
     if data["file"]:
         seq = str(SeqIO.read(prefix_full, "fasta").seq)
     else:

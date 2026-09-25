@@ -45,8 +45,11 @@ rule all:
 
 rule fmt_prefixes:
     output:
-        temp(f"{PREFIXES}/{{prefix}}.fasta"),
-        temp(f"{PREFIXES_FULL}/{{prefix}}.fasta"),
+        f"{PREFIXES}/{{prefix}}.fasta",
+        f"{PREFIXES_FULL}/{{prefix}}.fasta",
+        f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
+        # Would have liked to make these temporary, if not for the fact
+        # it would cause the workflow to re-run the `generate` rule
     params:
         prefix2data=ENV.prefix2data,
     script:
@@ -92,50 +95,24 @@ rule gen_index:
         """
 
 
-rule fmt_similarity_stats:
+rule translate_fasta:
     input:
-        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        tmp=f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}.csv",
-    singularity:
-        ENV.singularity.get("fmt_similarity_stats")
-    params:
-        cols=",".join(
-            [
-                "query",
-                "index",
-                "length1",
-                "length2",
-                "score",
-                "end_query",
-                "end_ref",
-                "n_matches",
-                "similarities",
-                "length",
-            ]
-        ),
-        seqnames=f"{OUTDIR}/similarity/{{model}}/{{prefix}}_seqnames.csv",
+        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
     output:
-        raw=f"{OUTDIR}/similarity/{{model}}/{{prefix}}.csv",
-    shell:
-        """
-        grep '>' {input.generated} | sed 's/^>//' | xan -n rename id | \
-                xan enum > {params.seqnames}
-
-        xan rename -n {params.cols} {input.tmp} | \
-                xan join index {params.seqnames} - | \
-                xan drop index > {output.raw}
-
-        rm {params.seqnames}
-         """
+        f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
+    script:
+        "main.py"
 
 
 rule describe_protein_seqs:
     input:
-        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
+        prefix=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
+        generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
     output:
         mean=f"{OUTDIR}/protein_descriptor_means/{{model}}/{{prefix}}.csv",
         vals=f"{OUTDIR}/protein_descriptor_raw/{{model}}/{{prefix}}.csv",
+    script:
+        "main.py"
 
 
 # rule compare_protein_descriptors:
@@ -217,6 +194,7 @@ rule sort_taxonomy_hits:
             .explode(pl.all().exclude("query"))
         )
         df.write_csv(output[0])
+
 
 # * Sequence similarity
 
