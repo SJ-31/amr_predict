@@ -78,7 +78,7 @@ rule generate:
         python {params.script} {params.kws} \
                 --prompt {input[0]} \
                 --output {output[0]} \
-                --prefix "{wildcards.model}_" \
+                --prefix "{wildcards.model}|" \
                 --num {params.n}
         """
 
@@ -238,13 +238,13 @@ use rule similarity as similarity_self with:
         temp(f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}-self.csv"),
 
 
-rule fmt_similarity_stats:
+rule fmt_similarity:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
         index=f"{INDICES}/{{model}}/{{prefix}}",
         tmp=f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}-{{type}}.csv",
     singularity:
-        ENV.singularity.get("fmt_similarity_stats")
+        ENV.singularity.get("fmt_similarity")
     params:
         cols=",".join(
             [
@@ -264,7 +264,17 @@ rule fmt_similarity_stats:
         f"{OUTDIR}/similarity/{{model}}/{{prefix}}-{{type}}.csv",
     shell:
         """
-        xan rename -n {params.cols} {input.tmp} | \
-                xan join index {input.index} - | \
-                xan drop index > {output[0]}
+        if [[ {wildcards.type} == 'to_prefix' ]]; then
+            xan rename -n {params.cols} {input.tmp} | \
+                  xan join index {input.index} - | \
+                  xan transform query '"{wildcards.prefix}"' |
+                  xan drop index > {output[0]}
+        else
+            xan rename -n {params.cols} {input.tmp} | \
+                  xan join index {input.index} - | \
+                  xan drop index | \
+                  xan join -r right_ query - index {input.index} | \
+                  xan drop right_index,query | \
+                  xan rename --replace right_id query > {output[0]}
+         fi
          """
