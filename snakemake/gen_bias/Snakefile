@@ -80,28 +80,15 @@ rule generate:
         """
 
 
-rule similarity_stats:
+rule gen_index:
     input:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-
-
-rule similarity_stats:
-    input:
-        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
-    singularity:
-        ENV.singularity.get("similarity_stats")
-    params:
-        funcname=config.get("parasail", "sw_stats_striped_16"),
     output:
-        temp(f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}.csv"),
+        f"{INDICES}/{{model}}/{{prefix}}",
     shell:
         """
-        parasail_aligner -d \
-                -q {input.prefix} \
-                -f {input.generated} \
-                -a {params.funcname} \
-                -g {output[0]}
+        grep '>' {input[0]} | sed 's/^>//' | xan -n rename id | \
+                xan enum > {output[0]}
         """
 
 
@@ -230,3 +217,76 @@ rule sort_taxonomy_hits:
             .explode(pl.all().exclude("query"))
         )
         df.write_csv(output[0])
+
+# * Sequence similarity
+
+
+rule similarity:
+    input:
+        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
+    params:
+        funcname=config.get("parasail", "sw_stats_striped_16"),
+        kws="",
+    output:
+        "PLACEHOLDER",
+    shell:
+        "parasail_aligner -a {params.funcname} {params.kws} -g {output[0]}"
+
+
+use rule similarity as similarity_to_prefix with:
+    params:
+        kws=lambda _, input: " ".join(
+            [
+                "-d",
+                "-q",
+                input.prefix,
+                "-f",
+                input.generated,
+            ]
+        ),
+    singularity:
+        ENV.singularity.get("similarity")
+    output:
+        temp(f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}-to_prefix.csv"),
+
+
+use rule similarity as similarity_self with:
+    params:
+        kws=lambda _, input: " ".join(["-d", "-f", input.generated]),
+    singularity:
+        ENV.singularity.get("similarity")
+    output:
+        temp(f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}-self.csv"),
+
+
+rule fmt_similarity_stats:
+    input:
+        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        index=f"{INDICES}/{{model}}/{{prefix}}",
+        tmp=f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}-{{type}}.csv",
+    singularity:
+        ENV.singularity.get("fmt_similarity_stats")
+    params:
+        cols=",".join(
+            [
+                "query",
+                "index",
+                "length1",
+                "length2",
+                "score",
+                "end_query",
+                "end_ref",
+                "n_matches",
+                "similarities",
+                "length",
+            ]
+        ),
+    output:
+        f"{OUTDIR}/similarity/{{model}}/{{prefix}}-{{type}}.csv",
+    shell:
+        """
+        xan rename -n {params.cols} {input.tmp} | \
+                xan join index {input.index} - | \
+                xan drop index > {output[0]}
+         """

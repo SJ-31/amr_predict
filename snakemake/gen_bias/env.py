@@ -138,13 +138,22 @@ class SnakeEnv:
             ("generated", "fasta"),
             ("motifs", "tsv"),
             ("taxonomy", "csv"),
-            ("similarity", "csv"),
+            ("similarity", (("self", "to_prefix"), "csv")),
         ]:
-            results[d] = expand(
-                f"{self.outdir}/{d}/{{m}}/{{p}}.{ext}",
-                m=self.models.keys(),
-                p=self.prefixes,
-            )
+            if not isinstance(ext, tuple):
+                results[d] = expand(
+                    f"{self.outdir}/{d}/{{m}}/{{p}}.{ext}",
+                    m=self.models.keys(),
+                    p=self.prefixes,
+                )
+            else:
+                suffixes, ext = ext
+                results[d] = expand(
+                    f"{self.outdir}/{d}/{{m}}/{{p}}-{{t}}.{ext}",
+                    m=self.models.keys(),
+                    t=suffixes,
+                    p=self.prefixes,
+                )
         for m in ["prefix_comparison.csv", "physicochemical.csv"]:
             results["metrics"].append(f"{self.outdir}/{m}")
         return results
