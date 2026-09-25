@@ -96,26 +96,13 @@ class SnakeEnv:
     singularity: dict = field(factory=dict)
     prefixes: list[str] = field(init=False, factory=list)
     prefix2data: dict[str, dict] = field(init=False, factory=dict)
-    prefix2file: dict[str, str] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
         SCHEMA.validate(self.meta)
         if not self.tmp.exists():
             self.tmp.mkdir()
         self.prefixes.extend(self.meta["name"].to_list())
-        for prefix, file, seq in zip(
-            self.meta["name"], self.meta["file"], self.meta["seq"]
-        ):
-            if not file and seq:
-                file = self.tmp / f"{prefix}.fasta"
-                file.write_text(f">{prefix}\n{seq}")
-            self.prefix2file[prefix] = file
         self.prefix2data = self.meta.rows_by_key("name", unique=True, named=True)
-
-    def get_prefix_file(self, prefix: str, full: bool = False):
-        if not full:
-            return self.prefix2file[prefix]
-        return self.prefix2data[prefix]["file_full"]
 
     def get_motif_file(self, prefix: str) -> str:
         return (

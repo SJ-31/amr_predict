@@ -14,10 +14,7 @@ RCONFIG: dict = snakemake.config.get(snakemake.rule, {})
 RNG: int = snakemake.config.get("rng", 20021031)
 INPUT = snakemake.input
 OUTPUT = snakemake.output
-
-
-if rule_fn := globals().get(snakemake.rule):
-    rule_fn()
+WC = snakemake.wildcards
 
 
 def translate(seq: SeqRecord) -> Peptide:
@@ -84,3 +81,21 @@ def describe_protein_seqs() -> None:
     combined: pl.DataFrame = reduce(lambda x, y: x.join(y, on="id"), dfs)
     mean_dist.write_csv(OUTPUT["mean"])
     combined.write_csv(OUTPUT["vals"])
+
+
+def fmt_prefixes():
+    data: dict = PARAMS["prefix2data"][WC["prefix"]]
+    prefix_full = data["file_full"]
+    seq_full: str = str(SeqIO.read(prefix_full, "fasta").seq)
+    with open(OUTPUT[1], "w") as f:
+        f.write(f">{WC['prefix']}-FULL\n{seq_full}")
+    if data["file"]:
+        seq = str(SeqIO.read(prefix_full, "fasta").seq)
+    else:
+        seq = data["seq"]
+    with open(OUTPUT[0], "w") as f:
+        f.write(f">{WC['prefix']}\n{seq}")
+
+
+if rule_fn := globals().get(snakemake.rule):
+    rule_fn()

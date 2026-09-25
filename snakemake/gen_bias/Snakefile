@@ -23,6 +23,10 @@ Output is structured as
 ENV = SnakeEnv.new(config)
 OUTDIR = ENV.outdir
 OUTPUTS = ENV.get_outputs()
+PREFIXES = OUTDIR / ".prefixes"
+INDICES = OUTDIR / ".indices"
+PREFIXES_FULL = OUTDIR / ".prefixes_full"
+
 os.environ["HF_HOME"] = ENV.huggingface
 
 CUDA_VISIBLE_DEVICES = os.environ.get("CUDA_VISIBLE_DEVICES", 0)
@@ -39,12 +43,23 @@ rule all:
         # *OUTPUTS["metrics"], # TODO: uncomment after finishing
 
 
+rule fmt_prefixes:
+    output:
+        temp(f"{PREFIXES}/{{prefix}}.fasta"),
+        temp(f"{PREFIXES_FULL}/{{prefix}}.fasta"),
+    params:
+        prefix2data=ENV.prefix2data,
+    script:
+        "main.py"
+
+
 rule generate:
     output:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+    input:
+        f"{PREFIXES}/{{prefix}}.fasta",
     params:
         script=lambda wc: ENV.model_script(wc.get("model")),
-        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"]),
         kws=lambda wc: ENV.model_kws(wc.get("model")),
         n=lambda wc: ENV.prefix2data[wc.get("prefix")].get("n", ENV.n) or ENV.n,
         hf=ENV.huggingface,
@@ -58,7 +73,7 @@ rule generate:
         export HF_HOME='{params.hf}'
         export CUDA_VISIBLE_DEVICES={params.cvd}
         python {params.script} {params.kws} \
-                --prompt {params.prefix_fasta} \
+                --prompt {input[0]} \
                 --output {output[0]} \
                 --prefix "{wildcards.model}_" \
                 --num {params.n}
@@ -68,18 +83,23 @@ rule generate:
 rule similarity_stats:
     input:
         f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+
+
+rule similarity_stats:
+    input:
+        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
     singularity:
         ENV.singularity.get("similarity_stats")
     params:
-        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"], full=True),
         funcname=config.get("parasail", "sw_stats_striped_16"),
     output:
         temp(f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}.csv"),
     shell:
         """
         parasail_aligner -d \
-                -q {params.prefix_fasta} \
-                -f {input[0]} \
+                -q {input.prefix} \
+                -f {input.generated} \
                 -a {params.funcname} \
                 -g {output[0]}
         """
@@ -124,9 +144,8 @@ rule fmt_similarity_stats:
 
 rule describe_protein_seqs:
     input:
-        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-    params:
-        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"], full=True),
+        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
     output:
         mean=f"{OUTDIR}/protein_descriptor_means/{{model}}/{{prefix}}.csv",
         vals=f"{OUTDIR}/protein_descriptor_raw/{{model}}/{{prefix}}.csv",
@@ -139,32 +158,32 @@ rule describe_protein_seqs:
 
 rule find_motifs:
     input:
-        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
     singularity:
         ENV.singularity.get("find_motifs")
     output:
         tsv=f"{OUTDIR}/motifs/{{model}}/{{prefix}}.tsv",
     params:
-        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"], full=True),
         thresh=ENV.fimo.thresh,
         motifs=lambda wc: ENV.get_motif_file(wc["prefix"]),
     shell:
         """
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
-             {params.motifs} {params.prefix_fasta} > {output[0]}
+             {params.motifs} {input.prefix} > {output[0]}
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
-             {params.motifs} {input[0]} >> {output[0]}        
+             {params.motifs} {input.generated} >> {output[0]}        
         """
 
 
 rule classify_taxonomy:
     input:
-        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
     params:
         db=ENV.taxdb,
-        prefix_fasta=lambda wc: ENV.get_prefix_file(wc["prefix"], full=True),
     threads: 4
     singularity:
         ENV.singularity.get("classify_taxonomy")
@@ -175,7 +194,7 @@ rule classify_taxonomy:
         f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_tophit_report",
     shell:
         f"""
-        mmseqs easy-taxonomy {{input[0]}} {{params.prefix_fasta}} \
+        mmseqs easy-taxonomy {{input.generated}} {{input.prefix}} \
                 {{params.db}} \
                 {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prefix}}/mmseqs \
                 {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prefix}}_tmp \
