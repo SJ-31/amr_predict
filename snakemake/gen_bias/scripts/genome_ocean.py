@@ -30,6 +30,13 @@ def parse_args() -> dict:
         help="Predefined model to use.",
         default="100M",
     )
+    parser.add_argument(
+        "-x",
+        "--prefix",
+        default="genome_ocean",
+        help="Prefix to use for generated sequences",
+        action="store",
+    )
 
     parser.add_argument(
         "--prompt", type=str, help="File containing DNA sequences as prompts."
@@ -147,7 +154,7 @@ def main(args: dict):
     )
     with open(args["output"], "w") as f:
         to_write = [
-            f">{row['id']}_{i}\n{row['seq']}" for i, row in all_generated.iterrows()
+            f">{args['prefix']}{i}\n{row['seq']}" for i, row in all_generated.iterrows()
         ]
         f.write("\n".join(to_write))
 

@@ -60,6 +60,7 @@ rule generate:
         python {params.script} {params.kws} \
                 --prompt {params.prefix_fasta} \
                 --output {output[0]} \
+                --prefix "{wildcards.model}_" \
                 --num {params.n}
         """
 

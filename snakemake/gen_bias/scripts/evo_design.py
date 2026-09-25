@@ -12,6 +12,13 @@ def parse_args() -> dict:
         description="Generate sequences using the Evo model."
     )
     parser.add_argument(
+        "-x",
+        "--prefix",
+        default="genome_ocean",
+        help="Prefix to use for generated sequences",
+        action="store",
+    )
+    parser.add_argument(
         "--model_name",
         type=str,
         default="evo-1-131k-base",
@@ -90,7 +97,7 @@ def main(args: dict):
         device=args["device"],
         verbose=args["verbose"],
     )
-    as_fasta = [f">S{i}\n{s}" for i, s in enumerate(output_seqs)]
+    as_fasta = [f">{args['prefix']}{i}\n{s}" for i, s in enumerate(output_seqs)]
     with open(args["output"], "w") as f:
         f.write("\n".join(as_fasta))
 
