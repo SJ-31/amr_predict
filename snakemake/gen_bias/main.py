@@ -56,7 +56,11 @@ def get_props(
 
 def translate_fasta() -> None:
     with open(OUTPUT[0], "w") as f:
-        gen = [f">{seq.id}\n{str(translate(seq))}" for seq in SeqIO.parse(INPUT[0])]
+        gen = [
+            f">{seq.id}\n{translate(seq).sequence}"
+            for seq in SeqIO.parse(INPUT[0], "fasta")
+        ]
+        print(gen)
         f.write("\n".join(gen))
 
 
@@ -98,11 +102,11 @@ def fmt_prefixes():
     data: dict = PARAMS["prefix2data"][WC["prefix"]]
     prefix_full = data["file_full"]
     sr = SeqIO.read(prefix_full, "fasta")
-    seq_translated = translate(sr)
+    seq_translated = translate(sr).sequence
     with open(OUTPUT[1], "w") as f:
         f.write(f">{WC['prefix']}-FULL\n{str(sr.seq)}")
     with open(OUTPUT[2], "w") as f:
-        f.write(f">{WC['prefix']}-FULL\n{str(seq_translated)}")
+        f.write(f">{WC['prefix']}-FULL\n{seq_translated}")
     if data["file"]:
         seq = str(SeqIO.read(prefix_full, "fasta").seq)
     else:
