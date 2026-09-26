@@ -14,7 +14,7 @@ def parse_args() -> dict:
     parser.add_argument(
         "-x",
         "--prefix",
-        default="genome_ocean",
+        default="evo_design_",
         help="Prefix to use for generated sequences",
         action="store",
     )
@@ -30,6 +30,12 @@ def parse_args() -> dict:
             "evo-1-8k-crispr",
             "evo-1-8k-transposon",
         ],
+    )
+    parser.add_argument(
+        "--prepend_prompt_to_output",
+        type=bool,
+        default=True,
+        help="Prepend prompt to output sequences.",
     )
     parser.add_argument(
         "--prompt", type=str, default="ACGT", help="Prompt for generation"
@@ -79,7 +85,7 @@ def main(args: dict):
     model.eval()
 
     if Path(args["prompt"]).exists():
-        prompt = str(next(SeqIO.parse(args["prompt"], "fasta")).seq)
+        prompt = SeqIO.read(args["prompt"], "fasta").seq
     else:
         prompt = args["prompt"]
 
@@ -97,6 +103,8 @@ def main(args: dict):
         device=args["device"],
         verbose=args["verbose"],
     )
+    if args["prepend_prompt_to_output"]:
+        output_seqs = [s + prompt for s in output_seqs if not s.startswith(prompt)]
     as_fasta = [f">{args['prefix']}{i}\n{s}" for i, s in enumerate(output_seqs)]
     with open(args["output"], "w") as f:
         f.write("\n".join(as_fasta))
