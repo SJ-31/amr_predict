@@ -1,8 +1,8 @@
 Bootstrap: docker
-From: nvcr.io/nvidia/pytorch:25.04-py3
+From: pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
 
 %post
-    apt-get update && apt-get install -y git python3-pip python3-tomli && rm -rf /var/lib/apt/lists/*
+    pip install flash-attn==2.8.0.post2 --no-build-isolation --break-system-packages
     pip install evo2 --break-system-packages
 
 %environment
