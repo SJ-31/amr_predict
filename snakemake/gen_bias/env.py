@@ -139,6 +139,8 @@ class SnakeEnv:
             ("motifs", "tsv"),
             ("taxonomy", "csv"),
             ("similarity", (("self", "to_prefix"), "csv")),
+            ("nuc_similarity", (("self", "to_prefix"), "csv")),
+            ("aa_similarity", (("self", "to_prefix"), "csv")),
         ]:
             if not isinstance(ext, tuple):
                 results[d] = expand(

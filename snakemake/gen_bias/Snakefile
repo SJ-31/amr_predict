@@ -39,7 +39,8 @@ rule all:
         *OUTPUTS["generated"],
         *OUTPUTS["motifs"],
         *OUTPUTS["taxonomy"],
-        *OUTPUTS["similarity"],
+        *OUTPUTS["nuc_similarity"],
+        *OUTPUTS["aa_similarity"],
         # *OUTPUTS["metrics"], # TODO: uncomment after finishing
 
 
@@ -235,14 +236,37 @@ use rule similarity as similarity_self with:
     singularity:
         ENV.singularity.get("similarity")
     output:
-        temp(f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}-self.csv"),
+        temp(f"{OUTDIR}/.similarity_tmp_nuc/{{model}}/{{prefix}}-self.csv"),
+
+
+use rule similarity as aa_similarity_to_prefix with:
+    input:
+        generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
+        prefix=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
+    params:
+        kws=lambda _, input: " ".join(["-q", input.prefix, "-f", input.generated]),
+    singularity:
+        ENV.singularity.get("similarity")
+    output:
+        temp(f"{OUTDIR}/.similarity_tmp_aa/{{model}}/{{prefix}}-to_prefix.csv"),
+
+
+use rule similarity as aa_similarity_self with:
+    input:
+        generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
+        prefix=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
+    params:
+        kws=lambda _, input: " ".join(["-d", "-f", input.generated]),
+    singularity:
+        ENV.singularity.get("similarity")
+    output:
+        temp(f"{OUTDIR}/.similarity_tmp_aa/{{model}}/{{prefix}}-self.csv"),
 
 
 rule fmt_similarity:
     input:
-        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
         index=f"{INDICES}/{{model}}/{{prefix}}",
-        tmp=f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}-{{type}}.csv",
+        tmp=f"{OUTDIR}/.similarity_tmp_{{molecule}}/{{model}}/{{prefix}}-{{type}}.csv",
     singularity:
         ENV.singularity.get("fmt_similarity")
     params:
@@ -261,7 +285,7 @@ rule fmt_similarity:
             ]
         ),
     output:
-        f"{OUTDIR}/similarity/{{model}}/{{prefix}}-{{type}}.csv",
+        f"{OUTDIR}/{{molecule}}_similarity/{{model}}/{{prefix}}-{{type}}.csv",
     shell:
         """
         if [[ {wildcards.type} == 'to_prefix' ]]; then
