@@ -113,9 +113,18 @@ elif [[ "${_arg_model}" == "evo_design" ]]; then
 	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=20G \
 		singularity run \
 		--nv \
+        --env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo_design.sif" \
 		python scripts/evo_design.py --prompt "${prompt_file}" --output evo_test.fasta --device cuda:0 --num 3 --seq_len 512 --model_name evo-1-8k-base
+elif [[ "${_arg_model}" == "evo2" ]]; then
+	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=20G \
+		singularity exec \
+		--nv \
+        --env HF_HOME="remote/cache/huggingface" \
+		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
+		"${image_dir}/evo.sif" \
+		python scripts/evo.py --prompt "${prompt_file}" --output evo2.fasta --device cuda:0 --num 3 --seq_len 512 --model_name evo2_7b
 fi
 
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^
