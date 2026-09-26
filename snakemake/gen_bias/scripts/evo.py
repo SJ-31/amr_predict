@@ -88,7 +88,8 @@ def main(args: dict):
     else:
         prompt = args["prompt"]
 
-    output_seqs, output_scores = evo_model.generate(
+    # Object of class GenerationOutput, from vortex library
+    gen_output = evo_model.generate(
         [prompt] * args["num"],
         n_tokens=args["seq_len"],
         temperature=args["temperature"],
@@ -99,6 +100,7 @@ def main(args: dict):
         verbose=args["verbose"],
         force_prompt_threshold=args["force_prompt_threshold"],
     )
+    output_seqs = gen_output.sequences
     if args["prepend_prompt_to_output"]:
         output_seqs = [s + prompt for s in output_seqs if not s.startswith(prompt)]
     as_fasta = [f">{args['prefix']}{i}\n{s}" for i, s in enumerate(output_seqs)]
