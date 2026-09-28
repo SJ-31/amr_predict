@@ -36,7 +36,7 @@ def get_props(
     convert = "_fields" in dir(r1)
 
     def fn(pep: Peptide) -> np.ndarray | list:
-        res = getattr(pep, descriptor, **kws)()
+        res = getattr(pep, descriptor)(**kws)
         if convert:
             return np.array(res)
         return res

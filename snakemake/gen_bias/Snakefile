@@ -41,7 +41,7 @@ rule all:
         *OUTPUTS["taxonomy"],
         *OUTPUTS["nuc_similarity"],
         *OUTPUTS["aa_similarity"],
-        # *OUTPUTS["metrics"], # TODO: uncomment after finishing
+        *OUTPUTS["protein_descriptors"],
 
 
 rule fmt_prefixes:
@@ -110,8 +110,10 @@ rule describe_protein_seqs:
         prefix=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
         generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
     output:
-        mean=f"{OUTDIR}/protein_descriptor_means/{{model}}/{{prefix}}.csv",
-        vals=f"{OUTDIR}/protein_descriptor_raw/{{model}}/{{prefix}}.csv",
+        mean=f"{OUTDIR}/protein_descriptors/{{model}}/{{prefix}}-means.csv",
+        # For each descriptor, the mean difference of the generated sequence from the
+        # prefix
+        vals=f"{OUTDIR}/protein_descriptors/{{model}}/{{prefix}}-raw.csv",
     script:
         "main.py"
 

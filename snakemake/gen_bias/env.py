@@ -149,9 +149,9 @@ class SnakeEnv:
             ("generated", "fasta"),
             ("motifs", "tsv"),
             ("taxonomy", "csv"),
-            ("similarity", (("self", "to_prefix"), "csv")),
             ("nuc_similarity", (("self", "to_prefix"), "csv")),
             ("aa_similarity", (("self", "to_prefix"), "csv")),
+            ("protein_descriptors", (("means", "raw"), "csv")),
         ]:
             if not isinstance(ext, tuple):
                 results[d] = expand(
