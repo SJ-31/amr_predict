@@ -107,7 +107,8 @@ rule translate_fasta:
 
 rule describe_protein_seqs:
     input:
-        prefix=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
+        prefix_full=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
+        prefix=f"{PREFIXES}/{{prefix}}.fasta",
         generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
     output:
         mean=f"{OUTDIR}/protein_descriptors/{{model}}/{{prefix}}-means.csv",
@@ -126,11 +127,13 @@ rule describe_protein_seqs:
 rule find_motifs:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
+        prefix=f"{PREFIXES}/{{prefix}}.fasta",
+        prefix_full=f"{PREFIXES_FULL}/{{prefix}}.fasta",
     singularity:
         ENV.singularity.get("find_motifs")
     output:
         tsv=f"{OUTDIR}/motifs/{{model}}/{{prefix}}.tsv",
+        tmp=temp(f"{OUTDIR}/motifs/{{model}}/{{prefix}}.fasta"),
     params:
         thresh=ENV.fimo.thresh,
         motifs=lambda wc: ENV.get_motif_file(wc["prefix"]),
@@ -138,7 +141,7 @@ rule find_motifs:
         """
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
-             {params.motifs} {input.prefix} > {output[0]}
+             {params.motifs} {input.prefix_full} > {output[0]}
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
              {params.motifs} {input.generated} >> {output[0]}        
@@ -148,7 +151,7 @@ rule find_motifs:
 rule classify_taxonomy:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
+        prefix_full=f"{PREFIXES_FULL}/{{prefix}}.fasta",
     params:
         db=ENV.taxdb,
     threads: 4
@@ -161,7 +164,7 @@ rule classify_taxonomy:
         f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_tophit_report",
     shell:
         f"""
-        mmseqs easy-taxonomy {{input.generated}} {{input.prefix}} \
+        mmseqs easy-taxonomy {{input.generated}} {{input.prefix_full}} \
                 {{params.db}} \
                 {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prefix}}/mmseqs \
                 {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prefix}}_tmp \
@@ -205,7 +208,7 @@ rule sort_taxonomy_hits:
 rule similarity:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
+        prefix_full=f"{PREFIXES_FULL}/{{prefix}}.fasta",
     params:
         kws="",
     output:
@@ -226,7 +229,9 @@ rule similarity:
 
 use rule similarity as similarity_to_prefix with:
     params:
-        kws=lambda _, input: " ".join(["-d", "-q", input.prefix, "-f", input.generated]),
+        kws=lambda _, input: " ".join(
+            ["-d", "-q", input.prefix_full, "-f", input.generated]
+        ),
     singularity:
         ENV.singularity.get("similarity")
     output:
@@ -245,9 +250,9 @@ use rule similarity as similarity_self with:
 use rule similarity as aa_similarity_to_prefix with:
     input:
         generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
-        prefix=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
+        prefix_full=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
     params:
-        kws=lambda _, input: " ".join(["-q", input.prefix, "-f", input.generated]),
+        kws=lambda _, input: " ".join(["-q", input.prefix_full, "-f", input.generated]),
     singularity:
         ENV.singularity.get("similarity")
     output:
@@ -257,7 +262,6 @@ use rule similarity as aa_similarity_to_prefix with:
 use rule similarity as aa_similarity_self with:
     input:
         generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
-        prefix=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
     params:
         kws=lambda _, input: " ".join(["-d", "-f", input.generated]),
     singularity:
