@@ -6,6 +6,15 @@ SMK_EXECUTOR = "slurm"
 SMK_PROFILE = "profiles/test"
 
 
+[tasks.send_gen_scripts]
+dir = "snakemake/gen_bias/scripts"
+usage = '''
+arg "<file>" help="File to send"
+'''
+run = '''
+rsync "${usage_file}" $stem_ip:~/amr_predict/snakemake/gen_bias/scripts
+'''
+
 [tasks.send_gen]
 dir = "snakemake/gen_bias"
 usage = '''
