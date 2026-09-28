@@ -132,8 +132,7 @@ rule describe_protein_seqs:
 rule find_motifs:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
-        prompt=f"{PROMPTS}/{{prompt}}.fasta",
-        prompt_full=f"{PROMPTS_FULL}/{{prompt}}.fasta",
+        prompt_full=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
     singularity:
         ENV.singularity.get("find_motifs")
     output:
@@ -144,12 +143,10 @@ rule find_motifs:
         motifs=lambda wc: ENV.get_motif_file(wc["prompt"]),
     shell:
         """
+        cat {input.prompt_full} {input.generated} > {output.tmp} 
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
-             {params.motifs} {input.prompt_full} > {output[0]}
-        fimo --thresh {params.thresh} \
-             --skip-matched-sequence \
-             {params.motifs} {input.generated} >> {output[0]}        
+             {params.motifs} {output.tmp} > {output.tsv}
         """
 
 
@@ -255,7 +252,7 @@ use rule similarity as similarity_self with:
 use rule similarity as aa_similarity_to_prompt with:
     input:
         generated=f"{OUTDIR}/generated_aa/{{model}}/{{prompt}}.fasta",
-        prompt_full=f"{PROMPTS_FULL}_aa/{{prompt}}.fasta",
+        prompt_full=f"{PROMPTS_FULL}_aa_trimmed/{{prompt}}.fasta",
     params:
         kws=lambda _, input: " ".join(["-q", input.prompt_full, "-f", input.generated]),
     singularity:
