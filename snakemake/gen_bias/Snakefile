@@ -205,29 +205,30 @@ rule similarity:
         generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
         prefix=f"{PREFIXES_FULL}/{{prefix}}.fasta",
     params:
-        funcname=config.get("parasail", "sw_stats_striped_16"),
         kws="",
     output:
         "PLACEHOLDER",
     shell:
-        "parasail_aligner -a {params.funcname} {params.kws} -g {output[0]}"
+        f"""
+        parasail_aligner -x \
+                -a {ENV.parasail.fn} \
+                -e {ENV.parasail.gap_extend} \
+                -o {ENV.parasail.gap_open} \
+                -m {ENV.parasail.matrix} \
+                -M {ENV.parasail.match} \
+                -X {ENV.parasail.mismatch} \
+                {{params.kws}} -g {{output[0]}}
+        """
+        # Require -x flag to ensure that no sequence pair is omitted from comparison
 
 
 use rule similarity as similarity_to_prefix with:
     params:
-        kws=lambda _, input: " ".join(
-            [
-                "-d",
-                "-q",
-                input.prefix,
-                "-f",
-                input.generated,
-            ]
-        ),
+        kws=lambda _, input: " ".join(["-d", "-q", input.prefix, "-f", input.generated]),
     singularity:
         ENV.singularity.get("similarity")
     output:
-        temp(f"{OUTDIR}/.similarity_tmp/{{model}}/{{prefix}}-to_prefix.csv"),
+        temp(f"{OUTDIR}/.similarity_tmp_nuc/{{model}}/{{prefix}}-to_prefix.csv"),
 
 
 use rule similarity as similarity_self with:

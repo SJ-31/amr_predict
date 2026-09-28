@@ -81,6 +81,16 @@ class FindMotifs:
 
 
 @define
+class ParasailParams:
+    fn: str = "sw_stats_striped_16"
+    gap_extend: int = 1
+    gap_open: int = 10
+    matrix: str = "blosum62"
+    match: int = 1
+    mismatch: int = 0
+
+
+@define
 class SnakeEnv:
     huggingface: str
     rng: int
@@ -94,6 +104,7 @@ class SnakeEnv:
     taxdb: str
     tmp: Path = field(converter=Path)
     singularity: dict = field(factory=dict)
+    parasail: ParasailParams = field(factory=ParasailParams)
     prefixes: list[str] = field(init=False, factory=list)
     prefix2data: dict[str, dict] = field(init=False, factory=dict)
 
