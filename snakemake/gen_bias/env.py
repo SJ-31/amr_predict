@@ -26,6 +26,61 @@ def check_fasta(file: str) -> bool:
         return False
 
 
+BIOTYPES: list[str] = [
+    # Protein coding
+    "protein_coding",
+    "protein_coding_CDS_not_defined",
+    "protein_coding_LoF",
+    "nonsense_mediated_decay",
+    "stop_codon_readthrough",
+    "readthrough_transcript",
+    # Immunoglobulin / T cell receptor genes
+    "IG_C_gene",
+    "IG_D_gene",
+    "IG_J_gene",
+    "IG_V_gene",
+    "TR_C_gene",
+    "TR_D_gene",
+    "TR_J_gene",
+    "TR_V_gene",
+    # Pseudogenes
+    "pseudogene",
+    "IG_pseudogene",
+    "polymorphic_pseudogene",
+    "processed_pseudogene",
+    "unprocessed_pseudogene",
+    "unitary_pseudogene",
+    "transcribed_pseudogene",
+    "transcribed_processed_pseudogene",
+    "transcribed_unprocessed_pseudogene",
+    "transcribed_unitary_pseudogene",
+    "translated_pseudogene",
+    # Processed transcript / long non-coding
+    "processed_transcript",
+    "lncRNA",
+    "lincRNA",
+    "antisense",
+    "3prime_overlapping_ncRNA",
+    "macro_lncRNA",
+    "non_coding",
+    "retained_intron",
+    "sense_intronic",
+    "sense_overlapping",
+    # Small non-coding
+    "ncRNA",
+    "miRNA",
+    "misc_RNA",
+    "piRNA",
+    "rRNA",
+    "siRNA",
+    "snRNA",
+    "snoRNA",
+    "tRNA",
+    "vault_RNA",
+    # Other
+    "TEC",
+]
+
 SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
     {
         "name": pa.Column(
@@ -47,13 +102,12 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
             checks=pa.Check(check_fasta, element_wise=True),
         ),
         "seq": pa.Column(str, nullable=True),
-        "family": pa.Column(str, nullable=True),
         "n": pa.Column(int, nullable=True),
         "taxid": pa.Column(str, coerce=True),
-        "biotype": pa.Column(str),
+        "biotype": pa.Column(str, checks=pa.Check.isin(BIOTYPES)),
         "has_5p_utr": pa.Column(bool),
         "proportion": pa.Column(float),
-        "coding": pa.Column(bool),
+        "gen_length": pa.Column(int),
         "motif_file": pa.Column(
             str,
             nullable=True,
@@ -62,6 +116,7 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
         # "conservation": pa.Column(), # TODO: not sure how to do this yet
     },
     checks=pa.Check(cols_not_all_null, a="file", b="seq"),
+    strict="filter",
 )
 
 
@@ -99,7 +154,11 @@ class SnakeEnv:
     resources: dict = field(validator=validators.instance_of(dict))
     n: int
     fimo: FindMotifs
-    meta: pl.DataFrame = field(converter=lambda x: pl.read_csv(x, null_values="NA"))
+    meta: pl.DataFrame = field(
+        converter=lambda x: pl.read_csv(x, null_values="NA")
+        if not isinstance(x, pl.DataFrame)
+        else x
+    )
     outdir: Path = field(converter=Path)
     taxdb: str
     tmp: Path = field(converter=Path)
@@ -109,7 +168,9 @@ class SnakeEnv:
     prompt2data: dict[str, dict] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
-        SCHEMA.validate(self.meta)
+        self.meta = SCHEMA.validate(self.meta).with_columns(
+            pl.col("biotype").is_in(BIOTYPES[:6]).alias("coding")
+        )
         if not self.tmp.exists():
             self.tmp.mkdir()
         self.prompts.extend(self.meta["name"].to_list())
@@ -194,4 +255,5 @@ def test_env() -> SnakeEnv:
         data = process_yaml(f)
     with open(wd / "test_env.yaml", "r") as f:
         data.update(process_yaml(f))
+    print(data)
     return SnakeEnv.new(data)
