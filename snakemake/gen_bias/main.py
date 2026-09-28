@@ -113,12 +113,13 @@ def fmt_prompts():
     with open(OUTPUT["prompt"], "w") as f:
         f.write(f">{header}\n{prompt_seq}")
 
-    sr = SeqIO.read(prompt_full, "fasta")
-    trimmed = SeqRecord(Seq(sr))
+    full_seq = SeqIO.read(prompt_full, "fasta")
+    trimmed = SeqRecord(Seq(str(full_seq.seq).removeprefix(prompt_seq)))
 
-    seq_translated = translate(sr).sequence
-    Path(OUTPUT["full"]).write_text(f">{header}-FULL\n{str(sr.seq)}")
-    Path(OUTPUT["aa"]).write_text(f">{header}-FULL\n{seq_translated}")
+    for seq, suffix in zip((full_seq, trimmed), ("", "_trimmed")):
+        translated = translate(seq).sequence
+        Path(OUTPUT[f"full{suffix}"]).write_text(f">{header}-FULL\n{str(seq.seq)}")
+        Path(OUTPUT[f"aa{suffix}"]).write_text(f">{header}-FULL\n{translated}")
 
 
 if rule_fn := globals().get(snakemake.rule):
