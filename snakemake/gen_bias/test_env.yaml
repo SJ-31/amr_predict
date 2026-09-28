@@ -7,7 +7,7 @@ __definitions__:
   - testdir = here() / "tests"
 
 n: 10
-meta: ?testdir / "data"/ "gen_prefixes.csv"
+meta: ?str(testdir / "data"/ "gen_prefixes.csv")
 outdir: ?f"{remote}/tests/gen_bias"
 
 taxdb: ?f"{remote}/blast/db_test/nt"
@@ -20,18 +20,14 @@ resources:
     slurm_partition: gpu
 
 models: # dictionary mapping model name
-  # evo1: # BUG: Remove temporarily while fixing genome ocean [2026-09-24 Thu]
-  #   script: scripts/evo_design.py
-  #   image: ?f"{remote}/images/evo_design.sif"
-  #   resources: "gpu40g"
-  #   kws:
-  #     device: "cuda:0"
-  #     seq_len: 512
-  #     model_name: evo-1-8k-base
+  evo1:
+    script: scripts/evo_design.py
+    resources: "gpu40g"
+    kws:
+      device: "cuda:0"
+      model_name: evo-1-8k-base
   genome_ocean_1:
     script: scripts/genome_ocean.py
-    image: ?f"{remote}/images/genome_ocean.sif"
     resources: "gpu40g"
     kws:
       min_seq_len: 512
-      seq_len: 1024

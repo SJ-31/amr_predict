@@ -1,0 +1,42 @@
+__use_yte__: true
+__definitions__:
+  - import numpy as np
+  - temp_range = np.linspace(0, 1, num = 6, endpoint = True)
+  - remote = "/data/project/stemcell/shannc/repos/amr_predict"
+
+singularity:
+  generate:
+    ?for i in range(len(temp_range)):
+      ?f"evo_t{i}": ?f"{remote}/images/evo_design.sif"
+      ?f"evo2_t{i}": ?f"{remote}/images/evo.sif"
+      ?f"genome_ocean_t{i}": ?f"{remote}/images/genome_ocean.sif"
+
+models:
+  ?for i, temp in enumerate(temp_range):
+    ?f"evo_t{i}":
+      script: scripts/evo_design.py
+      resources: "gpu40g"
+      kws:
+        temperature: ?temp.item()
+        top_k: 4
+        top_p: 0.9
+        device: "cuda:0"
+        model_name: evo-1-8k-base
+    ?f"evo2_t{i}":
+      script: scripts/evo2_gen.py
+      resources: "gpu40g"
+      kws:
+        temperature: ?temp.item()
+        top_p: 0.9
+        top_k: 4
+        device: "cuda:0"
+        model_name: evo2_7b
+    ?f"genome_ocean_t{i}":
+      script: scripts/genome_ocean.py
+      resources: "gpu40g"
+      kws:
+        temperature: ?temp.item()
+        model: 4B
+        top_p: 0.9
+        top_k: 4
+        min_seq_len: 512
