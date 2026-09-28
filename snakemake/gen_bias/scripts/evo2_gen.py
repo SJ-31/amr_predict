@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # Adapted from scripts/gene_completion.py at
 import argparse
+import random
 from pathlib import Path
 
+import numpy as np
+import torch
 from Bio import SeqIO
 from evo2 import Evo2
 
@@ -58,6 +61,12 @@ def parse_args() -> dict:
         "--top_p", type=float, default=1.0, help="Top P during sampling"
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=random.randint(0, 999999999),
+        help="Random seed for sampling.",
+    )
+    parser.add_argument(
         "--cached-generation",
         type=bool,
         default=True,
@@ -79,6 +88,10 @@ def parse_args() -> dict:
 
 
 def main(args: dict):
+    random.seed(args["seed"])
+    torch.manual_seed(args["seed"])
+    np.random.seed(args["seed"])
+
     evo_model = Evo2(args["model_name"])
     evo_model.model.to(args["device"])
 

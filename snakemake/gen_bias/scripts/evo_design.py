@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # Adapted from scripts/generate.py at https://github.com/evo-design/evo
 import argparse
+import random
 from pathlib import Path
 
+import numpy as np
+import torch
 from Bio import SeqIO
 from evo import Evo, generate
 
@@ -65,6 +68,12 @@ def parse_args() -> dict:
         "--prepend-bos", type=bool, default=False, help="Prepend BOS token"
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=random.randint(0, 999999999),
+        help="Random seed for sampling.",
+    )
+    parser.add_argument(
         "--device", type=str, default="cuda:0", help="Device for generation"
     )
     parser.add_argument("--verbose", type=int, default=1, help="Verbosity level")
@@ -77,6 +86,9 @@ def parse_args() -> dict:
 
 
 def main(args: dict):
+    random.seed(args["seed"])
+    torch.manual_seed(args["seed"])
+    np.random.seed(args["seed"])
     evo_model = Evo(args["model_name"])
     model, tokenizer = evo_model.model, evo_model.tokenizer
 

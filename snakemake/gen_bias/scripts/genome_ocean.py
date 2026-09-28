@@ -5,6 +5,8 @@ import argparse
 import os
 import random
 
+import numpy as np
+import torch
 from genomeocean.generation import SequenceGenerator
 
 if "VLLM_USE_V1" in os.environ:
@@ -133,6 +135,9 @@ def parse_args() -> dict:
 
 def main(args: dict):
     # Initialize the SequenceGenerator with the provided arguments
+    random.seed(args["seed"])
+    torch.manual_seed(args["seed"])
+    np.random.seed(args["seed"])
     seq_gen = SequenceGenerator(
         model_dir=args["model_dir"],
         promptfile=args["prompt"],
