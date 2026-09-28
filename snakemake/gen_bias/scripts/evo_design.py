@@ -103,7 +103,8 @@ def main(args: dict):
         verbose=args["verbose"],
     )
     if args["prepend_prompt_to_output"]:
-        output_seqs = [s + prompt for s in output_seqs if not s.startswith(prompt)]
+        print("Prepending prompt...")
+        output_seqs = [prompt + s for s in output_seqs if not s.startswith(prompt)]
     as_fasta = [f">{args['prefix']}{i}\n{s}" for i, s in enumerate(output_seqs)]
     with open(args["output"], "w") as f:
         f.write("\n".join(as_fasta))

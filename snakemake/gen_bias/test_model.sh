@@ -124,7 +124,7 @@ elif [[ "${_arg_model}" == "evo2" ]]; then
         --env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo.sif" \
-		python scripts/evo2_gen.py --prompt "${prompt_file}" --output evo2.fasta --device cuda:0 --num 3 --seq_len 512 --model_name evo2_7b
+		python scripts/evo2_gen.py --prompt "${prompt_file}" --output evo2.fasta --device cuda:0 --num 3 --seq_len 512 --model_name evo2_7b --no-prepend_prompt_to_output
 fi
 
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^
