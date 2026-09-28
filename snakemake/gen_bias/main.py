@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 import polars as pl
 from Bio import SeqIO
+from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from peptides import Peptide
 
@@ -17,7 +19,7 @@ OUTPUT = snakemake.output
 WC = snakemake.wildcards
 
 
-def translate(seq: SeqRecord) -> Peptide:
+def translate(seq: SeqRecord | Seq) -> Peptide:
     if (remainder := len(seq) % 3) != 0:
         add = 3 - remainder
         seq = seq + ("N" * add)
@@ -66,15 +68,16 @@ def translate_fasta() -> None:
 
 def describe_protein_seqs() -> None:
     """
-    Compute the generated sequences' average distance from their prefix
+    Compute the generated sequences' average distance from their prompt
     across several peptide descriptors
     """
     from functools import reduce
 
     from scipy.spatial.distance import cdist
 
-    prefix: SeqRecord = SeqIO.read(INPUT["prefix"], "fasta")
-    ids, peps = [prefix.id], [Peptide(str(prefix.seq))]
+    prompt: SeqRecord = SeqIO.read(INPUT["prompt_full"], "fasta")
+    # Enable direct comparison by removing sequence used as prompt from original sequence
+    ids, peps = [prompt.id], [Peptide(str(prompt.seq))]
 
     for seq in SeqIO.parse(INPUT["generated"], "fasta"):
         ids.append(seq.id)
@@ -87,10 +90,10 @@ def describe_protein_seqs() -> None:
         df = get_props(peps=peps, descriptor=descriptor, ids=ids, **kws)
         dfs.append(df)
 
-        prefix_val: np.ndarray = np.array([df.drop("id").row(0)])
+        prompt_val: np.ndarray = np.array([df.drop("id").row(0)])
         vals: np.ndarray = df.drop("id").slice(1).to_numpy()
         tmp_dist["descriptor"].append(descriptor)
-        tmp_dist["value"].append(cdist(prefix_val, vals).mean())
+        tmp_dist["value"].append(cdist(prompt_val, vals).mean())
 
     mean_dist: pl.DataFrame = pl.DataFrame(tmp_dist)
     combined: pl.DataFrame = reduce(lambda x, y: x.join(y, on="id"), dfs)
@@ -98,21 +101,24 @@ def describe_protein_seqs() -> None:
     combined.write_csv(OUTPUT["vals"])
 
 
-def fmt_prefixes():
-    data: dict = PARAMS["prefix2data"][WC["prefix"]]
-    prefix_full = data["file_full"]
-    sr = SeqIO.read(prefix_full, "fasta")
-    seq_translated = translate(sr).sequence
-    with open(OUTPUT[1], "w") as f:
-        f.write(f">{WC['prefix']}-FULL\n{str(sr.seq)}")
-    with open(OUTPUT[2], "w") as f:
-        f.write(f">{WC['prefix']}-FULL\n{seq_translated}")
+def fmt_prompts():
+    header: str = WC["prompt"]
+    data: dict = PARAMS["prompt2data"][header]
+    prompt_full = data["file_full"]
+
     if data["file"]:
-        seq = str(SeqIO.read(prefix_full, "fasta").seq)
+        prompt_seq = str(SeqIO.read(prompt_full, "fasta").seq)
     else:
-        seq = data["seq"]
-    with open(OUTPUT[0], "w") as f:
-        f.write(f">{WC['prefix']}\n{seq}")
+        prompt_seq = data["seq"]
+    with open(OUTPUT["prompt"], "w") as f:
+        f.write(f">{header}\n{prompt_seq}")
+
+    sr = SeqIO.read(prompt_full, "fasta")
+    trimmed = SeqRecord(Seq(sr))
+
+    seq_translated = translate(sr).sequence
+    Path(OUTPUT["full"]).write_text(f">{header}-FULL\n{str(sr.seq)}")
+    Path(OUTPUT["aa"]).write_text(f">{header}-FULL\n{seq_translated}")
 
 
 if rule_fn := globals().get(snakemake.rule):

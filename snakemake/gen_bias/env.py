@@ -42,7 +42,7 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
             checks=pa.Check(check_fasta, element_wise=True),
         ),
         "file_full": pa.Column(  # FASTA file containing the original
-            # sequence of the prefix
+            # sequence of the prompt
             str,
             checks=pa.Check(check_fasta, element_wise=True),
         ),
@@ -105,19 +105,19 @@ class SnakeEnv:
     tmp: Path = field(converter=Path)
     singularity: dict = field(factory=dict)
     parasail: ParasailParams = field(factory=ParasailParams)
-    prefixes: list[str] = field(init=False, factory=list)
-    prefix2data: dict[str, dict] = field(init=False, factory=dict)
+    prompts: list[str] = field(init=False, factory=list)
+    prompt2data: dict[str, dict] = field(init=False, factory=dict)
 
     def __attrs_post_init__(self):
         SCHEMA.validate(self.meta)
         if not self.tmp.exists():
             self.tmp.mkdir()
-        self.prefixes.extend(self.meta["name"].to_list())
-        self.prefix2data = self.meta.rows_by_key("name", unique=True, named=True)
+        self.prompts.extend(self.meta["name"].to_list())
+        self.prompt2data = self.meta.rows_by_key("name", unique=True, named=True)
 
-    def get_motif_file(self, prefix: str) -> str:
+    def get_motif_file(self, prompt: str) -> str:
         return (
-            self.prefix2data[prefix].get("motif_file", self.fimo.default)
+            self.prompt2data[prompt].get("motif_file", self.fimo.default)
             or self.fimo.default
         )
 
@@ -149,15 +149,15 @@ class SnakeEnv:
             ("generated", "fasta"),
             ("motifs", "tsv"),
             ("taxonomy", "csv"),
-            ("nuc_similarity", (("self", "to_prefix"), "csv")),
-            ("aa_similarity", (("self", "to_prefix"), "csv")),
+            ("nuc_similarity", (("self", "to_prompt"), "csv")),
+            ("aa_similarity", (("self", "to_prompt"), "csv")),
             ("protein_descriptors", (("means", "raw"), "csv")),
         ]:
             if not isinstance(ext, tuple):
                 results[d] = expand(
                     f"{self.outdir}/{d}/{{m}}/{{p}}.{ext}",
                     m=self.models.keys(),
-                    p=self.prefixes,
+                    p=self.prompts,
                 )
             else:
                 suffixes, ext = ext
@@ -165,9 +165,9 @@ class SnakeEnv:
                     f"{self.outdir}/{d}/{{m}}/{{p}}-{{t}}.{ext}",
                     m=self.models.keys(),
                     t=suffixes,
-                    p=self.prefixes,
+                    p=self.prompts,
                 )
-        for m in ["prefix_comparison.csv", "physicochemical.csv"]:
+        for m in ["prompt_comparison.csv", "physicochemical.csv"]:
             results["metrics"].append(f"{self.outdir}/{m}")
         return results
 

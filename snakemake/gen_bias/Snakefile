@@ -13,8 +13,8 @@ Output is structured as
 <outdir>/
 ├── generated/
 │   └── <model_name>/
-│       └── <prefix_name>.fasta
-├── prefix_comparison.csv
+│       └── <prompt_name>.fasta
+├── prompt_comparison.csv
 ├── perturbation_sensitivity.csv
 ├── motifs_domains.csv
 └── physicochemical.csv
@@ -23,9 +23,9 @@ Output is structured as
 ENV = SnakeEnv.new(config)
 OUTDIR = ENV.outdir
 OUTPUTS = ENV.get_outputs()
-PREFIXES = OUTDIR / ".prefixes"
+PROMPTS = OUTDIR / ".prompts"
 INDICES = OUTDIR / ".indices"
-PREFIXES_FULL = OUTDIR / ".prefixes_full"
+PROMPTS_FULL = OUTDIR / ".prompts_full"
 
 os.environ["HF_HOME"] = ENV.huggingface
 
@@ -44,28 +44,33 @@ rule all:
         *OUTPUTS["protein_descriptors"],
 
 
-rule fmt_prefixes:
+rule fmt_prompts:
     output:
-        f"{PREFIXES}/{{prefix}}.fasta",
-        f"{PREFIXES_FULL}/{{prefix}}.fasta",
-        f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
         # Would have liked to make these temporary, if not for the fact
         # it would cause the workflow to re-run the `generate` rule
+        prompt=f"{PROMPTS}/{{prompt}}.fasta",
+        full_trimmed=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
+        full=f"{PROMPTS_FULL}/{{prompt}}.fasta",
+        aa=f"{PROMPTS_FULL}_aa/{{prompt}}.fasta",
+        aa_trimmed=f"{PROMPTS_FULL}_aa_trimmed/{{prompt}}.fasta",
+        # `_trimmed` is the original prompt sequence without the
+        # upstream component used for the prompt
+        # for aa, trimming occurs prior to translation
     params:
-        prefix2data=ENV.prefix2data,
+        prompt2data=ENV.prompt2data,
     script:
         "main.py"
 
 
 rule generate:
     output:
-        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
     input:
-        f"{PREFIXES}/{{prefix}}.fasta",
+        f"{PROMPTS}/{{prompt}}.fasta",
     params:
         script=lambda wc: ENV.model_script(wc.get("model")),
         kws=lambda wc: ENV.model_kws(wc.get("model")),
-        n=lambda wc: ENV.prefix2data[wc.get("prefix")].get("n", ENV.n) or ENV.n,
+        n=lambda wc: ENV.prompt2data[wc.get("prompt")].get("n", ENV.n) or ENV.n,
         hf=ENV.huggingface,
         cvd=CUDA_VISIBLE_DEVICES,
     resources:
@@ -80,15 +85,16 @@ rule generate:
                 --prompt {input[0]} \
                 --output {output[0]} \
                 --prefix "{wildcards.model}|" \
+                --prepend_prompt_to_output False \
                 --num {params.n}
         """
 
 
 rule gen_index:
     input:
-        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
     output:
-        f"{INDICES}/{{model}}/{{prefix}}",
+        f"{INDICES}/{{model}}/{{prompt}}",
     shell:
         """
         grep '>' {input[0]} | sed 's/^>//' | xan -n rename id | \
@@ -98,50 +104,49 @@ rule gen_index:
 
 rule translate_fasta:
     input:
-        f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
+        f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
     output:
-        f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
+        f"{OUTDIR}/generated_aa/{{model}}/{{prompt}}.fasta",
     script:
         "main.py"
 
 
 rule describe_protein_seqs:
     input:
-        prefix_full=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
-        prefix=f"{PREFIXES}/{{prefix}}.fasta",
-        generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
+        prompt_full=f"{PROMPTS_FULL}_aa_trimmed/{{prompt}}.fasta",
+        generated=f"{OUTDIR}/generated_aa/{{model}}/{{prompt}}.fasta",
     output:
-        mean=f"{OUTDIR}/protein_descriptors/{{model}}/{{prefix}}-means.csv",
+        mean=f"{OUTDIR}/protein_descriptors/{{model}}/{{prompt}}-means.csv",
         # For each descriptor, the mean difference of the generated sequence from the
-        # prefix
-        vals=f"{OUTDIR}/protein_descriptors/{{model}}/{{prefix}}-raw.csv",
+        # prompt
+        vals=f"{OUTDIR}/protein_descriptors/{{model}}/{{prompt}}-raw.csv",
     script:
         "main.py"
 
 
 # rule compare_protein_descriptors:
 # TODO: after getting the values from rule above, compare them
-# across prefix groups
+# across prompt groups
 
 
 rule find_motifs:
     input:
-        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        prefix=f"{PREFIXES}/{{prefix}}.fasta",
-        prefix_full=f"{PREFIXES_FULL}/{{prefix}}.fasta",
+        generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
+        prompt=f"{PROMPTS}/{{prompt}}.fasta",
+        prompt_full=f"{PROMPTS_FULL}/{{prompt}}.fasta",
     singularity:
         ENV.singularity.get("find_motifs")
     output:
-        tsv=f"{OUTDIR}/motifs/{{model}}/{{prefix}}.tsv",
-        tmp=temp(f"{OUTDIR}/motifs/{{model}}/{{prefix}}.fasta"),
+        tsv=f"{OUTDIR}/motifs/{{model}}/{{prompt}}.tsv",
+        tmp=temp(f"{OUTDIR}/motifs/{{model}}/{{prompt}}.fasta"),
     params:
         thresh=ENV.fimo.thresh,
-        motifs=lambda wc: ENV.get_motif_file(wc["prefix"]),
+        motifs=lambda wc: ENV.get_motif_file(wc["prompt"]),
     shell:
         """
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
-             {params.motifs} {input.prefix_full} > {output[0]}
+             {params.motifs} {input.prompt_full} > {output[0]}
         fimo --thresh {params.thresh} \
              --skip-matched-sequence \
              {params.motifs} {input.generated} >> {output[0]}        
@@ -150,24 +155,24 @@ rule find_motifs:
 
 rule classify_taxonomy:
     input:
-        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        prefix_full=f"{PREFIXES_FULL}/{{prefix}}.fasta",
+        generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
+        prompt_full=f"{PROMPTS_FULL}/{{prompt}}.fasta",
     params:
         db=ENV.taxdb,
     threads: 4
     singularity:
         ENV.singularity.get("classify_taxonomy")
     output:
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_tophit_aln",
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_report",
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_lca.tsv",
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_tophit_report",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_tophit_aln",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_report",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_lca.tsv",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_tophit_report",
     shell:
         f"""
-        mmseqs easy-taxonomy {{input.generated}} {{input.prefix_full}} \
+        mmseqs easy-taxonomy {{input.generated}} {{input.prompt_full}} \
                 {{params.db}} \
-                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prefix}}/mmseqs \
-                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prefix}}_tmp \
+                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}/mmseqs \
+                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}_tmp \
                 --tax-lineage 1 \
                 --format-mode 4 \
                 --search-type 3
@@ -176,9 +181,9 @@ rule classify_taxonomy:
 
 rule sort_taxonomy_hits:
     input:
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prefix}}/mmseqs_tophit_aln",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_tophit_aln",
     output:
-        f"{OUTDIR}/taxonomy/{{model}}/{{prefix}}.csv",
+        f"{OUTDIR}/taxonomy/{{model}}/{{prompt}}.csv",
     run:
         import polars as pl
 
@@ -207,8 +212,8 @@ rule sort_taxonomy_hits:
 
 rule similarity:
     input:
-        generated=f"{OUTDIR}/generated/{{model}}/{{prefix}}.fasta",
-        prefix_full=f"{PREFIXES_FULL}/{{prefix}}.fasta",
+        generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
+        prompt_full=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
     params:
         kws="",
     output:
@@ -227,15 +232,15 @@ rule similarity:
         # Require -x flag to ensure that no sequence pair is omitted from comparison
 
 
-use rule similarity as similarity_to_prefix with:
+use rule similarity as similarity_to_prompt with:
     params:
         kws=lambda _, input: " ".join(
-            ["-d", "-q", input.prefix_full, "-f", input.generated]
+            ["-d", "-q", input.prompt_full, "-f", input.generated]
         ),
     singularity:
         ENV.singularity.get("similarity")
     output:
-        temp(f"{OUTDIR}/.similarity_tmp_nuc/{{model}}/{{prefix}}-to_prefix.csv"),
+        temp(f"{OUTDIR}/.similarity_tmp_nuc/{{model}}/{{prompt}}-to_prompt.csv"),
 
 
 use rule similarity as similarity_self with:
@@ -244,36 +249,36 @@ use rule similarity as similarity_self with:
     singularity:
         ENV.singularity.get("similarity")
     output:
-        temp(f"{OUTDIR}/.similarity_tmp_nuc/{{model}}/{{prefix}}-self.csv"),
+        temp(f"{OUTDIR}/.similarity_tmp_nuc/{{model}}/{{prompt}}-self.csv"),
 
 
-use rule similarity as aa_similarity_to_prefix with:
+use rule similarity as aa_similarity_to_prompt with:
     input:
-        generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
-        prefix_full=f"{PREFIXES_FULL}_aa/{{prefix}}.fasta",
+        generated=f"{OUTDIR}/generated_aa/{{model}}/{{prompt}}.fasta",
+        prompt_full=f"{PROMPTS_FULL}_aa/{{prompt}}.fasta",
     params:
-        kws=lambda _, input: " ".join(["-q", input.prefix_full, "-f", input.generated]),
+        kws=lambda _, input: " ".join(["-q", input.prompt_full, "-f", input.generated]),
     singularity:
         ENV.singularity.get("similarity")
     output:
-        temp(f"{OUTDIR}/.similarity_tmp_aa/{{model}}/{{prefix}}-to_prefix.csv"),
+        temp(f"{OUTDIR}/.similarity_tmp_aa/{{model}}/{{prompt}}-to_prompt.csv"),
 
 
 use rule similarity as aa_similarity_self with:
     input:
-        generated=f"{OUTDIR}/generated_aa/{{model}}/{{prefix}}.fasta",
+        generated=f"{OUTDIR}/generated_aa/{{model}}/{{prompt}}.fasta",
     params:
         kws=lambda _, input: " ".join(["-d", "-f", input.generated]),
     singularity:
         ENV.singularity.get("similarity")
     output:
-        temp(f"{OUTDIR}/.similarity_tmp_aa/{{model}}/{{prefix}}-self.csv"),
+        temp(f"{OUTDIR}/.similarity_tmp_aa/{{model}}/{{prompt}}-self.csv"),
 
 
 rule fmt_similarity:
     input:
-        index=f"{INDICES}/{{model}}/{{prefix}}",
-        tmp=f"{OUTDIR}/.similarity_tmp_{{molecule}}/{{model}}/{{prefix}}-{{type}}.csv",
+        index=f"{INDICES}/{{model}}/{{prompt}}",
+        tmp=f"{OUTDIR}/.similarity_tmp_{{molecule}}/{{model}}/{{prompt}}-{{type}}.csv",
     singularity:
         ENV.singularity.get("fmt_similarity")
     params:
@@ -292,13 +297,13 @@ rule fmt_similarity:
             ]
         ),
     output:
-        f"{OUTDIR}/{{molecule}}_similarity/{{model}}/{{prefix}}-{{type}}.csv",
+        f"{OUTDIR}/{{molecule}}_similarity/{{model}}/{{prompt}}-{{type}}.csv",
     shell:
         """
-        if [[ {wildcards.type} == 'to_prefix' ]]; then
+        if [[ {wildcards.type} == 'to_prompt' ]]; then
             xan rename -n {params.cols} {input.tmp} | \
                   xan join index {input.index} - | \
-                  xan transform query '"{wildcards.prefix}"' |
+                  xan transform query '"{wildcards.prompt}"' |
                   xan drop index > {output[0]}
         else
             xan rename -n {params.cols} {input.tmp} | \
