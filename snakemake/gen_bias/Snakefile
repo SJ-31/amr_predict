@@ -68,9 +68,10 @@ rule generate:
     input:
         f"{PROMPTS}/{{prompt}}.fasta",
     params:
-        script=lambda wc: ENV.model_script(wc.get("model")),
-        kws=lambda wc: ENV.model_kws(wc.get("model")),
-        n=lambda wc: ENV.prompt2data[wc.get("prompt")].get("n", ENV.n) or ENV.n,
+        script=lambda wc: ENV.model_script(wc["model"]),
+        kws=lambda wc: ENV.model_kws(wc["model"]),
+        n=lambda wc: ENV.prompt2data[wc["prompt"]].get("n", ENV.n) or ENV.n,
+        length=lambda wc: ENV.prompt2data[wc["prompt"]]["gen_length"],
         hf=ENV.huggingface,
         cvd=CUDA_VISIBLE_DEVICES,
     resources:
@@ -85,6 +86,7 @@ rule generate:
                 --prompt {input[0]} \
                 --output {output[0]} \
                 --prefix "{wildcards.model}|" \
+                --seq_len {params.length} \
                 --seed {params.rng} \
                 --no-prepend_prompt_to_output \
                 --num {params.n}
