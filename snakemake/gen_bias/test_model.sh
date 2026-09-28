@@ -100,15 +100,15 @@ if [[ "${_arg_model}" == "genome_ocean" ]]; then
 		--env CUDA_VISIBLE_DEVICES=0 \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/genome_ocean.sif" \
-		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 1024 --min_seq_len 512
-	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
-		singularity exec --nv "${image_dir}/genome_ocean.sif" echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES" && echo "CFLAGS: $CFLAGS" && echo "CPATH: $CPATH" && echo "NVIDIA_VISIBLE_DEVICES: $NVIDIA_VISIBLE_DEVICES"
-	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
-		singularity exec --cleanenv --nv --env CUDA_VISIBLE_DEVICES=0 "${image_dir}/genome_ocean.sif" \
-		nvidia-smi -L
-	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
-		singularity exec --cleanenv --nv --env CUDA_VISIBLE_DEVICES=0 "${image_dir}/genome_ocean.sif" \
-		python -c "import torch; print(torch.cuda.device_count())"
+		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 1024 --min_seq_len 512 --no-prepend_prompt_to_output
+	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
+	# 	singularity exec --nv "${image_dir}/genome_ocean.sif" echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES" && echo "CFLAGS: $CFLAGS" && echo "CPATH: $CPATH" && echo "NVIDIA_VISIBLE_DEVICES: $NVIDIA_VISIBLE_DEVICES"
+	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
+	# 	singularity exec --cleanenv --nv --env CUDA_VISIBLE_DEVICES=0 "${image_dir}/genome_ocean.sif" \
+	# 	nvidia-smi -L
+	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
+	# 	singularity exec --cleanenv --nv --env CUDA_VISIBLE_DEVICES=0 "${image_dir}/genome_ocean.sif" \
+	# 	python -c "import torch; print(torch.cuda.device_count())"
 elif [[ "${_arg_model}" == "evo_design" ]]; then
 	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=20G \
 		singularity run \
@@ -124,7 +124,7 @@ elif [[ "${_arg_model}" == "evo2" ]]; then
         --env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo.sif" \
-		python scripts/evo.py --prompt "${prompt_file}" --output evo2.fasta --device cuda:0 --num 3 --seq_len 512 --model_name evo2_7b
+		python scripts/evo2_gen.py --prompt "${prompt_file}" --output evo2.fasta --device cuda:0 --num 3 --seq_len 512 --model_name evo2_7b
 fi
 
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^

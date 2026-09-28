@@ -33,9 +33,8 @@ def parse_args() -> dict:
     )
     parser.add_argument(
         "--prepend_prompt_to_output",
-        type=bool,
-        default=True,
         help="Prepend prompt to output sequences.",
+        action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
         "-t",

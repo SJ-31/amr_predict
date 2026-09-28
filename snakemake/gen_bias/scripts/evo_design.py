@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 
 from Bio import SeqIO
-
 from evo import Evo, generate
 
 
@@ -34,9 +33,8 @@ def parse_args() -> dict:
     )
     parser.add_argument(
         "--prepend_prompt_to_output",
-        type=bool,
-        default=True,
         help="Prepend prompt to output sequences.",
+        action=argparse.BooleanOptionalAction,
     )
     parser.add_argument(
         "--prompt", type=str, default="ACGT", help="Prompt for generation"

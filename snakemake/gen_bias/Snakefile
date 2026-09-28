@@ -85,7 +85,7 @@ rule generate:
                 --prompt {input[0]} \
                 --output {output[0]} \
                 --prefix "{wildcards.model}|" \
-                --prepend_prompt_to_output False \
+                --no-prepend_prompt_to_output \
                 --num {params.n}
         """
 
