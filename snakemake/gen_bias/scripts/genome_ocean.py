@@ -26,11 +26,11 @@ def parse_args() -> dict:
         help="Model directory or path to a local copy of the model.",
     )
     model_group.add_argument(
-        "--model",
+        "--model_name",
         type=str,
-        choices=["100M", "500M", "4B"],
+        choices=["GenomeOcean-4B", "GenomeOcean-100M", "GenomeOcean-500M"],
         help="Predefined model to use.",
-        default="100M",
+        default="GenomeOcean-100M",
     )
     parser.add_argument(
         "-x",
@@ -53,7 +53,7 @@ def parse_args() -> dict:
         "--min_seq_len",
         type=int,
         help="Minimum length of generated sequences in tokens.",
-        default=512,
+        default=None,
     )
     parser.add_argument(
         "--seq_len",
@@ -119,16 +119,11 @@ def parse_args() -> dict:
     )
 
     args: dict = vars(parser.parse_args())
-
-    # Determine the model directory based on the provided arguments
-    if args.get("model") == "4B":
-        args["model_dir"] = "pGenomeOcean/GenomeOcean-4B"
-    elif args.get("model") == "100M":
-        args["model_dir"] = "pGenomeOcean/GenomeOcean-100M"
-    elif args.get("model") == "500M":
-        args["model_dir"] = "pGenomeOcean/GenomeOcean-500M"
+    if not args["min_seq_len"]:
+        args["min_seq_len"] = args["seq_len"]
+    model_name = f"pGenomeOcean/{args['model_name']}"
     if not args.get("model_dir"):
-        args["model_dir"] = "pGenomeOcean/GenomeOcean-100M"
+        args["model_dir"] = model_name
 
     return args
 

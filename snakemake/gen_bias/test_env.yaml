@@ -30,4 +30,4 @@ models: # dictionary mapping model name
     script: scripts/genome_ocean.py
     resources: "gpu40g"
     kws:
-      min_seq_len: 512
+      model_name: GenomeOcean-100M
