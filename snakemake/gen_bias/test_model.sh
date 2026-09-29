@@ -2,7 +2,9 @@
 
 # Created by argbash-init v2.11.0
 # ARG_POSITIONAL_SINGLE([model])
-# ARG_DEFAULTS_POS()
+# ARG_OPTIONAL_SINGLE([num],[n],[number of sequences to generate],[10])
+# ARG_OPTIONAL_SINGLE([output],[o],[output file name])
+# ARG_DEFAULTS_POS([])
 # ARG_HELP([<The general help message of my script>])
 # ARGBASH_GO()
 # needed because of Argbash --> m4_ignore([
@@ -10,15 +12,19 @@
 # Argbash is a bash code generator used to get arguments parsing right.
 # Argbash is FREE SOFTWARE, see https://argbash.dev for more info
 
-die() {
+
+die()
+{
 	local _ret="${2:-1}"
 	test "${_PRINT_HELP:-no}" = yes && print_help >&2
 	echo "$1" >&2
 	exit "${_ret}"
 }
 
-begins_with_short_option() {
-	local first_option all_short_options='h'
+
+begins_with_short_option()
+{
+	local first_option all_short_options='noh'
 	first_option="${1:0:1}"
 	test "$all_short_options" = "${all_short_options/$first_option/}" && return 1 || return 0
 }
@@ -27,49 +33,85 @@ begins_with_short_option() {
 _positionals=()
 _arg_model=
 # THE DEFAULTS INITIALIZATION - OPTIONALS
+_arg_num="10"
+_arg_output=
 
-print_help() {
+
+print_help()
+{
 	printf '%s\n' "<The general help message of my script>"
-	printf 'Usage: %s [-h|--help] <model>\n' "$0"
+	printf 'Usage: %s [-n|--num <arg>] [-o|--output <arg>] [-h|--help] <model>\n' "$0"
+	printf '\t%s\n' "-n, --num: number of sequences to generate (default: '10')"
+	printf '\t%s\n' "-o, --output: output file name (no default)"
 	printf '\t%s\n' "-h, --help: Prints help"
 }
 
-parse_commandline() {
+
+parse_commandline()
+{
 	_positionals_count=0
 	local _key
-	while test $# -gt 0; do
+	while test $# -gt 0
+	do
 		_key="$1"
 		case "$_key" in
-		-h | --help)
-			print_help
-			exit 0
-			;;
-		-h*)
-			print_help
-			exit 0
-			;;
-		*)
-			_last_positional="$1"
-			_positionals+=("$_last_positional")
-			_positionals_count=$((_positionals_count + 1))
-			;;
+			-n|--num)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_num="$2"
+				shift
+				;;
+			--num=*)
+				_arg_num="${_key##--num=}"
+				;;
+			-n*)
+				_arg_num="${_key##-n}"
+				;;
+			-o|--output)
+				test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+				_arg_output="$2"
+				shift
+				;;
+			--output=*)
+				_arg_output="${_key##--output=}"
+				;;
+			-o*)
+				_arg_output="${_key##-o}"
+				;;
+			-h|--help)
+				print_help
+				exit 0
+				;;
+			-h*)
+				print_help
+				exit 0
+				;;
+			*)
+				_last_positional="$1"
+				_positionals+=("$_last_positional")
+				_positionals_count=$((_positionals_count + 1))
+				;;
 		esac
 		shift
 	done
 }
 
-handle_passed_args_count() {
+
+handle_passed_args_count()
+{
 	local _required_args_string="'model'"
 	test "${_positionals_count}" -ge 1 || _PRINT_HELP=yes die "FATAL ERROR: Not enough positional arguments - we require exactly 1 (namely: $_required_args_string), but got only ${_positionals_count}." 1
 	test "${_positionals_count}" -le 1 || _PRINT_HELP=yes die "FATAL ERROR: There were spurious positional arguments --- we expect exactly 1 (namely: $_required_args_string), but got ${_positionals_count} (the last one was: '${_last_positional}')." 1
 }
 
-assign_positional_args() {
+
+assign_positional_args()
+{
 	local _positional_name _shift_for=$1
 	_positional_names="_arg_model "
 
 	shift "$_shift_for"
-	for _positional_name in ${_positional_names}; do
+	for _positional_name in ${_positional_names}
+	do
 		test $# -gt 0 || break
 		eval "$_positional_name=\${1}" || die "Error during argument parsing, possibly an Argbash bug." 1
 		shift
@@ -92,15 +134,19 @@ prompt_file="remote/tests/prompt.fasta"
 
 export HF_HOME="remote/cache/huggingface"
 
+if [[ -z "${_arg_output}" ]]; then
+    _arg_output="${_arg_model}.fasta"
+fi
+
 if [[ "${_arg_model}" == "genome_ocean" ]]; then
-	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=10G \
+	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=20G \
 		singularity run \
 		--nv \
 		--cleanenv \
-		--env CUDA_VISIBLE_DEVICES=0 \
+		--env CUDA_VISIBLE_DEVICES=0 HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/genome_ocean.sif" \
-		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 1024 --min_seq_len 512 --no-prepend_prompt_to_output
+		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 1500 --min_seq_len 512 --no-prepend_prompt_to_output --num "${_arg_num}" --model_name Genome-ocean4B --output "${_arg_output}"
 	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
 	# 	singularity exec --nv "${image_dir}/genome_ocean.sif" echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES" && echo "CFLAGS: $CFLAGS" && echo "CPATH: $CPATH" && echo "NVIDIA_VISIBLE_DEVICES: $NVIDIA_VISIBLE_DEVICES"
 	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
@@ -116,7 +162,7 @@ elif [[ "${_arg_model}" == "evo_design" ]]; then
         --env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo_design.sif" \
-		python scripts/evo_design.py --prompt "${prompt_file}" --output evo_test.fasta --device cuda:0 --num 3 --seq_len 512 --model_name evo-1-8k-base
+		python scripts/evo_design.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num "${_arg_num}" --seq_len 1500 --model_name evo-1-8k-base
 elif [[ "${_arg_model}" == "evo2" ]]; then
 	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=20G \
 		singularity exec \
@@ -124,7 +170,7 @@ elif [[ "${_arg_model}" == "evo2" ]]; then
         --env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo.sif" \
-		python scripts/evo2_gen.py --prompt "${prompt_file}" --output evo2.fasta --device cuda:0 --num 3 --seq_len 512 --model_name evo2_7b --no-prepend_prompt_to_output
+		python scripts/evo2_gen.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num 3 --seq_len 1500 --model_name evo2_7b --no-prepend_prompt_to_output --num "${_arg_num}"
 fi
 
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^

@@ -1,0 +1,4 @@
+genome_ocean --num 10 --output timing/genome_ocean10.fasta
+genome_ocean --num 100 --output timing/genome_ocean100.fasta
+genome_ocean --num 1000 --output timing/genome_ocean1000.fasta
+genome_ocean --num 10000 --output timing/genome_ocean10000.fasta
