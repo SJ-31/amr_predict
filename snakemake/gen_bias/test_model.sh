@@ -143,10 +143,11 @@ if [[ "${_arg_model}" == "genome_ocean" ]]; then
 		singularity run \
 		--nv \
 		--cleanenv \
-		--env CUDA_VISIBLE_DEVICES=0 HF_HOME="remote/cache/huggingface" \
+		--env CUDA_VISIBLE_DEVICES=0 \
+        --env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/genome_ocean.sif" \
-		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 1500 --min_seq_len 512 --no-prepend_prompt_to_output --num "${_arg_num}" --model_name Genome-ocean4B --output "${_arg_output}"
+		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 1500 --min_seq_len 512 --no-prepend_prompt_to_output --num "${_arg_num}" --model_name Genome-ocean100M --output "${_arg_output}"
 	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
 	# 	singularity exec --nv "${image_dir}/genome_ocean.sif" echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES" && echo "CFLAGS: $CFLAGS" && echo "CPATH: $CPATH" && echo "NVIDIA_VISIBLE_DEVICES: $NVIDIA_VISIBLE_DEVICES"
 	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \

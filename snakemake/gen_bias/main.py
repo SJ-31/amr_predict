@@ -53,6 +53,11 @@ def get_props(
     return df
 
 
+def repetition_score(seq: str) -> dict:
+    """ """
+    pass
+
+
 # * Rules
 
 
@@ -66,6 +71,10 @@ def translate_fasta() -> None:
         f.write("\n".join(gen))
 
 
+def get_repetition_score() -> None:
+    pass
+
+
 def describe_protein_seqs() -> None:
     """
     Compute the generated sequences' average distance from their prompt
@@ -76,7 +85,6 @@ def describe_protein_seqs() -> None:
     from scipy.spatial.distance import cdist
 
     prompt: SeqRecord = SeqIO.read(INPUT["prompt_full"], "fasta")
-    # Enable direct comparison by removing sequence used as prompt from original sequence
     ids, peps = [prompt.id], [Peptide(str(prompt.seq))]
 
     for seq in SeqIO.parse(INPUT["generated"], "fasta"):
@@ -107,7 +115,7 @@ def fmt_prompts():
     prompt_full = data["file_full"]
 
     if data["file"]:
-        prompt_seq = str(SeqIO.read(prompt_full, "fasta").seq)
+        prompt_seq = str(SeqIO.read(data["file"], "fasta").seq)
     else:
         prompt_seq = data["seq"]
     with open(OUTPUT["prompt"], "w") as f:
@@ -115,6 +123,9 @@ def fmt_prompts():
 
     full_seq = SeqIO.read(prompt_full, "fasta")
     trimmed = SeqRecord(Seq(str(full_seq.seq).removeprefix(prompt_seq)))
+    assert str(trimmed.seq) != str(full_seq.seq), (
+        "ERROR: could not trim full sequence. Ensure prompt is 100% derived from full sequence"
+    )
 
     for seq, suffix in zip((full_seq, trimmed), ("", "_trimmed")):
         translated = translate(seq).sequence

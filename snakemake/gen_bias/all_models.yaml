@@ -36,7 +36,7 @@ models:
       resources: "gpu40g"
       kws:
         temperature: ?temp.item()
-        model: 4B
+        model: GenomeOcean-4B
         top_p: 0.9
         top_k: 4
         min_seq_len: 512
