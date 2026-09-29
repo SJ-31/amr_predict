@@ -130,7 +130,8 @@ assign_positional_args 1 "${_positionals[@]}"
 # vvv  PLACE YOUR CODE HERE  vvv
 
 image_dir="../../data/remote/images/"
-prompt_file="remote/tests/prompt.fasta"
+prompt_file="remote/tests/gen_bias/.prompts/test1.fasta"
+# prompt_file="remote/tests/prompt.fasta"
 
 export HF_HOME="remote/cache/huggingface"
 
@@ -147,7 +148,7 @@ if [[ "${_arg_model}" == "genome_ocean" ]]; then
         --env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/genome_ocean.sif" \
-		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 1500 --min_seq_len 512 --no-prepend_prompt_to_output --num "${_arg_num}" --model_name Genome-ocean100M --output "${_arg_output}"
+		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 500 --no-prepend_prompt_to_output --num "${_arg_num}" --model_name GenomeOcean-100M --output "${_arg_output}"
 	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
 	# 	singularity exec --nv "${image_dir}/genome_ocean.sif" echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES" && echo "CFLAGS: $CFLAGS" && echo "CPATH: $CPATH" && echo "NVIDIA_VISIBLE_DEVICES: $NVIDIA_VISIBLE_DEVICES"
 	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \

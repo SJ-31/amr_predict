@@ -120,7 +120,7 @@ def parse_args() -> dict:
 
     args: dict = vars(parser.parse_args())
     if not args["min_seq_len"]:
-        args["min_seq_len"] = args["seq_len"] - 10
+        args["min_seq_len"] = 10
     model_name = f"pGenomeOcean/{args['model_name']}"
     if not args.get("model_dir"):
         args["model_dir"] = model_name

@@ -90,6 +90,8 @@ snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
           --executor "${SMK_EXECUTOR}"
 '''
 
+# * Generation bias
+
 [tasks.apptainer_build_gen]
 env = { APPTAINER_TMPDIR = "/home/shannc/.cache/apptainer_builds" }
 dir = "./snakemake/gen_bias"
@@ -114,37 +116,20 @@ build_if_not_exists ntv3
 build_if_not_exists genome_ocean
 '''
 
+[tasks.gen_test]
+dir = "./snakemake/gen_bias"
+run = '''
+snakemake --use-singularity \
+	--singularity-args "--nv --bind ../../src:/py_lib --bind /data/project:/data/project --cleanenv" \
+	--configfile test_env.yaml --profile profiles/test/config.yaml \
+	"$@"
+'''
+
 
 [tasks.apptainer_build]
 env = { APPTAINER_TMPDIR = "/home/shannc/Bio_SDD/build" }
 run = '''
 apptainer build image_new.sif build_editable.def
-'''
-
-# * Running scripts
-[tasks.update_go_candidates]
-dir = "./scripts"
-run = '''
-python finalize_labels.py -u
-'''
-
-[tasks.label_go]
-dir = "./scripts"
-usage = '''
-flag "--prev" help="Read from previous output file" default="false"
-'''
-run = '''
-if [[ "${usage_prev}" == "true" ]]; then
-   python finalize_labels.py -l -r
-else
-   python finalize_labels.py -l
-fi
-'''
-
-[tasks.go_category_counts]
-dir = "./scripts"
-run = '''
-python finalize_labels.py -g
 '''
 
 # * Nextflow runs
