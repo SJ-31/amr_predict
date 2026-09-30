@@ -1,0 +1,4 @@
+evo2 --num 10 --output timing/evo210.fasta
+evo2 --num 100 --output timing/evo2100.fasta
+evo2 --num 1000 --output timing/evo21000.fasta
+evo2 --num 10000 --output timing/evo210000.fasta

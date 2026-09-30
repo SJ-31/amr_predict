@@ -1,0 +1,4 @@
+evo_design --num 10 --output timing/evo_design10.fasta
+evo_design --num 100 --output timing/evo_design100.fasta
+evo_design --num 1000 --output timing/evo_design1000.fasta
+evo_design --num 10000 --output timing/evo_design10000.fasta
