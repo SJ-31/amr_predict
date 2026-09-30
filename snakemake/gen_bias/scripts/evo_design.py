@@ -2,6 +2,7 @@
 # Adapted from scripts/generate.py at https://github.com/evo-design/evo
 import argparse
 import random
+from csv import DictWriter
 from pathlib import Path
 
 import numpy as np
@@ -62,6 +63,13 @@ def parse_args() -> dict:
         help="Use KV caching during generation",
     )
     parser.add_argument(
+        "--batch_size",
+        default=15,
+        help="Number of sequences to generate in each call, to reduce memory consumption",
+        action="store",
+        type=int,
+    )
+    parser.add_argument(
         "--batched", type=bool, default=True, help="Use batched generation"
     )
     parser.add_argument(
@@ -80,9 +88,20 @@ def parse_args() -> dict:
     parser.add_argument(
         "-o", "--output", required=True, help="Output file", action="store"
     )
+    parser.add_argument(
+        "--output_scores", default=None, help="CSV file to store scores", action="store"
+    )
 
     args = vars(parser.parse_args())
     return args
+
+
+def create_batches(num: int, batch_size: int) -> list[int]:
+    n_batches = num // batch_size
+    remainder = num % batch_size
+    if remainder != 0:
+        return ([batch_size] * n_batches) + [remainder]
+    return [batch_size] * n_batches
 
 
 def main(args: dict):
@@ -100,26 +119,40 @@ def main(args: dict):
     else:
         prompt = args["prompt"]
 
-    output_seqs, output_scores = generate(
-        [prompt] * args["num"],
-        model,
-        tokenizer,
-        n_tokens=args["seq_len"],
-        temperature=args["temperature"],
-        top_k=args["top_k"],
-        top_p=args["top_p"],
-        cached_generation=args["cached_generation"],
-        batched=args["batched"],
-        prepend_bos=args["prepend_bos"],
-        device=args["device"],
-        verbose=args["verbose"],
-    )
+    kws = {
+        "n_tokens": args["seq_len"],
+        "temperature": args["temperature"],
+        "top_k": args["top_k"],
+        "top_p": args["top_p"],
+        "cached_generation": args["cached_generation"],
+        "batched": args["batched"],
+        "prepend_bos": args["prepend_bos"],
+        "device": args["device"],
+        "verbose": args["verbose"],
+    }
+    output_seqs, output_scores = [], []
+    if not args["batch_size"]:
+        output_seqs, output_scores = generate(
+            [prompt] * args["num"], model, tokenizer, **kws
+        )
+    else:
+        output_seqs, output_scores = [], []
+        for batch in create_batches(args["num"], args["batch_size"]):
+            cur_seqs, cur_scores = generate([prompt] * batch, model, tokenizer, **kws)
+            output_seqs.extend(cur_seqs)
+            output_scores.extend(cur_scores)
     if args["prepend_prompt_to_output"]:
         print("Prepending prompt...")
         output_seqs = [prompt + s for s in output_seqs if not s.startswith(prompt)]
     as_fasta = [f">{args['prefix']}{i}\n{s}" for i, s in enumerate(output_seqs)]
     with open(args["output"], "w") as f:
         f.write("\n".join(as_fasta))
+    if args["output_scores"]:
+        with open(args["output_scores"], "w") as f:
+            writer = DictWriter(f, ["id", "score"])
+            writer.writeheader()
+            for i, score in enumerate(output_scores):
+                writer.writerow({"id": f"{args['prefix']}{i}", "score": score})
 
 
 if __name__ == "__main__":
