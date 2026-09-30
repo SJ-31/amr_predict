@@ -164,7 +164,7 @@ elif [[ "${_arg_model}" == "evo_design" ]]; then
         --env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo_design.sif" \
-		python scripts/evo_design.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num "${_arg_num}" --seq_len 1500 --model_name evo-1-8k-base
+		python scripts/evo_design.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num "${_arg_num}" --seq_len 1500 --model_name evo-1-8k-base --output_scores evo_scores.csv
 elif [[ "${_arg_model}" == "evo2" ]]; then
 	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=20G \
 		singularity exec \
@@ -172,7 +172,7 @@ elif [[ "${_arg_model}" == "evo2" ]]; then
         --env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo.sif" \
-		python scripts/evo2_gen.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num 3 --seq_len 1500 --model_name evo2_7b --no-prepend_prompt_to_output --num "${_arg_num}"
+		python scripts/evo2_gen.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num 3 --seq_len 1500 --model_name evo2_7b --no-prepend_prompt_to_output --num "${_arg_num}" --output_scores evo2_scores.csv
 fi
 
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^
