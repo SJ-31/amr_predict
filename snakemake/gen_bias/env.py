@@ -163,6 +163,7 @@ class SnakeEnv:
     taxdb: str
     tmp: Path = field(converter=Path)
     singularity: dict = field(factory=dict)
+    gen_batch_size: int = 15
     parasail: ParasailParams = field(factory=ParasailParams)
     prompts: list[str] = field(init=False, factory=list)
     prompt2data: dict[str, dict] = field(init=False, factory=dict)
@@ -207,26 +208,24 @@ class SnakeEnv:
         """Return a dictionary of all workflow outputs, as input to the top-level rule"""
         results = {"metrics": []}
         for d, ext in [
-            ("generated", "fasta"),
+            ("generated", ["fasta", "csv"]),
             ("motifs", "tsv"),
             ("taxonomy", "csv"),
             ("nuc_similarity", (("self", "to_prompt"), "csv")),
             ("aa_similarity", (("self", "to_prompt"), "csv")),
             ("protein_descriptors", (("means", "raw"), "csv")),
         ]:
-            if not isinstance(ext, tuple):
+            kws = {"m": self.models.keys(), "p": self.prompts}
+            if isinstance(ext, str):
+                results[d] = expand(f"{self.outdir}/{d}/{{m}}/{{p}}.{ext}", **kws)
+            elif isinstance(ext, list):
                 results[d] = expand(
-                    f"{self.outdir}/{d}/{{m}}/{{p}}.{ext}",
-                    m=self.models.keys(),
-                    p=self.prompts,
+                    f"{self.outdir}/{d}/{{m}}/{{p}}.{{e}}", e=ext, **kws
                 )
             else:
                 suffixes, ext = ext
                 results[d] = expand(
-                    f"{self.outdir}/{d}/{{m}}/{{p}}-{{t}}.{ext}",
-                    m=self.models.keys(),
-                    t=suffixes,
-                    p=self.prompts,
+                    f"{self.outdir}/{d}/{{m}}/{{p}}-{{t}}.{ext}", t=suffixes, **kws
                 )
         for m in ["prompt_comparison.csv", "physicochemical.csv"]:
             results["metrics"].append(f"{self.outdir}/{m}")
@@ -235,9 +234,9 @@ class SnakeEnv:
     @classmethod
     def new(cls, data: str | dict, with_yte: bool = True) -> SnakeEnv:
         if isinstance(data, str):
-            assert Path(data).exists() and data.endswith(".yaml"), (
-                "Must pass a yaml file"
-            )
+            assert Path(data).exists() and data.endswith(
+                ".yaml"
+            ), "Must pass a yaml file"
             with open(data, "r") as f:
                 data = process_yaml(f) if with_yte else yaml.safe_load(f)
                 return cattrs.structure(data, SnakeEnv)

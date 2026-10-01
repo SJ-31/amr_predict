@@ -65,13 +65,16 @@ rule fmt_prompts:
 rule generate:
     output:
         f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
+        f"{OUTDIR}/generated/{{model}}/{{prompt}}.csv",
     input:
         f"{PROMPTS}/{{prompt}}.fasta",
     params:
         script=lambda wc: ENV.model_script(wc["model"]),
         kws=lambda wc: ENV.model_kws(wc["model"]),
         n=lambda wc: ENV.prompt2data[wc["prompt"]].get("n", ENV.n) or ENV.n,
+        batch_size=ENV.gen_batch_size,
         length=lambda wc: ENV.prompt2data[wc["prompt"]]["gen_length"],
+        rng=ENV.rng,
         hf=ENV.huggingface,
         cvd=CUDA_VISIBLE_DEVICES,
     resources:
@@ -84,12 +87,14 @@ rule generate:
         export CUDA_VISIBLE_DEVICES={params.cvd}
         python {params.script} {params.kws} \
                 --prompt {input[0]} \
+                --batch_size {params.batch_size} \
                 --output {output[0]} \
                 --prefix "{wildcards.model}|" \
                 --seq_len {params.length} \
                 --seed {params.rng} \
                 --no-prepend_prompt_to_output \
-                --num {params.n}
+                --num {params.n} \
+                --output_scores {output[1]}
         """
 
 
