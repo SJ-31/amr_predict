@@ -137,6 +137,8 @@ def main(args: dict):
         )
     else:
         output_seqs, output_scores = [], []
+        # Scores are the average log probability of the generated
+        # sequence, obtained by softmaxing the logits
         for batch in create_batches(args["num"], args["batch_size"]):
             cur_seqs, cur_scores = generate([prompt] * batch, model, tokenizer, **kws)
             output_seqs.extend(cur_seqs)

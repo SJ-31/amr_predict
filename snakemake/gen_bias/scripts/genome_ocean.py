@@ -4,10 +4,15 @@
 import argparse
 import os
 import random
+from csv import DictWriter
+from pathlib import Path
 
 import numpy as np
 import torch
+from Bio import SeqIO
 from genomeocean.generation import SequenceGenerator
+from transformers import PreTrainedTokenizerFast
+from vllm import LLM, SamplingParams
 
 if "VLLM_USE_V1" in os.environ:
     del os.environ["VLLM_USE_V1"]
@@ -117,6 +122,16 @@ def parse_args() -> dict:
         default="conservative",
         help="Preset configuration for generation parameters.",
     )
+    parser.add_argument(
+        "--batch_size",
+        default=15,
+        help="Number of sequences to generate in each call, to reduce memory consumption",
+        action="store",
+        type=int,
+    )
+    parser.add_argument(
+        "--output_scores", default=None, help="CSV file to store scores", action="store"
+    )
 
     args: dict = vars(parser.parse_args())
     if not args["min_seq_len"]:
@@ -128,34 +143,145 @@ def parse_args() -> dict:
     return args
 
 
+def create_batches(num: int, batch_size: int) -> list[int]:
+    n_batches = num // batch_size
+    remainder = num % batch_size
+    if remainder != 0:
+        return ([batch_size] * n_batches) + [remainder]
+    return [batch_size] * n_batches
+
+
+def generate(seq_gen, num: int | None = None) -> tuple[list[str], list[float]]:
+    """
+    Custom generation method that records scores
+
+    Modified from https://github.com/jgi-genomeocean/genomeocean/genomeocean/llm_utils.py
+    """
+    prompts = seq_gen._load_prompts()
+    llm_utils = seq_gen.llm
+
+    if llm_utils._vllm_engine is None:
+        if llm_utils._model is not None:
+            print("Unloading Transformers model to load vLLM engine...")
+            del llm_utils._model
+            llm_utils._model = None
+            import gc
+
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        llm_utils._vllm_engine = LLM(
+            model=llm_utils.model_dir,
+            trust_remote_code=False,
+            seed=seq_gen.seed,
+            dtype=torch.bfloat16,
+            max_model_len=llm_utils.model_max_length,
+            gpu_memory_utilization=llm_utils.gpu_memory_utilization,
+            enforce_eager=True,
+            tensor_parallel_size=llm_utils.gpus,
+            skip_tokenizer_init=True,
+        )
+    llm_utils._vllm_tokenizer = PreTrainedTokenizerFast.from_pretrained(
+        llm_utils.model_dir
+    )
+
+    llm = llm_utils._vllm_engine
+    tokenizer = llm_utils._vllm_tokenizer
+    prompts = ["[CLS]" + p for p in prompts]
+
+    prompt_inputs = [
+        {"prompt_token_ids": tokenizer.encode(p, add_special_tokens=False)}
+        for p in prompts
+    ]
+
+    sampling_params = SamplingParams(
+        n=num or seq_gen.num,
+        temperature=seq_gen.temperature,
+        top_k=seq_gen.top_k,
+        top_p=seq_gen.top_p,
+        stop_token_ids=[2],
+        max_tokens=seq_gen.max_seq_len,
+        min_tokens=seq_gen.min_seq_len,
+        detokenize=False,
+        presence_penalty=seq_gen.presence_penalty,
+        frequency_penalty=seq_gen.frequency_penalty,
+        logprobs=1,  # [2026-10-01 Thu] apparently the max is 20
+        # Only keeps the highest twenty token probabilities
+        repetition_penalty=seq_gen.repetition_penalty,
+        logit_bias={8: float("-inf")},
+        # Block token 8 ('N'); replaces V0 allowed_token_ids
+    )
+
+    # Generate sequences using prompt_token_ids
+    generated_sequences, scores = [], []
+    all_outputs = llm.generate(
+        prompts=prompt_inputs,
+        sampling_params=sampling_params,
+    )
+
+    for outputs in all_outputs:
+        for output in outputs.outputs:
+            text = (
+                tokenizer.decode(output.token_ids, skip_special_tokens=True)
+                .replace(" ", "")
+                .replace("\n", "")
+            )
+            generated_sequences.append(text)
+            lp = np.mean(
+                [max([p.logprob for p in prob.values()]) for prob in output.logprobs]
+            )
+            scores.append(lp)
+
+    print(f"Generated {len(generated_sequences)} sequences")
+
+    return generated_sequences, scores
+
+
 def main(args: dict):
     # Initialize the SequenceGenerator with the provided arguments
     random.seed(args["seed"])
     torch.manual_seed(args["seed"])
     np.random.seed(args["seed"])
-    seq_gen = SequenceGenerator(
-        model_dir=args["model_dir"],
-        promptfile=args["prompt"],
-        num=args["num"],
-        min_seq_len=args["min_seq_len"],
-        max_seq_len=args["seq_len"],
-        temperature=args["temperature"],
-        top_k=args["top_k"],
-        top_p=args["top_p"],
-        presence_penalty=args["presence_penalty"],
-        frequency_penalty=args["frequency_penalty"],
-        repetition_penalty=args["repetition_penalty"],
-        seed=args["seed"],
-    )
-    all_generated = seq_gen.generate_sequences(
-        prepend_prompt_to_output=args["prepend_prompt_to_output"],
-        max_repeats=args["max_repeats"],
-    )
+    kws = {
+        "model_dir": args["model_dir"],
+        "promptfile": args["prompt"],
+        "min_seq_len": args["min_seq_len"],
+        "max_seq_len": args["seq_len"],
+        "temperature": args["temperature"],
+        "top_k": args["top_k"],
+        "top_p": args["top_p"],
+        "presence_penalty": args["presence_penalty"],
+        "frequency_penalty": args["frequency_penalty"],
+        "repetition_penalty": args["repetition_penalty"],
+        "seed": args["seed"],
+    }
+    seq_gen = SequenceGenerator(num=args["num"], **kws)
+    if not args["batch_size"]:
+        output_seqs, output_scores = generate(seq_gen)
+    else:
+        output_seqs, output_scores = [], []
+        for batch in create_batches(args["num"], args["batch_size"]):
+            cur_seqs, cur_scores = generate(seq_gen, batch)
+            output_seqs.extend(cur_seqs)
+            output_scores.extend(cur_scores)
+
+    if Path(args["prompt"]).exists():
+        prompt = str(SeqIO.read(args["prompt"], "fasta").seq)
+    else:
+        prompt = args["prompt"]
+    if args["prepend_prompt_to_output"]:
+        print("Prepending prompt...")
+        output_seqs = [prompt + s for s in output_seqs if not s.startswith(prompt)]
+
     with open(args["output"], "w") as f:
-        to_write = [
-            f">{args['prefix']}{i}\n{row['seq']}" for i, row in all_generated.iterrows()
-        ]
+        to_write = [f">{args['prefix']}{i}\n{seq}" for i, seq in enumerate(output_seqs)]
         f.write("\n".join(to_write))
+    if args["output_scores"]:
+        with open(args["output_scores"], "w") as f:
+            writer = DictWriter(f, ["id", "score"])
+            writer.writeheader()
+            for i, score in enumerate(output_scores):
+                writer.writerow({"id": f"{args['prefix']}{i}", "score": score})
 
 
 if __name__ == "__main__":

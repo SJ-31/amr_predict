@@ -141,6 +141,8 @@ def main(args: dict):
             cur_seqs = cur_out
             cur_seqs = cur_out.sequences
             cur_scores = cur_out.logprobs_mean
+            # Scores are the average log probability of the generated
+            # sequence, obtained by softmaxing the logits
             output_seqs.extend(cur_seqs)
             output_scores.extend(cur_scores)
 
