@@ -159,7 +159,7 @@ if [[ ! -e ${dir} ]]; then
    rm -Rf ncbi_dataset.zip
 fi
 
-tree="${outdir}/${usage_name}.nwck"
+tree="${outdir}/${usage_name}.nwk"
 aligned="${outdir}/${usage_name}_aligned.fasta"
 if [[ ! -e "${outdir}" ]]; then
    echo "Directory not mounted!"
