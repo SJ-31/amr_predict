@@ -113,6 +113,10 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
             nullable=True,
             checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
         ),
+        # "tree_file": pa.Column(
+        #     str,
+        #     checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
+        # ),
         # "conservation": pa.Column(), # TODO: not sure how to do this yet
     },
     checks=pa.Check(cols_not_all_null, a="file", b="seq"),
@@ -242,7 +246,6 @@ class SnakeEnv:
             with open(data, "r") as f:
                 data = process_yaml(f) if with_yte else yaml.safe_load(f)
                 return cattrs.structure(data, SnakeEnv)
-        print(data)
         return cattrs.structure(data, SnakeEnv)
 
     def to_dict(self) -> dict:

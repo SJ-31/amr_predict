@@ -26,7 +26,7 @@ OUTPUTS = ENV.get_outputs()
 PROMPTS = OUTDIR / ".prompts"
 INDICES = OUTDIR / ".indices"
 PROMPTS_FULL = OUTDIR / ".prompts_full"
-
+P2D = ENV.prompt2data
 os.environ["HF_HOME"] = ENV.huggingface
 
 CUDA_VISIBLE_DEVICES = os.environ.get("CUDA_VISIBLE_DEVICES", 0)
@@ -57,7 +57,7 @@ rule fmt_prompts:
         # upstream component used for the prompt
         # for aa, trimming occurs prior to translation
     params:
-        prompt2data=ENV.prompt2data,
+        prompt2data=P2D,
     script:
         "main.py"
 
@@ -71,9 +71,9 @@ rule generate:
     params:
         script=lambda wc: ENV.model_script(wc["model"]),
         kws=lambda wc: ENV.model_kws(wc["model"]),
-        n=lambda wc: ENV.prompt2data[wc["prompt"]].get("n", ENV.n) or ENV.n,
+        n=lambda wc: P2D[wc["prompt"]].get("n", ENV.n) or ENV.n,
         batch_size=ENV.gen_batch_size,
-        length=lambda wc: ENV.prompt2data[wc["prompt"]]["gen_length"],
+        length=lambda wc: P2D[wc["prompt"]]["gen_length"],
         rng=ENV.rng,
         hf=ENV.huggingface,
         cvd=CUDA_VISIBLE_DEVICES,
@@ -210,6 +210,26 @@ rule sort_taxonomy_hits:
             .explode(pl.all().exclude("query"))
         )
         df.write_csv(output[0])
+
+
+# TODO: merge the taxonomic queries
+
+
+rule evolutionary_distance:
+    input:
+        generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
+        prompt_full=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
+        prompt=f"{PROMPTS}/{{prompt}}.fasta",
+    params:
+        tree=lambda wc: P2D[wc["prompt"]]["tree_file"],
+        msa=lambda wc: P2D[wc["prompt"]]["msa"],
+    output:
+        f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}.csv",
+    shell:
+        """
+        epa-ng -s {params.msa} -t {params.tree} \
+            -q {prompt}
+        """
 
 
 # * Sequence similarity
