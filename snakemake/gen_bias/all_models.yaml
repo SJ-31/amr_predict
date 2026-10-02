@@ -17,7 +17,7 @@ models:
       script: scripts/evo_design.py
       resources: "gpu40g"
       kws:
-        temperature: ?temp.item()
+        temperature: ?str(temp.item())
         top_k: 4
         top_p: 0.9
         device: "cuda:0"
@@ -26,7 +26,7 @@ models:
       script: scripts/evo2_gen.py
       resources: "gpu40g"
       kws:
-        temperature: ?temp.item()
+        temperature: ?str(temp.item())
         top_p: 0.9
         top_k: 4
         device: "cuda:0"
@@ -35,8 +35,8 @@ models:
       script: scripts/genome_ocean.py
       resources: "gpu40g"
       kws:
-        temperature: ?temp.item()
-        model: GenomeOcean-4B
+        temperature: ?str(temp.item())
+        model_name: GenomeOcean-4B
         top_p: 0.9
         top_k: 4
         min_seq_len: 512
