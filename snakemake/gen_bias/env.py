@@ -155,7 +155,9 @@ class SnakeEnv:
     n: int
     fimo: FindMotifs
     meta: pl.DataFrame = field(
-        converter=lambda x: pl.read_csv(x, null_values="NA")
+        converter=lambda x: pl.read_csv(
+            x, null_values="NA", schema_overrides={"n": pl.Int64}
+        )
         if not isinstance(x, pl.DataFrame)
         else x
     )
@@ -240,6 +242,7 @@ class SnakeEnv:
             with open(data, "r") as f:
                 data = process_yaml(f) if with_yte else yaml.safe_load(f)
                 return cattrs.structure(data, SnakeEnv)
+        print(data)
         return cattrs.structure(data, SnakeEnv)
 
     def to_dict(self) -> dict:
@@ -253,6 +256,18 @@ def test_env() -> SnakeEnv:
     with open(wd / "env.yaml", "r") as f:
         data = process_yaml(f)
     with open(wd / "test_env.yaml", "r") as f:
+        data.update(process_yaml(f))
+    print(data)
+    return SnakeEnv.new(data)
+
+
+def test_full() -> SnakeEnv:
+    from pyhere import here
+
+    wd = here("snakemake", "gen_bias")
+    with open(wd / "env.yaml", "r") as f:
+        data = process_yaml(f)
+    with open(wd / "all_models.yaml", "r") as f:
         data.update(process_yaml(f))
     print(data)
     return SnakeEnv.new(data)

@@ -134,7 +134,7 @@ if [[ "${_arg_model}" == "genome_ocean" ]]; then
 		--env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/genome_ocean.sif" \
-		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 500 --no-prepend_prompt_to_output --num "${_arg_num}" --model_name GenomeOcean-100M --output "${_arg_output}" --output_scores go_scores.csv
+		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 500 --no-prepend_prompt_to_output --num "${_arg_num}" --model_name GenomeOcean-4B --output "${_arg_output}" --output_scores go_scores.csv
 	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
 	# 	singularity exec --nv "${image_dir}/genome_ocean.sif" echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES" && echo "CFLAGS: $CFLAGS" && echo "CPATH: $CPATH" && echo "NVIDIA_VISIBLE_DEVICES: $NVIDIA_VISIBLE_DEVICES"
 	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
@@ -150,7 +150,7 @@ elif [[ "${_arg_model}" == "evo_design" ]]; then
 		--env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo_design.sif" \
-		python scripts/evo_design.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num "${_arg_num}" --seq_len 1500 --model_name evo-1-8k-base --output_scores evo_scores.csv
+		python scripts/evo_design.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num "${_arg_num}" --seq_len 1500 --model_name evo-1-8k-base --output_scores evo_scores.csv --model_name evo-1-131k-base
 elif [[ "${_arg_model}" == "evo2" ]]; then
 	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=64G \
 		singularity exec \

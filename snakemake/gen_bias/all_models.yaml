@@ -21,7 +21,7 @@ models:
         top_k: 4
         top_p: 0.9
         device: "cuda:0"
-        model_name: evo-1-8k-base
+        model_name: evo-1-131k-base
     ?f"evo2_t{i}":
       script: scripts/evo2_gen.py
       resources: "gpu40g"

@@ -9,8 +9,7 @@ __definitions__:
 n: 4
 meta: ?str(testdir / "data"/ "gen_prefixes.csv")
 outdir: ?f"{remote}/tests/gen_bias"
-
-taxdb: ?f"{remote}/blast/db_test/nt"
+taxdb: ?f"{remote}/mmseqs2/db_test/nt"
 
 resources:
   gpu40:
