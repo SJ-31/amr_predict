@@ -123,14 +123,18 @@ def fmt_prompts():
 
     full_seq = SeqIO.read(prompt_full, "fasta")
     trimmed = SeqRecord(Seq(str(full_seq.seq).removeprefix(prompt_seq)))
-    assert str(trimmed.seq) != str(full_seq.seq), (
-        "ERROR: could not trim full sequence. Ensure prompt is 100% derived from full sequence"
-    )
+    assert (
+        str(trimmed.seq) != str(full_seq.seq)
+    ), "ERROR: could not trim full sequence. Ensure prompt is 100% derived from full sequence"
 
     for seq, suffix in zip((full_seq, trimmed), ("", "_trimmed")):
         translated = translate(seq).sequence
-        Path(OUTPUT[f"full{suffix}"]).write_text(f">{header}-FULL\n{str(seq.seq)}")
-        Path(OUTPUT[f"aa{suffix}"]).write_text(f">{header}-FULL\n{translated}")
+        if suffix:
+            sf = suffix.replace("_", "-").upper()
+        else:
+            sf = "-FULL"
+        Path(OUTPUT[f"full{suffix}"]).write_text(f">{header}{sf}\n{str(seq.seq)}")
+        Path(OUTPUT[f"aa{suffix}"]).write_text(f">{header}{sf}\n{translated}")
 
 
 if rule_fn := globals().get(snakemake.rule):
