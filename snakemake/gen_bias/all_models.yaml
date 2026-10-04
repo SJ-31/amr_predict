@@ -11,6 +11,10 @@ singularity:
       ?f"evo2_t{i}": ?f"{remote}/images/evo.sif"
       ?f"genome_ocean_t{i}": ?f"{remote}/images/genome_ocean.sif"
 
+resource_mappings:
+  classify_taxonomy: big_mem
+  generate: gpu40
+
 models:
   ?for i, temp in enumerate(temp_range):
     ?f"evo_t{i}":

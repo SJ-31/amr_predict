@@ -172,6 +172,7 @@ class SnakeEnv:
     singularity: dict = field(factory=dict)
     gen_batch_size: int = 15
     parasail: ParasailParams = field(factory=ParasailParams)
+    resource_mappings: dict[str, str] = field(factory=dict)
     prompts: list[str] = field(init=False, factory=list)
     prompt2data: dict[str, dict] = field(init=False, factory=dict)
 
@@ -189,6 +190,11 @@ class SnakeEnv:
             self.prompt2data[prompt].get("motif_file", self.fimo.default)
             or self.fimo.default
         )
+
+    def get_resources(self, rule: str) -> dict:
+        if mapped := self.resource_mappings.get(rule):
+            return self.resources.get(mapped, {})
+        return {}
 
     def model_image(self, key: str) -> str | None:
         val = self.singularity.get("generate", {})

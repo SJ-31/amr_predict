@@ -78,7 +78,7 @@ rule generate:
         hf=ENV.huggingface,
         cvd=CUDA_VISIBLE_DEVICES,
     resources:
-        **ENV.resources["gpu40"],
+        **ENV.get_resources("generate"),
     singularity:
         lambda wc: ENV.model_image(wc["model"])
     shell:
@@ -165,6 +165,8 @@ rule classify_taxonomy:
     params:
         db=ENV.taxdb,
     threads: 4
+    resources:
+        **ENV.get_resources("classify_taxonomy"),
     singularity:
         ENV.singularity.get("classify_taxonomy")
     output:
