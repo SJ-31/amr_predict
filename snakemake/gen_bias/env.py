@@ -113,6 +113,7 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
             nullable=True,
             checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
         ),
+        "batch_size": pa.Column(int, nullable=True, checks=pa.Check.greater_than(0)),
         # "tree_file": pa.Column(
         #     str,
         #     checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
@@ -240,9 +241,9 @@ class SnakeEnv:
     @classmethod
     def new(cls, data: str | dict, with_yte: bool = True) -> SnakeEnv:
         if isinstance(data, str):
-            assert Path(data).exists() and data.endswith(
-                ".yaml"
-            ), "Must pass a yaml file"
+            assert Path(data).exists() and data.endswith(".yaml"), (
+                "Must pass a yaml file"
+            )
             with open(data, "r") as f:
                 data = process_yaml(f) if with_yte else yaml.safe_load(f)
                 return cattrs.structure(data, SnakeEnv)
