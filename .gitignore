@@ -15,6 +15,7 @@ snakemake/seq_analysis/logs*
 snakemake/lightning_logs
 
 # Other
+*.seqkit*
 *.egg-info*
 *.snakemake*
 *__pycache__
