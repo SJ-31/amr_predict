@@ -1,0 +1,37 @@
+g: Genome Language Model {shape: cylinder}
+s: Generated sequences
+
+pl: Phylogenetic placement \n\[EPA-NG\]
+cls: Taxonomic classification \n\[KRAKEN, mmseqs2\]
+sim: Pairwise sequence simliarity \n\[parasail aligner\]
+
+Inputs: {
+  tree: Prompt-specific phylogenetic tree
+  p: Prompt
+  og: Prompt (full sequence)
+  db: Taxonomy database
+  mdb: Motif database\nPossibly prompt-specific
+}
+
+trans: Translate to AA
+msearch: Motif finding\n\[MEME suite FIMO\]
+
+Inputs.p -> g -> s
+s -> sim
+Inputs.og -> sim
+s -> pl
+Inputs.tree -> pl
+s -> cls
+Inputs.db -> cls
+Inputs.og -> msearch
+s -> msearch
+Inputs.mdb -> msearch
+s -> trans
+Inputs.og -> trans
+
+cns: Compare results for generated sequences against one another to measure consistency\;\ncompare with full prompt to measure novelty {
+  label.near: outside-bottom-center
+  _.msearch -> Motif counts
+  _.trans -> "Protein properties\nHydrophobicity, isoelectric point, M.W. etc."
+  _.cls -> Taxonomic assignments
+}
