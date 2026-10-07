@@ -217,20 +217,25 @@ rule sort_taxonomy_hits:
 # TODO: merge the taxonomic queries
 
 
-rule evolutionary_distance:
+rule place_on_reference_tree:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
         prompt_full=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
         prompt=f"{PROMPTS}/{{prompt}}.fasta",
     params:
         tree=lambda wc: P2D[wc["prompt"]]["tree_file"],
+        se_model=lambda wc: P2D[wc["prompt"]]["se_model"],
         msa=lambda wc: P2D[wc["prompt"]]["msa"],
+        hmm=lambda wc: P2D[wc["prompt"]]["msa_hmm"],
     output:
-        f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}.csv",
+        directory(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}"),
+        temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}.fasta"),
     shell:
         """
+        mafft --add {input.generated} --keeplength {params.msa} | \
+                seqkit grep -f <(seqkit seq -n -i {params.msa}) -v > {output[1]}
         epa-ng -s {params.msa} -t {params.tree} \
-            -q {prompt}
+            -q {output[1]} -m {params.se_model} -w {output[0]}
         """
 
 
