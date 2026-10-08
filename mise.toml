@@ -150,7 +150,8 @@ if [[ ! -e "${outdir}" ]]; then
    exit
 fi
 dir="${outdir}/datasets/${usage_accession}"
-file="${dir}/data/rna.fna"
+file="${dir}/data/cds.fna"
+dedup="${dir}/data/renamed_cds_rmdup.fasta"
 if [[ ! -e ${dir} ]]; then
    datasets download gene accession ${usage_accession} --ortholog all
 
@@ -158,15 +159,31 @@ if [[ ! -e ${dir} ]]; then
    mv ncbi_dataset "${dir}" 
    rm -Rf ncbi_dataset.zip
 fi
-
+xan from -f jsonl "${dir}/data/data_report.jsonl" | xan select geneId,taxId > "${dir}/data/mapping.csv"
+seqkit seq -n "${file}" | \
+       xan rename header --no-headers | \
+       xan map "match(header, /GeneID=([0-9]+)/, 1) as geneId" | \
+       xan join geneId - "${dir}/data/mapping.csv" | \
+       xan select geneId,taxId | \
+       xan fmt -t "\t" | \
+       xan behead > "${dir}/data/rename.tsv"
+seqkit replace -p ".*GeneID=([0-9]+).*" -r "{kv}" -k "${dir}/data/rename.tsv" "${file}" | \
+       seqkit rmdup > "${dedup}"
+ 
 tree="${outdir}/${usage_name}.nwk"
 aligned="${outdir}/${usage_name}_aligned.fasta"
+hmm="${outdir}/${usage_name}.hmm"
 if [[ ! -e "${outdir}" ]]; then
    echo "Directory not mounted!"
    exit
 fi
-srun --qos=cpu24h --mem=30G famsa "${file}" "${aligned}"
-srun --qos=cpu24h --mem=30G dipper_cpu -i m -I "${aligned}" -O "${tree}" 
+if [[ ! -e "${aligned}" ]]; then
+   srun --qos=cpu24h --mem=30G famsa "${dedup}" "${aligned}"
+fi
+
+mkdir -p "${outdir}/${usage_name}"
+# srun --qos=cpu24h --mem=30G VeryFastTree -nt -gtr -gamma "${aligned}" > "${tree}" 
+# srun --qos=cpu24h --mem=30G iqtree -s "${aligned}" -m MFP "${tree}" 
 '''
 
 [tasks.apptainer_build]

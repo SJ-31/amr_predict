@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
