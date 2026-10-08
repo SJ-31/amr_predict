@@ -72,7 +72,8 @@ rule generate:
         script=lambda wc: ENV.model_script(wc["model"]),
         kws=lambda wc: ENV.model_kws(wc["model"]),
         n=lambda wc: P2D[wc["prompt"]].get("n", ENV.n) or ENV.n,
-        batch_size=P2D[wc["prompt"]].get("batch_size", ENV.gen_batch_size),
+        batch_size=lambda wc: P2D[wc["prompt"]].get("batch_size", ENV.gen_batch_size)
+        or ENV.gen_batch_size,
         length=lambda wc: P2D[wc["prompt"]]["gen_length"],
         rng=ENV.rng,
         hf=ENV.huggingface,
