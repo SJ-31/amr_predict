@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,32 @@ def translate(seq: SeqRecord | Seq) -> Peptide:
         seq = seq + ("N" * add)
     translated = seq.translate(id=True, name=True, description=True)
     return Peptide(str(translated.seq))
+
+
+def get_nearest_dist(file: Path | str, prefix: str = "query_") -> pl.DataFrame:
+    """
+    For each generated sequence, return the distance to the nearest
+    entries in `dist_df` and their identities
+    """
+    import polars.selectors as cs
+
+    dist_df = pl.read_csv(file, separator="\t", skip_rows=1, has_header=False)
+    dist_df.columns = ["node"] + dist_df["column_1"].to_list()
+
+    no_queries = dist_df.filter(
+        ~pl.col("node").str.starts_with(prefix)
+    ).with_row_index()
+    min_idx: pl.DataFrame = no_queries.select(
+        cs.starts_with("query").arg_min()
+    ).transpose(include_header=True, header_name="query", column_names=["index"])
+    min_vals: pl.DataFrame = no_queries.select(cs.starts_with("query").min()).transpose(
+        include_header=True, header_name="query", column_names=["value"]
+    )
+    return (
+        min_idx.join(no_queries.select(["node", "index"]), on="index")
+        .join(min_vals, on="query")
+        .drop("index")
+    )
 
 
 def get_props(
@@ -135,6 +162,22 @@ def fmt_prompts():
             sf = "-FULL"
         Path(OUTPUT[f"full{suffix}"]).write_text(f">{header}{sf}\n{str(seq.seq)}")
         Path(OUTPUT[f"aa{suffix}"]).write_text(f">{header}{sf}\n{translated}")
+
+
+def extract_distances():
+    from Bio import Phylo
+
+    min_dist: pl.DataFrame = get_nearest_dist(
+        INPUT["dist"], prefix=PARAMS["query_prefix"]
+    ).rename({"node": "nearest", "value": "distance_to_nearest"})
+    tree = Phylo.read(INPUT["tree"], "newick")
+    assert tree.rooted, "Tree must be rooted"
+    min_dist = min_dist.with_columns(
+        pl.col("query")
+        .map_elements(lambda x: tree.distance(x), return_dtype=pl.Float64)
+        .alias("distance_to_root")
+    )
+    min_dist.write_csv(OUTPUT[0])
 
 
 if rule_fn := globals().get(snakemake.rule):

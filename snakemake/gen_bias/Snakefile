@@ -236,6 +236,7 @@ rule place_on_reference_tree:
         tree=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/labelled_tree.newick",
         grafted=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/epa_result.newick",
         hist=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/edpl_histogram.csv",
+        dist=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/distances.tsv",
         edpl=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/edpl_list.csv",
         query=temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}.fasta"),
         labels=temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}_labels.tsv"),
@@ -263,7 +264,20 @@ rule place_on_reference_tree:
                 --out-dir {output.d}
         gappa examine graft --jplace-path {output.epa} \
                 --out-dir {output.d}
+        gotree matrix -i {output.grafted} --metric brlen > {output.dist} 
         """
+
+
+rule extract_distances:
+    input:
+        tree=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/epa_result.newick",
+        query_stats=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/per_query.tsv",
+    params:
+        query_prefix=lambda wc: wc["model"],
+    output:
+        f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}.csv",
+    script:
+        "main.py"
 
 
 # * Sequence similarity
