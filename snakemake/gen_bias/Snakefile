@@ -227,16 +227,42 @@ rule place_on_reference_tree:
         tree=lambda wc: P2D[wc["prompt"]]["tree_file"],
         se_model=lambda wc: P2D[wc["prompt"]]["se_model"],
         msa=lambda wc: P2D[wc["prompt"]]["msa"],
-        hmm=lambda wc: P2D[wc["prompt"]]["msa_hmm"],
+        taxonkit_db=ENV.taxonkit_db,
     output:
-        directory(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}"),
-        temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}.fasta"),
+        d=directory(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}"),
+        profile=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/profile.tsv",
+        per_query=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/per_query.tsv",
+        epa=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/epa_result.jplace",
+        tree=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/labelled_tree.newick",
+        grafted=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/epa_result.newick",
+        hist=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/edpl_histogram.csv",
+        edpl=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/edpl_list.csv",
+        query=temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}.fasta"),
+        labels=temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}_labels.tsv"),
     shell:
         """
+        export TAXONKIT_DB='{params.taxonkit_db}'
+
+        is_rooted=$(gotree stats -i {params.tree} | xan select rooted -d '\t' | xan behead)
+        if [[ ${is_rooted} == "unrooted" ]]; then
+           echo 'Error: tree must be rooted'
+        fi
+        
         mafft --add {input.generated} --keeplength {params.msa} | \
-                seqkit grep -f <(seqkit seq -n -i {params.msa}) -v > {output[1]}
+                seqkit grep -f <(seqkit seq -n -i {params.msa}) -v > {output.query}
         epa-ng -s {params.msa} -t {params.tree} \
-            -q {output[1]} -m {params.se_model} -w {output[0]}
+            -q {output.query} -m {params.se_model} -w {output.d}
+
+        gotree labels -i {params.tree} | taxonkit lineage > {output.labels}
+        gappa examine assign \
+                --jplace-path {output.epa} \
+                --taxon-file {output.labels} \
+                --per-query-results \
+                --out-dir {output.d}
+        gappa examine edpl --jplace-path {output.epa} \
+                --out-dir {output.d}
+        gappa examine graft --jplace-path {output.epa} \
+                --out-dir {output.d}
         """
 
 
