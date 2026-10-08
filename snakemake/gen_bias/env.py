@@ -168,7 +168,8 @@ class SnakeEnv:
         else x
     )
     outdir: Path = field(converter=Path)
-    taxdb: str
+    mmseqs_db: Path = field(converter=Path)
+    taxonkit_db: Path = field(converter=Path)
     tmp: Path = field(converter=Path)
     singularity: dict = field(factory=dict)
     gen_batch_size: int = 15
@@ -185,6 +186,12 @@ class SnakeEnv:
             self.tmp.mkdir()
         self.prompts.extend(self.meta["name"].to_list())
         self.prompt2data = self.meta.rows_by_key("name", unique=True, named=True)
+        assert self.mmseqs_db.exists(), "mmseqs2 database doesn't exist"
+        assert self.taxonkit_db.exists()
+        for file in ("names", "nodes", "delnodes", "merged"):
+            assert (
+                self.taxonkit_db / f"{file}.dmp"
+            ).exists(), f"Error: {file}.dmp is missing from taxonkit database"
 
     def get_motif_file(self, prompt: str) -> str:
         return (

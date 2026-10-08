@@ -164,7 +164,7 @@ rule classify_taxonomy:
         generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
         prompt_full=f"{PROMPTS_FULL}/{{prompt}}.fasta",
     params:
-        db=ENV.taxdb,
+        db=ENV.mmseqs_db,
     threads: 4
     resources:
         **ENV.get_resources("classify_taxonomy"),
