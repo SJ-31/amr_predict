@@ -227,6 +227,7 @@ rule place_on_reference_tree:
         tree=lambda wc: P2D[wc["prompt"]]["tree_file"],
         se_model=lambda wc: P2D[wc["prompt"]]["se_model"],
         msa=lambda wc: P2D[wc["prompt"]]["msa"],
+        tax_labels=lambda wc: P2D[wc["prompt"]]["tree_labels"],
         taxonkit_db=ENV.taxonkit_db,
     output:
         d=directory(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}"),
@@ -250,7 +251,7 @@ rule place_on_reference_tree:
         fi
         
         mafft --add {input.generated} --keeplength {params.msa} | \
-                seqkit grep -f <(seqkit seq -n -i {params.msa}) -v > {output.query}
+                seqkit grep -f <(seqkit seq -n {params.msa}) -v > {output.query}
         epa-ng -s {params.msa} -t {params.tree} \
             -q {output.query} -m {params.se_model} -w {output.d}
 
