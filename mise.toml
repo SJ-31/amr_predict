@@ -94,6 +94,10 @@ snakemake -s ${usage_file} --config {{vars.smk_test_args}} \
 
 # * Generation bias
 
+[tasks.gen_workflow]
+dir = "./snakemake/gen_bias"
+run = "d2 --theme 104 --layout elk --scale 4 workflow.d2 workflow.png"
+
 [tasks.apptainer_build_gen]
 env = { APPTAINER_TMPDIR = "/home/shannc/.cache/apptainer_builds" }
 dir = "./snakemake/gen_bias"

@@ -1,20 +1,19 @@
 g: Genome Language Model {shape: cylinder}
-s: Generated sequences
+s: Generated sequences {shape: oval}
 
-pl: Phylogenetic placement \n\[EPA-NG\]
-cls: Taxonomic classification \n\[KRAKEN, mmseqs2\]
-sim: Pairwise sequence simliarity \n\[parasail aligner\]
+pl: Phylogenetic placement \n\[EPA-NG\] {shape: diamond}
+cls: Taxonomic classification \n\[KRAKEN, mmseqs2\] {shape: diamond}
+sim: Pairwise sequence simliarity \n\[parasail aligner\] {shape: diamond}
+trans: Translate to AA {shape: diamond}
+msearch: Motif finding\n\[MEME suite FIMO\] {shape: diamond}
 
 Inputs: {
-  tree: Prompt-specific phylogenetic tree
-  p: Prompt
-  og: Prompt (full sequence)
-  db: Taxonomy database
-  mdb: Motif database\nPossibly prompt-specific
+  tree: Prompt-specific phylogenetic tree {shape: package}
+  p: Prompt {shape: package}
+  og: Prompt (full sequence) {shape: package}
+  db: Taxonomy database {shape: package}
+  mdb: Motif database\nPossibly prompt-specific {shape: package}
 }
-
-trans: Translate to AA
-msearch: Motif finding\n\[MEME suite FIMO\]
 
 Inputs.p -> g -> s
 s -> sim
@@ -34,4 +33,6 @@ cns: Compare results for generated sequences against one another to measure cons
   _.msearch -> Motif counts
   _.trans -> "Protein properties\nHydrophobicity, isoelectric point, M.W. etc."
   _.cls -> Taxonomic assignments
+  _.pl -> "Evolutionary novelty measures"
+  _.sim -> "Similarity scores"
 }
