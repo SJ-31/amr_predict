@@ -29,7 +29,10 @@ def validate_cfg(file: Path) -> None:
 
 
 class Pipeline:
-    def __init__(self, workdir: Path, prefix: str, molecule: str, cfg: dict) -> None:
+    def __init__(
+        self, workdir: Path, prefix: str, molecule: str, threshold: int, cfg: dict
+    ) -> None:
+        self.threshold: int = threshold
         self.workdir: Path = workdir
         self.prefix: str = prefix
         self.molecule: str = molecule
@@ -46,14 +49,32 @@ class Pipeline:
             command_dct = overrides
         return " ".join({f"--{k} {v}" for k, v in command_dct.items()})
 
-    def filter_fragments(self, file: Path) -> tuple[Path, Path]:
+    def filter_fragments(self, fasta: Path) -> tuple[Path, Path]:
         """
         Returns
         -------
         Tuple of paths to [full sequence, fragment] FASTA files
         """
-        assert file.exists(), "FASTA file doesn't exist"
-        pass
+        assert fasta.exists(), "FASTA file doesn't exist"
+        fragments = self.workdir / "fragments.fasta"
+        full = self.workdir / "full.fasta"
+        proc = sp.run(f"seqkit seq -M {self.threshold} -o {fragments} {fasta}")
+        proc.check_returncode()
+        if os.path.getsize(fragments) == 0:
+            raise ValueError(
+                "No fragments found in input FASTA file. Try increasing the threshold"
+            )
+        if len_max := self.cfg.get("maximum"):
+            command = f"seqkit seq -m {self.threshold} {fasta} | seqkit seq -M {len_max} -o {full}"
+        else:
+            command = f"seqkit seq -m {self.threshold} {fasta} -o {full}"
+        proc = sp.run(command, shell=True)
+        proc.check_returncode()
+        if os.path.getsize(full) == 0:
+            raise ValueError(
+                "No full-length sequences found in input FASTA file. Try decreasing the threshold"
+            )
+        return full, fragments
 
     def align_backbone_msa(self, fasta: Path) -> Path:
         """
@@ -61,7 +82,7 @@ class Pipeline:
         -------
         Path to backbone MSA aligned with PASTA
         """
-        outdir = self.workdir / "pasta_bb_msa"
+        outdir = self.workdir / "1_pasta_bb_msa"
         outdir.mkdir()
         flags = self.get_flags(
             "pasta",
@@ -81,13 +102,13 @@ class Pipeline:
             raise ValueError("PASTA failed to produce alignment")
         return aln
 
-    def build_backbone_tree(self, msa: Path) -> tuple[Path, Path]:
+    def raxml_wrapper(self, msa: Path, key: str, dir) -> tuple[Path, Path]:
         """
         Returns
         -------
         Tuple of paths to [tree newick, raxml model]
         """
-        outdir = self.workdir / "raxml_bb_tree"
+        outdir = self.workdir / dir
         outdir.mkdir()
         defaults = {
             "prefix": outdir / "bb",
@@ -95,25 +116,45 @@ class Pipeline:
             "msa-format": "FASTA",
             "data-type": "AA" if self.molecule == "aa" else "dna",
         }
-        if "model" not in self.cfg["raxml"]:
+        if "model" not in self.cfg[key]:
             defaults["model"] = "GTR+G"
         flags = self.get_flags("raxml", defaults)
         proc = sp.run(f"raxml-ng {flags}", shell=True)
         self.ran_commands.append(f"raxml-ng {flags}")
         proc.check_returncode()
-        tree = outdir / "bb.raxml.bestTree"
-        model = outdir / "bb.raxml.bestModel"
+        tree, model = outdir / "bb.raxml.bestTree", outdir / "bb.raxml.bestModel"
         if os.path.getsize(tree) == 0:
             raise ValueError("raxml-ng failed to produce tree")
         if os.path.getsize(model) == 0:
             raise ValueError("raxml-ng failed to produce model file")
         return tree, model
 
-    def align_upp(self) -> Path:
-        pass
+    def build_backbone_tree(self, msa: Path) -> tuple[Path, Path]:
+        return self.raxml_wrapper(msa, "raxml_bb", dir="2_raxml_bb_tree")
 
-    def build_tree_final(self) -> Path:
-        pass
+    def align_upp(
+        self, model: Path, fragments_fasta: Path, aligned: Path, tree: Path
+    ) -> Path:
+        outdir = self.workdir / "3_upp_alignment"
+        defaults = {
+            "tree": tree,
+            "alignment": aligned,
+            "sequence_file": fragments_fasta,
+            "raxml": model,
+            "molecule": self.molecule,
+            "outdir": outdir,
+            "output": "output",
+        }
+        flags = self.get_flags("upp", defaults)
+        result: Path = outdir / "output_alignment.fasta"
+        proc = sp.run(f"run_upp.py {flags}", shell=True)
+        proc.check_returncode()
+        if os.path.getsize(result) == 0:
+            raise ValueError("UPP failed to produce alignment")
+        return result
+
+    def build_tree_final(self, msa: Path) -> tuple[Path, Path]:
+        return self.raxml_wrapper(msa, "raxml_final", "3_raxml_final_tree")
 
     def place_fragments(self) -> Path:
         pass
@@ -196,11 +237,13 @@ def main(args: dict):
     full, fragments = P.filter_fragments(args["input"])
     bb_msa = P.align_backbone_msa(full)
     bb_tree, raxml_pars = P.build_backbone_tree()
-    P.align_upp()
+    alignment = P.align_upp(
+        model=raxml_pars, fragments_fasta=fragments, aligned=bb_msa, tree=bb_tree
+    )
     if args["placement"]:
         P.place_fragments()
     else:
-        P.build_tree_final()
+        tree, _ = P.build_tree_final(alignment)
 
 
 if __name__ == "__main__":
