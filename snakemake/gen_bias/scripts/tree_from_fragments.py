@@ -30,17 +30,16 @@ def validate_cfg(file: Path) -> None:
 
 
 class Pipeline:
-    def __init__(
-        self, workdir: Path, prefix: str, molecule: str, threshold: int, cfg: dict
-    ) -> None:
-        self.threshold: int = threshold
-        self.workdir: Path = workdir
-        self.prefix: str = prefix
-        self.molecule: str = molecule
+    def __init__(self, cfg: dict) -> None:
+        self.threshold: int = cfg["threshold"]
+        self.workdir: Path = cfg["workdir"]
+        self.molecule: str = cfg["molecule"]
         self.cfg: dict = cfg
         self.ran_commands: list[str] = []
 
     def run_with_checks(self, command, *to_check: Path):
+        if all(f.exists() for f in to_check):
+            return
         proc = sp.run(command, shell=True)
         proc.check_returncode()
         for file in to_check:
@@ -195,23 +194,24 @@ def parse_args():
         help="TOML Configuration file for called programs",
         action="store",
     )
-    args = vars(parser.parse_args())
-    if cfg_file := args.get("config"):
-        cfg: dict = validate_cfg(cfg_file)
-    else:
+    try:
+        args = vars(parser.parse_known_args())
+        cfg: dict = validate_cfg(args["config"])
+    except TypeError:
         cfg = {}
     parser.add_argument(
         "-i",
         "--input",
         help="FASTA file containing sequences",
-        required="input" in cfg,
+        required="input" not in cfg,
+        type=Path,
     )
     parser.add_argument(
         "-t",
         "--threshold",
         help="Sequences below this number will be considered fragmentary",
         action="store",
-        required="threshold" in cfg,
+        required="threshold" not in cfg,
     )
     parser.add_argument(
         "-M",
@@ -256,7 +256,7 @@ def parse_args():
     parser.add_argument(
         "-w",
         "--workdir",
-        required="workdir" in cfg,
+        required="workdir" not in cfg,
         help="Working directory for storing intermediate files",
         action="store",
         type=Path,
@@ -268,9 +268,14 @@ def parse_args():
 
 def main(args: dict):
     P: Pipeline = Pipeline(args)
-    full, fragments = P.filter_fragments(args["input"])
+    input: Path = (
+        Path(args["input"]) if isinstance(args["input"], str) else args["input"]
+    )
+    if not args["prefix"]:
+        args["prefix"] = str(input.parent / Path(args["input"]).stem)
+    full, fragments = P.filter_fragments(input)
     bb_msa = P.align_backbone_msa(full)
-    bb_tree, raxml_pars = P.build_backbone_tree()
+    bb_tree, raxml_pars = P.build_backbone_tree(bb_msa)
 
     if args["realignment_program"] == "upp":
         aln, aln_for_placement = P.align_upp(
