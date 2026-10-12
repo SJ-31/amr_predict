@@ -3,20 +3,23 @@
 import argparse
 import os
 import subprocess as sp
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
+from typing import Literal
+
 
 """
 Python script implementing the pipelines described in
 
 Vladimir Smirnov, Tandy Warnow, Phylogeny Estimation Given Sequence Length Heterogeneity, Systematic Biology, Volume 70, Issue 2, March 2021, Pages 268–282, https://doi.org/10.1093/sysbio/syaa058
+
+NOTE: To install sepp==4.5.6 with pixi, run
+pixi global install --environment sepp sepp==4.5.6 --with mafft==7.526 --with pasta==1.9.3 -c bioconda -c conda-forge
 """
 
 DEPENDENCIES: dict[str, tuple] = {
     "required": ("seqkit", "run_pasta", "run_upp", "raxml-ng")
 }
-CONFIG_OVERRIDES: tuple[str] = ("threshold", "maximum", "input")
 
 
 def validate_cfg(file: Path) -> None:
@@ -38,13 +41,21 @@ class Pipeline:
         self.molecule: str = molecule
         self.cfg: dict = cfg
         self.ran_commands: list[str] = []
+        
+    def run_with_checks(self, command, *to_check: Path):
+        proc = sp.run(command, shell=True)
+        proc.check_returncode()
+        for file in to_check:
+            if os.path.getsize(file) == 0:
+                raise ValueError(f"Expected file `{file}` from command {command} is empty")
+        self.ran_commands.append(command)
 
     def get_flags(self, command: str, overrides: dict) -> str:
         if command in self.cfg:
             command_dct = self.cfg[command] | overrides
-            assert isinstance(
-                command_dct, dict
-            ), f"The provided configuration for {command} is not a dictionary"
+            assert isinstance(command_dct, dict), (
+                f"The provided configuration for {command} is not a dictionary"
+            )
         else:
             command_dct = overrides
         return " ".join({f"--{k} {v}" for k, v in command_dct.items()})
@@ -58,22 +69,12 @@ class Pipeline:
         assert fasta.exists(), "FASTA file doesn't exist"
         fragments = self.workdir / "fragments.fasta"
         full = self.workdir / "full.fasta"
-        proc = sp.run(f"seqkit seq -M {self.threshold} -o {fragments} {fasta}")
-        proc.check_returncode()
-        if os.path.getsize(fragments) == 0:
-            raise ValueError(
-                "No fragments found in input FASTA file. Try increasing the threshold"
-            )
+        self.run_with_checks(f"seqkit seq -M {self.threshold} -o {fragments} {fasta}", fragments)
         if len_max := self.cfg.get("maximum"):
             command = f"seqkit seq -m {self.threshold} {fasta} | seqkit seq -M {len_max} -o {full}"
         else:
             command = f"seqkit seq -m {self.threshold} {fasta} -o {full}"
-        proc = sp.run(command, shell=True)
-        proc.check_returncode()
-        if os.path.getsize(full) == 0:
-            raise ValueError(
-                "No full-length sequences found in input FASTA file. Try decreasing the threshold"
-            )
+        self.run_with_checks(command, full)
         return full, fragments
 
     def align_backbone_msa(self, fasta: Path) -> Path:
@@ -94,12 +95,8 @@ class Pipeline:
                 "alignment-suffix": "alignment.fasta",
             },
         )
-        proc = sp.run(f"run_pasta {flags}", shell=True)
-        self.ran_commands.append(f"run_pasta {flags}")
-        proc.check_returncode()
         aln = outdir / "pastajob.alignment.fasta"
-        if os.path.getsize(aln) == 0:
-            raise ValueError("PASTA failed to produce alignment")
+        self.run_with_checks(f"run_pasta {flags}", aln)
         return aln
 
     def raxml_wrapper(self, msa: Path, key: str, dir) -> tuple[Path, Path]:
@@ -119,14 +116,8 @@ class Pipeline:
         if "model" not in self.cfg[key]:
             defaults["model"] = "GTR+G"
         flags = self.get_flags("raxml", defaults)
-        proc = sp.run(f"raxml-ng {flags}", shell=True)
-        self.ran_commands.append(f"raxml-ng {flags}")
-        proc.check_returncode()
         tree, model = outdir / "bb.raxml.bestTree", outdir / "bb.raxml.bestModel"
-        if os.path.getsize(tree) == 0:
-            raise ValueError("raxml-ng failed to produce tree")
-        if os.path.getsize(model) == 0:
-            raise ValueError("raxml-ng failed to produce model file")
+        self.run_with_checks(f"raxml-ng {flags}", tree, model)
         return tree, model
 
     def build_backbone_tree(self, msa: Path) -> tuple[Path, Path]:
