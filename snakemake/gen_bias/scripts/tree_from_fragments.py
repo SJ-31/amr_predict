@@ -5,8 +5,6 @@ import os
 import subprocess as sp
 import tomllib
 from pathlib import Path
-from typing import Literal
-
 
 """
 Python script implementing the pipelines described in
@@ -41,13 +39,15 @@ class Pipeline:
         self.molecule: str = molecule
         self.cfg: dict = cfg
         self.ran_commands: list[str] = []
-        
+
     def run_with_checks(self, command, *to_check: Path):
         proc = sp.run(command, shell=True)
         proc.check_returncode()
         for file in to_check:
             if os.path.getsize(file) == 0:
-                raise ValueError(f"Expected file `{file}` from command {command} is empty")
+                raise ValueError(
+                    f"Expected file `{file}` from command {command} is empty"
+                )
         self.ran_commands.append(command)
 
     def get_flags(self, command: str, overrides: dict) -> str:
@@ -69,7 +69,9 @@ class Pipeline:
         assert fasta.exists(), "FASTA file doesn't exist"
         fragments = self.workdir / "fragments.fasta"
         full = self.workdir / "full.fasta"
-        self.run_with_checks(f"seqkit seq -M {self.threshold} -o {fragments} {fasta}", fragments)
+        self.run_with_checks(
+            f"seqkit seq -M {self.threshold} -o {fragments} {fasta}", fragments
+        )
         if len_max := self.cfg.get("maximum"):
             command = f"seqkit seq -m {self.threshold} {fasta} | seqkit seq -M {len_max} -o {full}"
         else:
@@ -107,15 +109,15 @@ class Pipeline:
         """
         outdir = self.workdir / dir
         outdir.mkdir()
-        defaults = {
+        overrides = {
             "prefix": outdir / "bb",
             "msa": msa,
             "msa-format": "FASTA",
             "data-type": "AA" if self.molecule == "aa" else "dna",
         }
         if "model" not in self.cfg[key]:
-            defaults["model"] = "GTR+G"
-        flags = self.get_flags("raxml", defaults)
+            overrides["model"] = "GTR+G"
+        flags = self.get_flags("raxml", overrides)
         tree, model = outdir / "bb.raxml.bestTree", outdir / "bb.raxml.bestModel"
         self.run_with_checks(f"raxml-ng {flags}", tree, model)
         return tree, model
@@ -125,9 +127,14 @@ class Pipeline:
 
     def align_upp(
         self, model: Path, fragments_fasta: Path, aligned: Path, tree: Path
-    ) -> Path:
-        outdir = self.workdir / "3_upp_alignment"
-        defaults = {
+    ) -> tuple[Path, Path]:
+        """
+        Returns
+        -------
+        Tuple of [alignment, alignment_masked]
+        """
+        outdir = self.workdir / "3_upp_realignment"
+        overrides = {
             "tree": tree,
             "alignment": aligned,
             "sequence_file": fragments_fasta,
@@ -136,19 +143,47 @@ class Pipeline:
             "outdir": outdir,
             "output": "output",
         }
-        flags = self.get_flags("upp", defaults)
+        flags = self.get_flags("upp", overrides)
         result: Path = outdir / "output_alignment.fasta"
-        proc = sp.run(f"run_upp.py {flags}", shell=True)
-        proc.check_returncode()
-        if os.path.getsize(result) == 0:
-            raise ValueError("UPP failed to produce alignment")
+        masked: Path = outdir / "output_alignment_masked.fasta"
+        self.run_with_checks(f"run_upp {flags}", result)
+        return result, masked
+
+    def align_mafft(self, fragments_fasta: Path, aligned: Path) -> Path:
+        outdir = self.workdir / "3_mafft_realignment"
+        result = outdir / "realigned.fasta"
+        command = (
+            f"mafft --addfragments {fragments_fasta} --keeplength {aligned} > {result}"
+        )
+        self.run_with_checks(command, result)
         return result
 
     def build_tree_final(self, msa: Path) -> tuple[Path, Path]:
         return self.raxml_wrapper(msa, "raxml_final", "3_raxml_final_tree")
 
-    def place_fragments(self) -> Path:
-        pass
+    def place_fragments(
+        self,
+        tree: Path,
+        realigned: Path,
+        original_aligned: Path,
+        model: Path,
+    ) -> Path:
+        outdir = self.workdir / "3_placement"
+        outdir.mkdir()
+        fragments_only = outdir / "fragments_to_place.fasta"
+        filter_queries = f"seqkit grep -f <(seqkit seq -n {original_aligned}) {realigned} -v > {fragments_only}"
+        self.run_with_checks(filter_queries, fragments_only)
+        overrides = {
+            "query": fragments_only,
+            "model": model,
+            "tree": tree,
+            "outdir": outdir,
+            "msa": original_aligned,
+        }
+        flags = self.get_flags("epa-ng", overrides)
+        result = outdir / "epa_result.jplace"
+        self.run_with_checks(f"epa-ng {flags}", result)
+        return result
 
 
 def parse_args():
@@ -186,6 +221,14 @@ def parse_args():
         action="store",
     )
     parser.add_argument(
+        "-r",
+        "--realignment_program",
+        default="upp",
+        help="Program to use for realigning fragments to reference MSA",
+        action="store",
+        choices=["upp", "mafft"],
+    )
+    parser.add_argument(
         "-u",
         "--molecule",
         default="dna",
@@ -207,13 +250,13 @@ def parse_args():
         "-x",
         "--prefix",
         default=None,
-        help="Output prefix. If not specified, use the input file name",
+        help="Output prefix. If not specified, uses the input file name",
         action="store",
     )
     parser.add_argument(
-        "-o",
-        "--output",
-        required="output" in cfg,
+        "-w",
+        "--workdir",
+        required="workdir" in cfg,
         help="Working directory for storing intermediate files",
         action="store",
         type=Path,
@@ -228,13 +271,28 @@ def main(args: dict):
     full, fragments = P.filter_fragments(args["input"])
     bb_msa = P.align_backbone_msa(full)
     bb_tree, raxml_pars = P.build_backbone_tree()
-    alignment = P.align_upp(
-        model=raxml_pars, fragments_fasta=fragments, aligned=bb_msa, tree=bb_tree
-    )
-    if args["placement"]:
-        P.place_fragments()
+
+    if args["realignment_program"] == "upp":
+        aln, aln_for_placement = P.align_upp(
+            model=raxml_pars, fragments_fasta=fragments, aligned=bb_msa, tree=bb_tree
+        )
+    elif args["realignment_program"] == "mafft":
+        aln = P.align_mafft(fragments_fasta=fragments, aligned=bb_msa)
+        aln_for_placement = aln
     else:
-        tree, _ = P.build_tree_final(alignment)
+        raise ValueError("Realignment program not recognized")
+
+    if args["placement"]:
+        placement = P.place_fragments(
+            tree=bb_tree,
+            original_aligned=bb_msa,
+            realigned=aln_for_placement,
+            model=raxml_pars,
+        )
+        placement.rename(f"{args['prefix']}.jplace")
+    else:
+        tree, _ = P.build_tree_final(aln)
+        tree.rename(f"{args['prefix']}.nwk")
 
 
 if __name__ == "__main__":
