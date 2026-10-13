@@ -70,6 +70,12 @@ def parse_args() -> dict:
         type=int,
     )
     parser.add_argument(
+        "--subtract_prompt_len",
+        default=False,
+        help="Subtract the length of the prompt from the maximum sequence length",
+        action="store_true",
+    )
+    parser.add_argument(
         "--batched", type=bool, default=True, help="Use batched generation"
     )
     parser.add_argument(
@@ -118,6 +124,8 @@ def main(args: dict):
         prompt = str(SeqIO.read(args["prompt"], "fasta").seq)
     else:
         prompt = args["prompt"]
+    if args["subtract_prompt_len"]:
+        args["seq_len"] = args["seq_len"] - len(prompt)
 
     kws = {
         "n_tokens": args["seq_len"],

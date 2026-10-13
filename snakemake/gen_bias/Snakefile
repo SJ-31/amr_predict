@@ -94,6 +94,7 @@ rule generate:
                 --seq_len {params.length} \
                 --seed {params.rng} \
                 --no-prepend_prompt_to_output \
+                --subtract_prompt_len \
                 --num {params.n} \
                 --output_scores {output[1]}
         """

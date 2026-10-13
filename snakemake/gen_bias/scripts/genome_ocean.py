@@ -130,6 +130,12 @@ def parse_args() -> dict:
         type=int,
     )
     parser.add_argument(
+        "--subtract_prompt_len",
+        default=False,
+        help="Subtract the length of the prompt from the maximum sequence length",
+        action="store_true",
+    )
+    parser.add_argument(
         "--output_scores", default=None, help="CSV file to store scores", action="store"
     )
 
@@ -242,6 +248,13 @@ def main(args: dict):
     random.seed(args["seed"])
     torch.manual_seed(args["seed"])
     np.random.seed(args["seed"])
+    if Path(args["prompt"]).exists():
+        prompt = str(SeqIO.read(args["prompt"], "fasta").seq)
+    else:
+        prompt = args["prompt"]
+    if args["subtract_prompt_len"]:
+        args["seq_len"] = args["seq_len"] - len(prompt)
+
     kws = {
         "model_dir": args["model_dir"],
         "promptfile": args["prompt"],
@@ -265,10 +278,6 @@ def main(args: dict):
             output_seqs.extend(cur_seqs)
             output_scores.extend(cur_scores)
 
-    if Path(args["prompt"]).exists():
-        prompt = str(SeqIO.read(args["prompt"], "fasta").seq)
-    else:
-        prompt = args["prompt"]
     if args["prepend_prompt_to_output"]:
         print("Prepending prompt...")
         output_seqs = [prompt + s for s in output_seqs if not s.startswith(prompt)]

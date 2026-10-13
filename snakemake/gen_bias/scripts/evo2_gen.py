@@ -91,6 +91,12 @@ def parse_args() -> dict:
         "-o", "--output", required=True, help="Output file", action="store"
     )
     parser.add_argument(
+        "--subtract_prompt_len",
+        default=False,
+        help="Subtract the length of the prompt from the maximum sequence length",
+        action="store_true",
+    )
+    parser.add_argument(
         "--output_scores", default=None, help="CSV file to store scores", action="store"
     )
 
@@ -118,6 +124,8 @@ def main(args: dict):
         prompt = str(SeqIO.read(args["prompt"], "fasta").seq)
     else:
         prompt = args["prompt"]
+    if args["subtract_prompt_len"]:
+        args["seq_len"] = args["seq_len"] - len(prompt)
 
     # Object of class GenerationOutput, from vortex library
     kws = {
