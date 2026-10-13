@@ -39,8 +39,9 @@ rule all:
         *OUTPUTS["generated"],
         *OUTPUTS["motifs"],
         *OUTPUTS["taxonomy"],
-        *OUTPUTS["nuc_similarity"],
-        *OUTPUTS["aa_similarity"],
+        # BUG: [2026-10-13 Tue] need to fix this to be faster
+        # *OUTPUTS["nuc_similarity"],
+        # *OUTPUTS["aa_similarity"],
         *OUTPUTS["protein_descriptors"],
 
 
@@ -217,7 +218,7 @@ rule sort_taxonomy_hits:
         df.write_csv(output[0])
 
 
-# TODO: merge the taxonomic queries
+# TODO: can add an option here to use papara or UPP instead of mafft for re-alignment
 
 
 rule place_on_reference_tree:
@@ -227,7 +228,7 @@ rule place_on_reference_tree:
         prompt=f"{PROMPTS}/{{prompt}}.fasta",
     params:
         tree=lambda wc: P2D[wc["prompt"]]["tree_file"],
-        se_model=lambda wc: P2D[wc["prompt"]]["se_model"],
+        tree_model=lambda wc: P2D[wc["prompt"]]["tree_model"],
         msa=lambda wc: P2D[wc["prompt"]]["msa"],
         tax_labels=lambda wc: P2D[wc["prompt"]]["tree_labels"] or "",
         taxonkit_db=ENV.taxonkit_db,
@@ -256,7 +257,7 @@ rule place_on_reference_tree:
                 seqkit grep -f <(seqkit seq -n {params.msa}) -v > {output.query}
         
         epa-ng -s {params.msa} -t {params.tree} \
-            -q {output.query} -m {params.se_model} -w {output.d}
+            -q {output.query} -m {params.tree_model} -w {output.d}
 
         if [[ -z {params.tax_labels} ]]; then
              gotree labels -i {params.tree} | taxonkit lineage > {output.labels}

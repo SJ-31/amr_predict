@@ -50,7 +50,7 @@ class Pipeline:
         self.workdir.mkdir(exist_ok=True)
 
     def run_with_checks(self, command, *to_check: Path):
-        if all(f.exists() for f in to_check):
+        if all(f.exists() and os.path.getsize(f) > 0 for f in to_check):
             return
         proc = sp.run(command, shell=True)
         proc.check_returncode()
@@ -315,7 +315,7 @@ def main(args: dict):
             realigned=aln_for_placement,
             model=raxml_pars,
         )
-        shutil.move(placement, f"{args['prefix']}.jplace")
+        shutil.copy(placement, f"{args['prefix']}.jplace")
     else:
         tree, _ = P.build_tree_final(aln)
         shutil.move(tree, f"{args['prefix']}.nwk")

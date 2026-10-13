@@ -27,6 +27,9 @@ name2lineage = {
 new_mapping = {}
 dupes = {}
 
+# TODO: [2026-10-13 Tue] might have an issue with the one-to-many relation between accessions and
+# names
+
 tree = Phylo.read(workdir / "LTPlus_10_2026_clean.nwk", "newick")
 for tip in tree.get_terminals():
     acc = re.findall(".*\((.*)\)", tip.name)[0]
