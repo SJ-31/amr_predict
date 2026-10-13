@@ -120,6 +120,10 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
         #     str,
         #     checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
         # ),
+        # "tree_labels": pa.Column(
+        #     str,
+        #     checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
+        # ),
     },
     checks=pa.Check(cols_not_all_null, a="file", b="seq"),
     strict="filter",
@@ -189,9 +193,9 @@ class SnakeEnv:
         assert self.mmseqs_db.exists(), "mmseqs2 database doesn't exist"
         assert self.taxonkit_db.exists()
         for file in ("names", "nodes", "delnodes", "merged"):
-            assert (
-                self.taxonkit_db / f"{file}.dmp"
-            ).exists(), f"Error: {file}.dmp is missing from taxonkit database"
+            assert (self.taxonkit_db / f"{file}.dmp").exists(), (
+                f"Error: {file}.dmp is missing from taxonkit database"
+            )
 
     def get_motif_file(self, prompt: str) -> str:
         return (
@@ -255,9 +259,9 @@ class SnakeEnv:
     @classmethod
     def new(cls, data: str | dict, with_yte: bool = True) -> SnakeEnv:
         if isinstance(data, str):
-            assert Path(data).exists() and data.endswith(
-                ".yaml"
-            ), "Must pass a yaml file"
+            assert Path(data).exists() and data.endswith(".yaml"), (
+                "Must pass a yaml file"
+            )
             with open(data, "r") as f:
                 data = process_yaml(f) if with_yte else yaml.safe_load(f)
                 return cattrs.structure(data, SnakeEnv)

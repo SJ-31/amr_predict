@@ -9,12 +9,16 @@ SMK_PROFILE = "profiles/test"
 send = "rsync ./mise.toml $stem_ip:~/amr_predict"
 
 [tasks.send_gen_scripts]
-dir = "snakemake/gen_bias/scripts"
+dir = "snakemake/gen_bias"
 usage = '''
-arg "<file>" help="File to send"
+arg "<file>" help="File to send" default=""
 '''
 run = '''
-rsync "${usage_file}" $stem_ip:~/amr_predict/snakemake/gen_bias/scripts
+if [[ -z "${usage_file}" ]]; then
+   rsync -r scripts $stem_ip:~/amr_predict/snakemake/gen_bias/
+else
+    rsync "scripts/${usage_file}" $stem_ip:~/amr_predict/snakemake/gen_bias/scripts
+fi
 '''
 
 [tasks.send_gen]
@@ -31,6 +35,9 @@ if [[ -z "${usage_file}" ]]; then
     rsync main.py $stem_ip:~/amr_predict/snakemake/gen_bias
     rsync test.sh $stem_ip:~/amr_predict/snakemake/gen_bias
     rsync run.sh $stem_ip:~/amr_predict/snakemake/gen_bias
+elif [[ "${usage_file}" == "data" ]]; then
+    rsync -r orthologs $stem_ip:~/amr_predict/snakemake/gen_bias/
+    rsync -r prefixes $stem_ip:~/amr_predict/snakemake/gen_bias/
 else
     rsync "${usage_file}" $stem_ip:~/amr_predict/snakemake/gen_bias
 fi
@@ -148,7 +155,7 @@ arg "<accession>" default="" help="Gene accession to download"
 arg "<name>" default="" help="Name of output"
 '''
 run = '''
-outdir=../remote/placements
+outdir=../remote/ref_trees
 if [[ ! -e "${outdir}" ]]; then
    echo "Directory not mounted!"
    exit
