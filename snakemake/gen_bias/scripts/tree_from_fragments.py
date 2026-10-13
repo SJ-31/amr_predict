@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import os
+import shutil
 import subprocess as sp
 import tomllib
 from pathlib import Path
@@ -12,7 +14,16 @@ Python script implementing the pipelines described in
 Vladimir Smirnov, Tandy Warnow, Phylogeny Estimation Given Sequence Length Heterogeneity, Systematic Biology, Volume 70, Issue 2, March 2021, Pages 268–282, https://doi.org/10.1093/sysbio/syaa058
 
 NOTE: To install sepp==4.5.6 with pixi, run
-pixi global install --environment sepp sepp==4.5.6 --with mafft==7.526 --with pasta==1.9.3 -c bioconda -c conda-forge
+pixi global install --environment sepp sepp==4.5.6 --with mafft==7.526 --with pasta==1.9.3 -c conda-forge -c bioconda
+
+TODO: [2026-10-12 Mon] double-check that you have the newest versions of all the tools
+
+[2026-10-12 Mon] Program versions
+raxml-ng: 2.0.3
+PASTA: 1.9.3
+epa-ng: 0.3.8
+UPP: 4.5.6
+mafft: 7.526
 """
 
 DEPENDENCIES: dict[str, tuple] = {
@@ -35,7 +46,8 @@ class Pipeline:
         self.workdir: Path = cfg["workdir"]
         self.molecule: str = cfg["molecule"]
         self.cfg: dict = cfg
-        self.ran_commands: list[str] = []
+        self.command_log: Path = self.workdir / "ran_commands.json"
+        self.workdir.mkdir(exist_ok=True)
 
     def run_with_checks(self, command, *to_check: Path):
         if all(f.exists() for f in to_check):
@@ -47,7 +59,13 @@ class Pipeline:
                 raise ValueError(
                     f"Expected file `{file}` from command {command} is empty"
                 )
-        self.ran_commands.append(command)
+        commands = []
+        if self.command_log.exists() and os.path.getsize(self.command_log) > 0:
+            with open(self.command_log, "r") as f:
+                commands = json.load(f)
+        commands.append(command)
+        with open(self.command_log, "w") as f:
+            json.dump(commands, f, indent=2)
 
     def get_flags(self, command: str, overrides: dict) -> str:
         if command in self.cfg:
@@ -80,12 +98,16 @@ class Pipeline:
 
     def align_backbone_msa(self, fasta: Path) -> Path:
         """
+        WARNING: this consumes a lot of memory
+
+
         Returns
         -------
-        Path to backbone MSA aligned with PASTA
+        Path to backbone MSA aligned with PASTA (version 1.9.3)
         """
         outdir = self.workdir / "1_pasta_bb_msa"
-        outdir.mkdir()
+        outdir.mkdir(exist_ok=True)
+        aln = outdir / "pastajob.alignment.fasta"
         flags = self.get_flags(
             "pasta",
             {
@@ -96,7 +118,6 @@ class Pipeline:
                 "alignment-suffix": "alignment.fasta",
             },
         )
-        aln = outdir / "pastajob.alignment.fasta"
         self.run_with_checks(f"run_pasta {flags}", aln)
         return aln
 
@@ -107,14 +128,14 @@ class Pipeline:
         Tuple of paths to [tree newick, raxml model]
         """
         outdir = self.workdir / dir
-        outdir.mkdir()
+        outdir.mkdir(exist_ok=True)
         overrides = {
             "prefix": outdir / "bb",
             "msa": msa,
             "msa-format": "FASTA",
             "data-type": "AA" if self.molecule == "aa" else "dna",
         }
-        if "model" not in self.cfg[key]:
+        if "model" not in self.cfg.get(key, {}):
             overrides["model"] = "GTR+G"
         flags = self.get_flags("raxml", overrides)
         tree, model = outdir / "bb.raxml.bestTree", outdir / "bb.raxml.bestModel"
@@ -158,7 +179,7 @@ class Pipeline:
         return result
 
     def build_tree_final(self, msa: Path) -> tuple[Path, Path]:
-        return self.raxml_wrapper(msa, "raxml_final", "3_raxml_final_tree")
+        return self.raxml_wrapper(msa, "raxml_final", "4_raxml_final_tree")
 
     def place_fragments(
         self,
@@ -167,8 +188,8 @@ class Pipeline:
         original_aligned: Path,
         model: Path,
     ) -> Path:
-        outdir = self.workdir / "3_placement"
-        outdir.mkdir()
+        outdir = self.workdir / "4_placement"
+        outdir.mkdir(exist_ok=True)
         fragments_only = outdir / "fragments_to_place.fasta"
         filter_queries = f"seqkit grep -f <(seqkit seq -n {original_aligned}) {realigned} -v > {fragments_only}"
         self.run_with_checks(filter_queries, fragments_only)
@@ -294,10 +315,10 @@ def main(args: dict):
             realigned=aln_for_placement,
             model=raxml_pars,
         )
-        placement.rename(f"{args['prefix']}.jplace")
+        shutil.move(placement, f"{args['prefix']}.jplace")
     else:
         tree, _ = P.build_tree_final(aln)
-        tree.rename(f"{args['prefix']}.nwk")
+        shutil.move(tree, f"{args['prefix']}.nwk")
 
 
 if __name__ == "__main__":
