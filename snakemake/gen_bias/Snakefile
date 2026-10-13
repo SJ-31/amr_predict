@@ -163,6 +163,7 @@ rule classify_taxonomy:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
         prompt_full=f"{PROMPTS_FULL}/{{prompt}}.fasta",
+        prompt_trimmed=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
     params:
         db=ENV.mmseqs_db,
     threads: 4
@@ -177,7 +178,7 @@ rule classify_taxonomy:
         f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_tophit_report",
     shell:
         f"""
-        mmseqs easy-taxonomy {{input.generated}} {{input.prompt_full}} \
+        mmseqs easy-taxonomy {{input.generated}} {{input.prompt_full}} {{input.prompt_trimmed}} \
                 {{params.db}} \
                 {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}/mmseqs \
                 {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}_tmp \
@@ -227,7 +228,7 @@ rule place_on_reference_tree:
         tree=lambda wc: P2D[wc["prompt"]]["tree_file"],
         se_model=lambda wc: P2D[wc["prompt"]]["se_model"],
         msa=lambda wc: P2D[wc["prompt"]]["msa"],
-        tax_labels=lambda wc: P2D[wc["prompt"]]["tree_labels"],
+        tax_labels=lambda wc: P2D[wc["prompt"]]["tree_labels"] or "",
         taxonkit_db=ENV.taxonkit_db,
     output:
         d=directory(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}"),
@@ -239,8 +240,8 @@ rule place_on_reference_tree:
         hist=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/edpl_histogram.csv",
         dist=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/distances.tsv",
         edpl=f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}/edpl_list.csv",
-        query=temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}.fasta"),
-        labels=temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}_labels.tsv"),
+        query=temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}-query.fasta"),
+        labels=temp(f"{OUTDIR}/evo_dist/{{model}}/{{prompt}}-labels.tsv"),
     shell:
         """
         export TAXONKIT_DB='{params.taxonkit_db}'
@@ -250,12 +251,17 @@ rule place_on_reference_tree:
            echo 'Error: tree must be rooted'
         fi
         
-        mafft --add {input.generated} --keeplength {params.msa} | \
+        mafft --add <(cat {input.generated} {input.prompt} {input.prompt_full}) --keeplength {params.msa} | \
                 seqkit grep -f <(seqkit seq -n {params.msa}) -v > {output.query}
+        
         epa-ng -s {params.msa} -t {params.tree} \
             -q {output.query} -m {params.se_model} -w {output.d}
 
-        gotree labels -i {params.tree} | taxonkit lineage > {output.labels}
+        if [[ -z {params.tax_labels} ]]; then
+             gotree labels -i {params.tree} | taxonkit lineage > {output.labels}
+        else
+             cp {params.tax_labels} {output.labels}
+        fi
         gappa examine assign \
                 --jplace-path {output.epa} \
                 --taxon-file {output.labels} \
