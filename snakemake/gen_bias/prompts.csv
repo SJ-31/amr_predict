@@ -1,10 +1,9 @@
 name,perturbed,file,seq,gen_length,taxid,biotype,has_5p_utr,proportion,motif_file,file_full,n,batch_size,tree_file,tree_labels,tree_model
 e_coli_16s_no_v,FALSE,prefixes/e_coli_16s_no_v.fasta,NA,1500,562,rRNA,FALSE,0.0341,NA,prefixes/e_coli_16s_full.fasta,NA,NA,/data/home/shannc/amr_predict/data/remote/ref_trees/LTP/LTPlus_10_2026_clean_dedup.nwk,/data/home/shannc/amr_predict/data/remote/ref_trees/LTP/name2lineage_dedup.tsv,GTR+G
-e_coli_16s_v1_v3,FALSE,prefixes/e_coli_16s_v1_v3.fasta,NA,1500,562,rRNA,FALSE,0.375,NA,prefixes/e_coli_16s_full.fasta,NA,NA,/data/home/shannc/amr_predict/data/remote/ref_trees/LTP/LTPlus_10_2026_clean_dedup.nwk,/data/home/shannc/amr_predict/data/remote/ref_trees/LTP/name2lineage_dedup.tsv,GTR+G
+e_coli_16s_v1_v3,FALSE,prefixes/e_coli_16s_v1_v3.fasta,NA,1500,562,rRNA,FALSE,0.375,NA,prefixes/e_coli_16s_full.fasta,NA,5,/data/home/shannc/amr_predict/data/remote/ref_trees/LTP/LTPlus_10_2026_clean_dedup.nwk,/data/home/shannc/amr_predict/data/remote/ref_trees/LTP/name2lineage_dedup.tsv,GTR+G
 e_coli_16s_v1_v6,FALSE,prefixes/e_coli_16s_v1_v6.fasta,NA,1500,562,rRNA,FALSE,0.72,NA,prefixes/e_coli_16s_full.fasta,NA,5,/data/home/shannc/amr_predict/data/remote/ref_trees/LTP/LTPlus_10_2026_clean_dedup.nwk,/data/home/shannc/amr_predict/data/remote/ref_trees/LTP/name2lineage_dedup.tsv,GTR+G
+strigulaceae_its2,FALSE,prefixes/strigulaceae_its2_primer.fasta,NA,310,714593,rRNA,FALSE,0.38,NA,prefixes/s_sinoaustralis_5dot8s_its2.fasta,NA,NA,/data/home/shannc/amr_predict/data/remote/ref_trees/fungus_ITS/strigulaceae/tree.nwk,NA,GTR+G
 fungal_28s,FALSE,prefixes/fungal_28s_lror.fasta,NA,900,4932,rRNA,FALSE,0.046,NA,prefixes/s_cerevisiae_28s_first_900.fasta,NA,NA,,NA,
-a_dunkleyae_its_18s,FALSE,prefixes/a_dunkleyae_its_18s.fasta,NA,300,162425,rRNA,FALSE,0.333,NA,prefixes/a_dunkleyae_its_18s_its1.fasta,NA,NA,,NA,
-a_dunkleyae_its_18s_its1_5dot8s,FALSE,prefixes/a_dunkleyae_its_18s_its1_5dot8s.fasta,NA,610,162425,rRNA,FALSE,0.72,NA,prefixes/a_dunkleyae_its.fasta,NA,3,,NA,
 d_yakuba_coi_forward,FALSE,prefixes/d_yakuba_coi_forward.fasta,NA,700,7245,protein_coding,FALSE,0.0356,NA,prefixes/d_yakuba_coi_amplified.fasta,NA,NA,,NA,
 d_yakuba_coi_amplified,FALSE,prefixes/d_yakuba_coi_amplified.fasta,NA,1500,7245,protein_coding,FALSE,0.438,NA,prefixes/d_yakuba_full_coi.fasta,NA,NA,,NA,
 prod1,FALSE,prefixes/c_orientalis_prod1_prompt.fasta,NA,320,3399148,protein_coding,FALSE,0.25,NA,prefixes/c_orientalis_prod1.fasta,NA,NA,/data/home/shannc/amr_predict/data/remote/ref_trees/prod1/aligned.fasta.treefile,NA,HKY+I

@@ -122,7 +122,8 @@ prompt_file="remote/tests/gen_bias/.prompts/test1.fasta"
 export HF_HOME="remote/cache/huggingface"
 
 if [[ -z "${_arg_output}" ]]; then
-	_arg_output="${_arg_model}.fasta"
+	_arg_output="${_arg_model}_$(date -I).fasta"
+	score_out="${_arg_model}_$(date -I).csv"
 fi
 
 if [[ "${_arg_model}" == "genome_ocean" ]]; then
@@ -134,15 +135,7 @@ if [[ "${_arg_model}" == "genome_ocean" ]]; then
 		--env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/genome_ocean.sif" \
-		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 500 --no-prepend_prompt_to_output --num "${_arg_num}" --model_name GenomeOcean-4B --output "${_arg_output}" --output_scores go_scores.csv
-	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
-	# 	singularity exec --nv "${image_dir}/genome_ocean.sif" echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES" && echo "CFLAGS: $CFLAGS" && echo "CPATH: $CPATH" && echo "NVIDIA_VISIBLE_DEVICES: $NVIDIA_VISIBLE_DEVICES"
-	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
-	# 	singularity exec --cleanenv --nv --env CUDA_VISIBLE_DEVICES=0 "${image_dir}/genome_ocean.sif" \
-	# 	nvidia-smi -L
-	# srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=1G \
-	# 	singularity exec --cleanenv --nv --env CUDA_VISIBLE_DEVICES=0 "${image_dir}/genome_ocean.sif" \
-	# 	python -c "import torch; print(torch.cuda.device_count())"
+		python scripts/genome_ocean.py --prompt "${prompt_file}" --seq_len 500 --no-prepend_prompt_to_output --num "${_arg_num}" --model_name GenomeOcean-4B --output "${_arg_output}" --output_scores "${score_out}"
 elif [[ "${_arg_model}" == "evo_design" ]]; then
 	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=64G \
 		singularity run \
@@ -150,7 +143,7 @@ elif [[ "${_arg_model}" == "evo_design" ]]; then
 		--env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo_design.sif" \
-		python scripts/evo_design.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num "${_arg_num}" --seq_len 1500 --model_name evo-1-8k-base --output_scores evo_scores.csv --model_name evo-1-131k-base
+		python scripts/evo_design.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num "${_arg_num}" --seq_len 1500 --model_name evo-1-8k-base --output_scores "${score_out}" --model_name evo-1-131k-base
 elif [[ "${_arg_model}" == "evo2" ]]; then
 	srun --qos=gpu40g --gres=gpu:7g.40gb:1 --partition=gpu --mem=64G \
 		singularity exec \
@@ -158,7 +151,7 @@ elif [[ "${_arg_model}" == "evo2" ]]; then
 		--env HF_HOME="remote/cache/huggingface" \
 		--bind "/data/project/stemcell/shannc/repos/amr_predict/:${PWD}/remote" \
 		"${image_dir}/evo.sif" \
-		python scripts/evo2_gen.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num 3 --seq_len 1500 --model_name evo2_7b --no-prepend_prompt_to_output --num "${_arg_num}" --output_scores evo2_scores.csv
+		python scripts/evo2_gen.py --prompt "${prompt_file}" --output "${_arg_output}" --device cuda:0 --num 3 --seq_len 1500 --model_name evo2_7b --no-prepend_prompt_to_output --num "${_arg_num}" --output_scores "${score_out}"
 fi
 
 # ^^^  TERMINATE YOUR CODE BEFORE THE BOTTOM ARGBASH MARKER  ^^^
