@@ -153,7 +153,7 @@ def main(args: dict):
             output_scores.extend(cur_scores)
     if args["prepend_prompt_to_output"]:
         print("Prepending prompt...")
-        output_seqs = [prompt + s for s in output_seqs if not s.startswith(prompt)]
+        output_seqs = [s if s.startswith(prompt) else prompt + s for s in output_seqs]
     as_fasta = [f">{args['prefix']}{i}\n{s}" for i, s in enumerate(output_seqs)]
     with open(args["output"], "w") as f:
         f.write("\n".join(as_fasta))
