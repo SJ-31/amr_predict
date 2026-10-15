@@ -12,7 +12,7 @@ from Bio import SeqIO
 app = modal.App()
 image = (
     modal.Image.from_registry("pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel")
-    .pip_install("flash-attn==2.7.4.post1", "evo-model")
+    .pip_install("flash-attn==2.7.4.post1", "evo-model==0.5", "huggingface_hub==1.32")
     .env({"HF_HOME": "/huggingface"})
 )
 vol = modal.Volume.from_name("HF_HOME", create_if_missing=True)
