@@ -5,8 +5,9 @@ import json
 import os
 import shutil
 import subprocess as sp
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 """
 Python script implementing the pipelines described in
@@ -70,9 +71,9 @@ class Pipeline:
     def get_flags(self, command: str, overrides: dict) -> str:
         if command in self.cfg:
             command_dct = self.cfg[command] | overrides
-            assert isinstance(command_dct, dict), (
-                f"The provided configuration for {command} is not a dictionary"
-            )
+            assert isinstance(
+                command_dct, dict
+            ), f"The provided configuration for {command} is not a dictionary"
         else:
             command_dct = overrides
         return " ".join({f"--{k} {v}" for k, v in command_dct.items()})
@@ -90,9 +91,9 @@ class Pipeline:
             f"seqkit seq -M {self.threshold} -o {fragments} {fasta}", fragments
         )
         if len_max := self.cfg.get("maximum"):
-            command = f"seqkit seq -m {self.threshold} {fasta} | seqkit seq -M {len_max} -o {full}"
+            command = f"seqkit seq -m {self.threshold + 1} {fasta} | seqkit seq -M {len_max} -o {full}"
         else:
-            command = f"seqkit seq -m {self.threshold} {fasta} -o {full}"
+            command = f"seqkit seq -m {self.threshold + 1} {fasta} -o {full}"
         self.run_with_checks(command, full)
         return full, fragments
 
@@ -233,6 +234,7 @@ def parse_args():
         help="Sequences below this number will be considered fragmentary",
         action="store",
         required="threshold" not in cfg,
+        type=int,
     )
     parser.add_argument(
         "-M",
