@@ -3,6 +3,7 @@
 import argparse
 import os
 import random
+import re
 from csv import DictWriter
 from pathlib import Path
 
@@ -118,7 +119,7 @@ def create_batches(num: int, batch_size: int) -> list[int]:
     return [batch_size] * n_batches
 
 
-@app.function(volumes={hf_home.as_posix(): vol}, image=image, gpu="L4")
+@app.function(volumes={hf_home.as_posix(): vol}, image=image, gpu="L40S")
 def run(prompt, args) -> tuple[list, list]:
     import numpy as np
     import torch
@@ -173,6 +174,10 @@ def main(*arglist):
         args["seq_len"] = args["seq_len"] - len(prompt)
 
     output_seqs, output_scores = run.remote(prompt, args)
+    if any("|" in s for s in output_seqs):
+        output_seqs = [
+            re.findall("^.*\\|(.*)$", s)[0] if "|" in s else s for s in output_seqs
+        ]
 
     if args["prepend_prompt_to_output"]:
         print("Prepending prompt...")

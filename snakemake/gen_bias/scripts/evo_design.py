@@ -2,6 +2,7 @@
 # Adapted from scripts/generate.py at https://github.com/evo-design/evo
 import argparse
 import random
+import re
 from csv import DictWriter
 from pathlib import Path
 
@@ -151,6 +152,11 @@ def main(args: dict):
             cur_seqs, cur_scores = generate([prompt] * batch, model, tokenizer, **kws)
             output_seqs.extend(cur_seqs)
             output_scores.extend(cur_scores)
+    if any("|" in s for s in output_seqs):
+        output_seqs = [
+            re.findall("^.*\\|(.*)$", s)[0] if "|" in s else s for s in output_seqs
+        ]
+
     if args["prepend_prompt_to_output"]:
         print("Prepending prompt...")
         output_seqs = [s if s.startswith(prompt) else prompt + s for s in output_seqs]
