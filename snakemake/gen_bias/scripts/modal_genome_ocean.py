@@ -179,6 +179,7 @@ def create_batches(num: int, batch_size: int) -> list[int]:
 
 
 def generate(seq_gen, num: int | None = None) -> tuple[list[str], list[float]]:
+    import numpy as np
     import torch
     from transformers import PreTrainedTokenizerFast
     from vllm import LLM, SamplingParams

@@ -118,7 +118,7 @@ def create_batches(num: int, batch_size: int) -> list[int]:
     return [batch_size] * n_batches
 
 
-@app.function()
+@app.function(volumes={hf_home.as_posix(): vol}, image=image, gpu="L4")
 def run(prompt, args) -> tuple[list, list]:
     import numpy as np
     import torch
