@@ -113,6 +113,7 @@ SCHEMA: pa.DataFrameSchema = pa.DataFrameSchema(
             nullable=True,
             checks=pa.Check(lambda x: Path(x).exists(), element_wise=True),
         ),
+        "prompt_from_full": pa.Column(bool, nullable=True, coerce=True),
         "batch_size": pa.Column(
             int, nullable=True, checks=pa.Check.greater_than(0), coerce=True
         ),
