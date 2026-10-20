@@ -169,7 +169,7 @@ rule classify_mmseqs2:
         prompt_trimmed=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
     params:
         db=lambda wc: ENV.mmseqs_dbs[wc.get("db")],
-    threads: 4
+    threads: ENV.get_threads("classify_mmseqs2")
     resources:
         **ENV.get_resources("classify_mmseqs2"),
     singularity:
@@ -309,12 +309,17 @@ rule similarity:
         kws="",
     output:
         "PLACEHOLDER",
+    threads: ENV.get_threads("similarity")
+    resources:
+        **ENV.get_resources("similarity"),
     shell:
         f"""
         parasail_aligner -x \
                 -a {ENV.parasail.fn} \
                 -e {ENV.parasail.gap_extend} \
+                -t {ENV.get_threads("similarity")} \
                 -o {ENV.parasail.gap_open} \
+                -b {ENV.parasail.batch_size} \
                 -m {ENV.parasail.matrix} \
                 -M {ENV.parasail.match} \
                 -X {ENV.parasail.mismatch} \

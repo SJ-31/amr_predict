@@ -15,6 +15,10 @@ resource_mappings:
   classify_mmseqs2: big_mem
   generate: gpu40
 
+threads:
+  similarity: 4
+  classify_mmseqs2: 4
+
 models:
   ?for i, temp in enumerate(temp_range):
     ?f"evo_t{i}":

@@ -178,6 +178,7 @@ class SnakeEnv:
     )
     taxonkit_db: Path = field(converter=Path)
     tmp: Path = field(converter=Path)
+    threads: dict[str, int] = field(factory=dict)
     singularity: dict = field(factory=dict)
     gen_batch_size: int = 15
     with_modal: bool = False
@@ -210,10 +211,17 @@ class SnakeEnv:
             or self.fimo.default
         )
 
+    def get_threads(self, rule: str) -> int:
+        return self.threads.get(rule, 1)
+
     def get_resources(self, rule: str) -> dict:
         if mapped := self.resource_mappings.get(rule):
-            return self.resources.get(mapped, {})
-        return {}
+            val = self.resources.get(mapped, {})
+        else:
+            val = {}
+        if threads := self.get_threads(rule) > 1:
+            val["cpus-per-task"] = threads
+        return val
 
     def model_image(self, key: str) -> str | None:
         if self.with_modal:

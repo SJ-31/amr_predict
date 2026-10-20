@@ -133,6 +133,7 @@ build_if_not_exists genome_ocean
 dir = "./snakemake/gen_bias"
 run = '''
 snakemake --use-singularity \
+    --logger snkmt \
 	--singularity-args "--nv --bind ../../src:/py_lib --bind /data/project:/data/project --cleanenv" \
 	--configfile all_models.yaml \
 	"$@"
@@ -142,6 +143,7 @@ snakemake --use-singularity \
 dir = "./snakemake/gen_bias"
 run = '''
 snakemake --use-singularity \
+    --logger snkmt \
 	--singularity-args "--nv --bind ../../src:/py_lib --bind /data/project:/data/project --cleanenv" \
 	--configfile test_env.yaml --profile profiles/test/config.yaml \
 	"$@"
