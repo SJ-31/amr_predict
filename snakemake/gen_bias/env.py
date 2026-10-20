@@ -178,6 +178,7 @@ class SnakeEnv:
     tmp: Path = field(converter=Path)
     singularity: dict = field(factory=dict)
     gen_batch_size: int = 15
+    with_modal: bool = False
     parasail: ParasailParams = field(factory=ParasailParams)
     resource_mappings: dict[str, str] = field(factory=dict)
     prompts: list[str] = field(init=False, factory=list)
@@ -194,9 +195,11 @@ class SnakeEnv:
         assert self.mmseqs_db.exists(), "mmseqs2 database doesn't exist"
         assert self.taxonkit_db.exists()
         for file in ("names", "nodes", "delnodes", "merged"):
-            assert (self.taxonkit_db / f"{file}.dmp").exists(), (
-                f"Error: {file}.dmp is missing from taxonkit database"
-            )
+            assert (
+                self.taxonkit_db / f"{file}.dmp"
+            ).exists(), f"Error: {file}.dmp is missing from taxonkit database"
+        if self.with_modal and "generate" in self.resource_mappings:
+            del self.resource_mappings["generate"]
 
     def get_motif_file(self, prompt: str) -> str:
         return (
@@ -210,6 +213,8 @@ class SnakeEnv:
         return {}
 
     def model_image(self, key: str) -> str | None:
+        if self.with_modal:
+            return None
         val = self.singularity.get("generate", {})
         if isinstance(val, dict):
             return val.get(key)
@@ -260,9 +265,9 @@ class SnakeEnv:
     @classmethod
     def new(cls, data: str | dict, with_yte: bool = True) -> SnakeEnv:
         if isinstance(data, str):
-            assert Path(data).exists() and data.endswith(".yaml"), (
-                "Must pass a yaml file"
-            )
+            assert Path(data).exists() and data.endswith(
+                ".yaml"
+            ), "Must pass a yaml file"
             with open(data, "r") as f:
                 data = process_yaml(f) if with_yte else yaml.safe_load(f)
                 return cattrs.structure(data, SnakeEnv)

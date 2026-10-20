@@ -79,6 +79,7 @@ rule generate:
         rng=ENV.rng,
         hf=ENV.huggingface,
         cvd=CUDA_VISIBLE_DEVICES,
+        runner="modal run" if ENV.with_modal else "python",
     resources:
         **ENV.get_resources("generate"),
     singularity:
@@ -87,7 +88,7 @@ rule generate:
         """
         export HF_HOME='{params.hf}'
         export CUDA_VISIBLE_DEVICES={params.cvd}
-        python {params.script} {params.kws} \
+        {params.runner} {params.script} {params.kws} \
                 --prompt {input[0]} \
                 --batch_size {params.batch_size} \
                 --output {output[0]} \
