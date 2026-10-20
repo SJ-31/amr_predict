@@ -173,7 +173,9 @@ class SnakeEnv:
         else x
     )
     outdir: Path = field(converter=Path)
-    mmseqs_db: Path = field(converter=Path)
+    mmseqs_dbs: dict[str, Path] = field(
+        converter=lambda x: {k: Path(v) for k, v in x.items()}
+    )
     taxonkit_db: Path = field(converter=Path)
     tmp: Path = field(converter=Path)
     singularity: dict = field(factory=dict)
@@ -192,7 +194,8 @@ class SnakeEnv:
             self.tmp.mkdir()
         self.prompts.extend(self.meta["name"].to_list())
         self.prompt2data = self.meta.rows_by_key("name", unique=True, named=True)
-        assert self.mmseqs_db.exists(), "mmseqs2 database doesn't exist"
+        for db in self.mmseqs_dbs.values():
+            assert db.exists(), f"mmseqs2 database '{db}' doesn't exist"
         assert self.taxonkit_db.exists()
         for file in ("names", "nodes", "delnodes", "merged"):
             assert (

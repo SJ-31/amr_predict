@@ -162,29 +162,29 @@ rule find_motifs:
         """
 
 
-rule classify_taxonomy:
+rule classify_mmseqs2:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
         prompt_full=f"{PROMPTS_FULL}/{{prompt}}.fasta",
         prompt_trimmed=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
     params:
-        db=ENV.mmseqs_db,
+        db=lambda wc: ENV.mmseqs_dbs[wc.get("db")],
     threads: 4
     resources:
-        **ENV.get_resources("classify_taxonomy"),
+        **ENV.get_resources("classify_mmseqs2"),
     singularity:
-        ENV.singularity.get("classify_taxonomy")
+        ENV.singularity.get("classify_mmseqs2")
     output:
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_tophit_aln",
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_report",
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_lca.tsv",
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_tophit_report",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{{db}}/mmseqs_tophit_aln",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{{db}}/mmseqs_report",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{{db}}/mmseqs_lca.tsv",
+        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{{db}}/mmseqs_tophit_report",
     shell:
         f"""
         mmseqs easy-taxonomy {{input.generated}} {{input.prompt_full}} {{input.prompt_trimmed}} \
                 {{params.db}} \
-                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}/mmseqs \
-                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}_tmp \
+                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}/{{db}}/mmseqs \
+                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}_{{db}}_tmp \
                 --tax-lineage 1 \
                 --format-mode 4 \
                 --search-type 3
@@ -193,7 +193,10 @@ rule classify_taxonomy:
 
 rule sort_taxonomy_hits:
     input:
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/mmseqs_tophit_aln",
+        expand(
+            f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{db}/mmseqs_tophit_aln",
+            db=ENV.mmseqs_dbs.keys(),
+        ),
     output:
         f"{OUTDIR}/taxonomy/{{model}}/{{prompt}}.csv",
     run:
@@ -202,21 +205,26 @@ rule sort_taxonomy_hits:
         # Sort by evalue then bitscore ranking i.e. pick sequences with the lowest evalue,
         # (likely to have multiple sequences with the same evalue)
         # then get the best hit by bitscore
-        df = pl.read_csv(input[0], separator="\t").with_columns(
-            rank=pl.col("evalue").rank().over("query")
-        )
-        best_evalue = df.group_by("query").agg(min_rank=pl.col("rank").min())
-        df = (
-            df.join(best_evalue, on="query")
-            .filter(pl.col("rank") == pl.col("min_rank"))
-            .drop(["rank", "min_rank"])
-        )
-        df = (
-            df.group_by("query")
-            .agg(pl.all().top_k_by(k=1, by="bits"))
-            .explode(pl.all().exclude("query"))
-        )
-        df.write_csv(output[0])
+        dfs = []
+        for top in input:
+            db = Path(input).parent.stem
+            df = pl.read_csv(top, separator="\t").with_columns(
+                rank=pl.col("evalue").rank().over("query")
+            )
+            best_evalue = df.group_by("query").agg(min_rank=pl.col("rank").min())
+            df = (
+                df.join(best_evalue, on="query")
+                .filter(pl.col("rank") == pl.col("min_rank"))
+                .drop(["rank", "min_rank"])
+            )
+            df = (
+                df.group_by("query")
+                .agg(pl.all().top_k_by(k=1, by="bits"))
+                .explode(pl.all().exclude("query"))
+                .with_columns(pl.lit(db).alias("query_db"))
+            )
+            dfs.append(df)
+        pl.concat(dfs, how="diagonal relaxed").write_csv(output[0])
 
 
 # TODO: can add an option here to use papara or UPP instead of mafft for re-alignment

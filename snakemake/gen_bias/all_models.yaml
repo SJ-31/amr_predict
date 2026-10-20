@@ -12,7 +12,7 @@ singularity:
       ?f"genome_ocean_t{i}": ?f"{remote}/images/genome_ocean.sif"
 
 resource_mappings:
-  classify_taxonomy: big_mem
+  classify_mmseqs2: big_mem
   generate: gpu40
 
 models:
