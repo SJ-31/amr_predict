@@ -8,39 +8,18 @@ SMK_PROFILE = "profiles/test"
 [tasks]
 send = "rsync ./mise.toml $stem_ip:~/amr_predict"
 
-[tasks.send_gen_scripts]
-dir = "snakemake/gen_bias"
-usage = '''
-arg "<file>" help="File to send" default=""
-'''
-run = '''
-if [[ -z "${usage_file}" ]]; then
-   rsync -r scripts $stem_ip:~/amr_predict/snakemake/gen_bias/
-else
-    rsync "scripts/${usage_file}" $stem_ip:~/amr_predict/snakemake/gen_bias/scripts
-fi
-'''
-
 [tasks.send_gen]
-dir = "snakemake/gen_bias"
-usage = '''
-arg "<file>" default="" help="File to send"
-'''
 run = '''
-if [[ -z "${usage_file}" ]]; then
-    rsync env.py $stem_ip:~/amr_predict/snakemake/gen_bias
-    rsync env.yaml $stem_ip:~/amr_predict/snakemake/gen_bias
-    rsync test_env.yaml $stem_ip:~/amr_predict/snakemake/gen_bias
-    rsync Snakefile $stem_ip:~/amr_predict/snakemake/gen_bias
-    rsync main.py $stem_ip:~/amr_predict/snakemake/gen_bias
-    rsync test.sh $stem_ip:~/amr_predict/snakemake/gen_bias
-    rsync run.sh $stem_ip:~/amr_predict/snakemake/gen_bias
-elif [[ "${usage_file}" == "data" ]]; then
-    rsync -r orthologs $stem_ip:~/amr_predict/snakemake/gen_bias/
-    rsync -r prefixes $stem_ip:~/amr_predict/snakemake/gen_bias/
-else
-    rsync "${usage_file}" $stem_ip:~/amr_predict/snakemake/gen_bias
-fi
+unison ./snakemake/gen_bias ssh://$stem_ip/amr_predict/snakemake/gen_bias \
+       -ignore 'Path .cache' \
+       -ignore 'Path .config' \
+       -ignore 'Path .nv' \
+       -ignore 'Path slurm_logs' \
+       -ignore 'Path .env_tmp' \
+       -ignore 'Path .snakemake' \
+       -ignore 'Path .triton' \
+       -ignore 'Path __pycache__' \
+       -ignore 'Path scripts/__pycache__'
 '''
 
 
