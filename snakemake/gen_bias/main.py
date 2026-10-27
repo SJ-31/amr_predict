@@ -20,6 +20,8 @@ WC = snakemake.wildcards
 
 
 def translate(seq: SeqRecord | Seq) -> Peptide:
+    if " " in seq:
+        seq = seq.replace(" ", "")
     if (remainder := len(seq) % 3) != 0:
         add = 3 - remainder
         seq = seq + ("N" * add)
@@ -93,7 +95,6 @@ def translate_fasta() -> None:
             f">{seq.id}\n{translate(seq).sequence}"
             for seq in SeqIO.parse(INPUT[0], "fasta")
         ]
-        print(gen)
         f.write("\n".join(gen))
 
 
