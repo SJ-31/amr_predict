@@ -162,6 +162,31 @@ rule find_motifs:
         """
 
 
+rule classify_k2:
+    input:
+        generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
+        prompt_full=f"{PROMPTS_FULL}/{{prompt}}.fasta",
+        prompt_trimmed=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
+    params:
+        db=lambda wc: ENV.k2_dbs[wc.get("db")],
+        threads=ENV.get_threads("classify_k2"),
+    threads: ENV.get_threads("classify_k2")
+    resources:
+        **ENV.get_resources("classify_k2"),
+    singularity:
+        ENV.singularity.get("classify_k2")
+    output:
+        "",
+    shell:
+        f"""
+        k2 classify {{input.generated}} {{prompt_full}} {{prompt_trimmed}} \
+                --db {{params.db}} \
+                --threads {{params.threads}} \
+                --memory-mapping \
+                --output {{output[0]}}
+        """
+
+
 rule classify_mmseqs2:
     input:
         generated=f"{OUTDIR}/generated/{{model}}/{{prompt}}.fasta",
@@ -169,6 +194,7 @@ rule classify_mmseqs2:
         prompt_trimmed=f"{PROMPTS_FULL}_trimmed/{{prompt}}.fasta",
     params:
         db=lambda wc: ENV.mmseqs_dbs[wc.get("db")],
+        threads=ENV.get_threads("classify_mmseqs2"),
     threads: ENV.get_threads("classify_mmseqs2")
     resources:
         **ENV.get_resources("classify_mmseqs2"),
@@ -185,6 +211,7 @@ rule classify_mmseqs2:
                 {{params.db}} \
                 {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}/{{db}}/mmseqs \
                 {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}_{{db}}_tmp \
+                --threads {{params.threads}} \
                 --tax-lineage 1 \
                 --format-mode 4 \
                 --search-type 3
@@ -194,7 +221,8 @@ rule classify_mmseqs2:
 rule sort_taxonomy_hits:
     input:
         expand(
-            f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{db}/mmseqs_tophit_aln",
+            "{o}/taxonomy/{{model}}/.{{prompt}}/{db}/mmseqs_tophit_aln",
+            o=[OUTDIR],
             db=ENV.mmseqs_dbs.keys(),
         ),
     output:

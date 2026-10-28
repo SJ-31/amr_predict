@@ -152,6 +152,7 @@ class ParasailParams:
     gap_extend: int = 1
     gap_open: int = 10
     matrix: str = "blosum62"
+    batch_size: int = 0
     match: int = 1
     mismatch: int = 0
 
@@ -173,6 +174,9 @@ class SnakeEnv:
         else x
     )
     outdir: Path = field(converter=Path)
+    k2_dbs: dict[str, Path] = field(
+        converter=lambda x: {k: Path(v) for k, v in x.items()}
+    )
     mmseqs_dbs: dict[str, Path] = field(
         converter=lambda x: {k: Path(v) for k, v in x.items()}
     )

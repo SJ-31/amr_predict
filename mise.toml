@@ -118,6 +118,29 @@ snakemake --use-singularity \
 	"$@"
 '''
 
+[tasks.build_k2_db]
+dir = "./data/remote/kraken2"
+usage = '''
+arg "<file>" default="" help="File containing taxids to use in database"
+arg "<name>" default="" help="Name of output directory"
+'''
+run = '''
+blastdb=../blast/refseq_rna/refseq_rna
+mkdir -p "${usage_name}"
+blastdbcmd -db "${blastdb}" -taxidlist "${usage_file}" -outfmt '>%a|kraken:taxid|%T,%s' | \
+  sed 's/,/\n/' > ${usage_name}.fasta
+srun --qos=cpu24h --mem=20G --cpus-per-task=4 kraken2-build \
+  --add-to-library ${usage_name}.fasta \
+  --db ${usage_name} \
+  --threads 4
+kraken2-build --download-taxonomy --db ${usage_name} 
+srun --qos=cpu24h --mem=30G --cpus-per-task=4 kraken2-build \
+     --build \
+     --db ${usage_name} \
+     --threads 4
+kraken2-build --clean --db ${usage_name} 
+'''
+
 [tasks.gen_test]
 dir = "./snakemake/gen_bias"
 run = '''
