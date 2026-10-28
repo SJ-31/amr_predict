@@ -46,3 +46,11 @@ snakemake/lightning_logs
 /tests/pytest.sh
 /snakemake/seq_analysis/run.sh
 /snakemake/seq_analysis/test.sh
+/docs/.$methods_summary.drawio.bkp
+/docs/.$methods_summary.drawio.dtmp
+/docs/.$methods_summary.xml.bkp
+/docs/methods_summary.png
+/docs/methods_summary.xml
+/snakemake/gen_bias/Roboto-Regular.ttf
+/data/meta/bakta_frequent_features_5000.txt
+/.projectile-cache.eld
