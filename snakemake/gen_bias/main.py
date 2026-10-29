@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
+import pickle
+from functools import reduce
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import networkx as nx
 import numpy as np
 import polars as pl
 from Bio import SeqIO
@@ -27,6 +30,61 @@ def translate(seq: SeqRecord | Seq) -> Peptide:
         seq = seq + ("N" * add)
     translated = seq.translate(id=True, name=True, description=True)
     return Peptide(str(translated.seq))
+
+
+def parse_k2_lca(lca: str, classified_taxid: int, G: nx.DiGraph):
+    """
+    Parse kraken2's LCA string to count the number of k-mers assigned
+    to the classified taxon (and its descendants), k-mers not found
+    in the database, k-mers assigned to other taxa, and k-mers with
+    ambiguous nucleotides
+
+    Parameters
+    ----------
+    lca : str
+    classified_taxid : int
+    G : nx.DiGraph
+        DiGraph storing ncbi taxonomy relations
+    """
+    descendants = [str(d) for d in nx.descendants(G, classified_taxid)]
+    result: dict = {
+        "kmer_ambiguous": 0,
+        "kmer_unknown": 0,
+        "kmer_other_taxid": 0,
+        "kmer_total": 0,
+        "kmer_direct": 0,
+        "n_other_taxid": 0,
+        "kmer_other_taxid_std": None,
+    }
+    mapping = {"A": "kmer_ambiguous", "0": "kmer_unknown"}
+    descendants.append(str(classified_taxid))
+    mapping.update({d: "kmer_direct" for d in descendants})
+    counts: pl.DataFrame = (
+        pl.DataFrame(
+            map(lambda x: x.split(":"), lca.split(" ")),
+            schema={"taxid": str, "count": int},
+        )
+        .with_columns(pl.col("taxid"))
+        .group_by("taxid")
+        .agg(pl.col("count").sum())
+    )
+    agg: dict = (
+        counts.with_columns(
+            pl.col("taxid")
+            .replace_strict(mapping, default="kmer_other_taxid")
+            .alias("category")
+        )
+        .group_by("category")
+        .agg(pl.col("count").sum(), pl.col("count").std().alias("std"))
+        .rows_by_key("category", unique=True, named=True)
+    )
+    result.update({k: v["count"] for k, v in agg.items()})
+    result["kmer_total"] = counts["count"].sum()
+    result["kmer_other_taxid_std"] = agg["kmer_other_taxid"].get("std")
+    result["n_other_taxid"] = len(
+        set(counts["taxid"].unique()) - set(descendants) - {"0"}
+    )
+    return result
 
 
 def get_nearest_dist(file: Path | str, prefix: str = "query_") -> pl.DataFrame:
