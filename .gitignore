@@ -54,3 +54,7 @@ snakemake/lightning_logs
 /snakemake/gen_bias/Roboto-Regular.ttf
 /data/meta/bakta_frequent_features_5000.txt
 /.projectile-cache.eld
+/data/meta/nodes.dmp
+/data/meta/taxdump.tar.gz
+/snakemake/gen_bias/run.sh
+/tests/hf_cache/

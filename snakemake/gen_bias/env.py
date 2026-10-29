@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pickle
+from collections import defaultdict
 from pathlib import Path
 
 import cattrs
+import networkx as nx
 import pandera.polars as pa
 import polars as pl
 import yaml
@@ -25,6 +28,22 @@ def check_fasta(file: str) -> bool:
     except (ValueError, FileNotFoundError):
         return False
 
+
+NCBI_TAX_SCHEMA: dict[str, pl.DataType] = {
+    "tax_id": pl.UInt32,
+    "parent_tax_id": pl.UInt32,
+    "rank": pl.String,
+    "embl_code": pl.String,
+    "division_id": pl.UInt16,
+    "inherited_div_flag": pl.Boolean,
+    "genetic_code_id": pl.UInt8,
+    "inherited_gc_flag": pl.Boolean,
+    "mitochondrial_genetic_code_id": pl.UInt8,
+    "inherited_mgc_flag": pl.Boolean,
+    "genbank_hidden_flag": pl.Boolean,
+    "hidden_subtree_root_flag": pl.Boolean,
+    "comments": pl.String,
+}
 
 BIOTYPES: list[str] = [
     # Protein coding
@@ -157,6 +176,32 @@ class ParasailParams:
     mismatch: int = 0
 
 
+def digraph_from_nodes(file: str | Path) -> nx.DiGraph:
+    """
+    Construct digraph from NCBI `nodes.dmp` file or GML version of
+    it
+    """
+    file = Path(file) if isinstance(file, str) else file
+    edges_to_add = []
+    G = nx.DiGraph()
+    df = pl.read_csv(
+        file,
+        separator="|",
+        header=0,
+        names=list(NCBI_TAX_SCHEMA.keys()) + ["_ext"],
+        converters={"tax_id": int, "parent_tax_id": int},
+    )
+    df["rank"] = df["rank"].str.strip()
+    rank2taxids = defaultdict(set)
+    for _, row in df.iter_rows():
+        G.add_node(row["tax_id"], rank=row["rank"])
+        edges_to_add.append((row["parent_tax_id"], row["tax_id"]))
+        rank2taxids[row["rank"]].add(row["tax_id"])
+    G.add_edges_from(edges_to_add)
+    G.graph["rank2taxids"] = rank2taxids
+    return G
+
+
 @define
 class SnakeEnv:
     huggingface: str
@@ -181,6 +226,7 @@ class SnakeEnv:
         converter=lambda x: {k: Path(v) for k, v in x.items()}
     )
     taxonkit_db: Path = field(converter=Path)
+    taxonomy_pkl: Path = field(converter=Path)
     tmp: Path = field(converter=Path)
     threads: dict[str, int] = field(factory=dict)
     singularity: dict = field(factory=dict)
@@ -206,6 +252,10 @@ class SnakeEnv:
             assert (
                 self.taxonkit_db / f"{file}.dmp"
             ).exists(), f"Error: {file}.dmp is missing from taxonkit database"
+        if not self.taxonomy_pkl.exists():
+            g = digraph_from_nodes(self.taxonkit_db / "nodes.dmp")
+            with open(self.taxonomy_pkl, "wb") as f:
+                pickle.dump(g, f, protocol=pickle.HIGHEST_PROTOCOL)
         if self.with_modal and "generate" in self.resource_mappings:
             del self.resource_mappings["generate"]
 
