@@ -38,7 +38,10 @@ rule all:
     input:
         *OUTPUTS["generated"],
         *OUTPUTS["motifs"],
-        *OUTPUTS["taxonomy"],
+        # BUG: [2026-10-15 Thu] OOM issues, need to make the database
+        # smaller
+        # *OUTPUTS["taxonomy_mmseqs"],
+        # *OUTPUTS["taxonomy_k2"],
         # BUG: [2026-10-13 Tue] need to fix this to be faster
         # *OUTPUTS["nuc_similarity"],
         # *OUTPUTS["aa_similarity"],
@@ -170,21 +173,43 @@ rule classify_k2:
     params:
         db=lambda wc: ENV.k2_dbs[wc.get("db")],
         threads=ENV.get_threads("classify_k2"),
+        out=f"{OUTDIR}/taxonomy_k2",
     threads: ENV.get_threads("classify_k2")
     resources:
         **ENV.get_resources("classify_k2"),
     singularity:
         ENV.singularity.get("classify_k2")
     output:
-        "",
+        tsv="{params.out}/{model}/.{prompt}/{db}/k2_classification.tsv",
+        tmp="{params.out}/{model}/.{prompt}/{db}/report.tmp",
+        tax_report="{params.out}/taxonomy/{model}/.{prompt}/{db}/k2_report.tsv",
     shell:
-        f"""
-        k2 classify {{input.generated}} {{prompt_full}} {{prompt_trimmed}} \
-                --db {{params.db}} \
-                --threads {{params.threads}} \
-                --memory-mapping \
-                --output {{output[0]}}
         """
+        k2 classify {input.generated} {prompt_full} {prompt_trimmed} \
+                --db {params.db} \
+                --threads {params.threads} \
+                --memory-mapping \
+                --report {output.tmp} | \
+                xan rename status,id,taxid,length,lca > {output.tsv}
+        
+        xan rename coverage,n_assigned_clade,n_assigned_direct,rank,taxid,name \
+                {output.tmp} \
+                --no-headers \
+                -d '\t' > {output.tax_report}
+        """
+
+
+rule sort_k2_hits:
+    input:
+        expand(
+            "{o}/taxonomy_k2/{{model}}/.{{prompt}}/{db}/k2_classification.tsv",
+            o=[OUTDIR],
+            db=ENV.k2_dbs.keys(),
+        ),
+    output:
+        f"{OUTDIR}/taxonomy_k2/{{model}}/{{prompt}}.csv",
+    script:
+        "main.py"
 
 
 rule classify_mmseqs2:
@@ -195,64 +220,41 @@ rule classify_mmseqs2:
     params:
         db=lambda wc: ENV.mmseqs_dbs[wc.get("db")],
         threads=ENV.get_threads("classify_mmseqs2"),
+        out=f"{OUTDIR}/taxonomy_mmseqs",
     threads: ENV.get_threads("classify_mmseqs2")
     resources:
         **ENV.get_resources("classify_mmseqs2"),
     singularity:
         ENV.singularity.get("classify_mmseqs2")
     output:
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{{db}}/mmseqs_tophit_aln",
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{{db}}/mmseqs_report",
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{{db}}/mmseqs_lca.tsv",
-        f"{OUTDIR}/taxonomy/{{model}}/.{{prompt}}/{{db}}/mmseqs_tophit_report",
+        "{params.out}/{model}/.{prompt}/{db}/mmseqs_tophit_aln",
+        "{params.out}/{model}/.{prompt}/{db}/mmseqs_report",
+        "{params.out}/{model}/.{prompt}/{db}/mmseqs_lca.tsv",
+        "{params.out}/{model}/.{prompt}/{db}/mmseqs_tophit_report",
     shell:
-        f"""
-        mmseqs easy-taxonomy {{input.generated}} {{input.prompt_full}} {{input.prompt_trimmed}} \
-                {{params.db}} \
-                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}/{{db}}/mmseqs \
-                {OUTDIR}/taxonomy/{{wildcards.model}}/.{{wildcards.prompt}}_{{db}}_tmp \
-                --threads {{params.threads}} \
+        """
+        mmseqs easy-taxonomy {input.generated} {input.prompt_full} {input.prompt_trimmed} \
+                {params.db} \
+                {params.out}/{wildcards.model}/.{wildcards.prompt}/{db}/mmseqs \
+                {params.out}/{wildcards.model}/.{wildcards.prompt}_{db}_tmp \
+                --threads {params.threads} \
                 --tax-lineage 1 \
                 --format-mode 4 \
                 --search-type 3
         """
 
 
-rule sort_taxonomy_hits:
+rule sort_mmseqs_hits:
     input:
         expand(
-            "{o}/taxonomy/{{model}}/.{{prompt}}/{db}/mmseqs_tophit_aln",
+            "{o}/taxonomy_mmseqs/{{model}}/.{{prompt}}/{db}/mmseqs_tophit_aln",
             o=[OUTDIR],
             db=ENV.mmseqs_dbs.keys(),
         ),
     output:
-        f"{OUTDIR}/taxonomy/{{model}}/{{prompt}}.csv",
-    run:
-        import polars as pl
-
-        # Sort by evalue then bitscore ranking i.e. pick sequences with the lowest evalue,
-        # (likely to have multiple sequences with the same evalue)
-        # then get the best hit by bitscore
-        dfs = []
-        for top in input:
-            db = Path(input).parent.stem
-            df = pl.read_csv(top, separator="\t").with_columns(
-                rank=pl.col("evalue").rank().over("query")
-            )
-            best_evalue = df.group_by("query").agg(min_rank=pl.col("rank").min())
-            df = (
-                df.join(best_evalue, on="query")
-                .filter(pl.col("rank") == pl.col("min_rank"))
-                .drop(["rank", "min_rank"])
-            )
-            df = (
-                df.group_by("query")
-                .agg(pl.all().top_k_by(k=1, by="bits"))
-                .explode(pl.all().exclude("query"))
-                .with_columns(pl.lit(db).alias("query_db"))
-            )
-            dfs.append(df)
-        pl.concat(dfs, how="diagonal relaxed").write_csv(output[0])
+        f"{OUTDIR}/taxonomy_mmseqs/{{model}}/{{prompt}}.csv",
+    script:
+        "main.py"
 
 
 # TODO: can add an option here to use papara or UPP instead of mafft for re-alignment

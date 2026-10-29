@@ -306,7 +306,8 @@ class SnakeEnv:
         for d, ext in [
             ("generated", ["fasta", "csv"]),
             ("motifs", "tsv"),
-            ("taxonomy", "csv"),
+            ("taxonomy_k2", "csv"),
+            ("taxonomy_mmseqs", "csv"),
             ("nuc_similarity", (("self", "to_prompt"), "csv")),
             ("aa_similarity", (("self", "to_prompt"), "csv")),
             ("protein_descriptors", (("means", "raw"), "csv")),

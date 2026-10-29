@@ -194,6 +194,54 @@ def describe_protein_seqs() -> None:
     combined.write_csv(OUTPUT["vals"])
 
 
+def sort_k2_hits():
+    dfs = []
+    with open(PARAMS["digraph"], "rb") as f:
+        G: nx.DiGraph = pickle.loads(f)
+    for i in INPUT:
+        db = Path(input).parent.stem
+        df = pl.read_csv(
+            i,
+            separator="\t",
+            schema={"status": str, "id": str, "taxid": int, "length": int, "lca": str},
+        ).with_columns(pl.lit(db).alias("query_db"))
+        df = df.with_columns(
+            pl.Series(
+                parse_k2_lca(lca, assigned, G)
+                for lca, assigned in zip(df["lca"], df["taxid"])
+            ).struct.unnest()
+        )
+        dfs.append(df)
+    df = pl.concat(dfs, how="diagonal_relaxed")
+    df.write_csv(OUTPUT[0])
+
+
+def sort_mmseqs_hits():
+    """
+    Sort by evalue then bitscore ranking i.e. pick sequences with the lowest evalue,
+    (likely to have multiple sequences with the same evalue)
+    then get the best hit by bitscore
+    """
+    dfs = []
+    for top in INPUT:
+        db = Path(input).parent.stem
+        df = pl.read_csv(top, separator="\t").with_columns(
+            rank=pl.col("evalue").rank().over("query")
+        )
+        best_evalue = df.group_by("query").agg(min_rank=pl.col("rank").min())
+        df = (
+            df.join(best_evalue, on="query")
+            .filter(pl.col("rank") == pl.col("min_rank"))
+            .drop(["rank", "min_rank"])
+            .group_by("query")
+            .agg(pl.all().top_k_by(k=1, by="bits"))
+            .explode(pl.all().exclude("query"))
+            .with_columns(pl.lit(db).alias("query_db"))
+        )
+        dfs.append(df)
+    pl.concat(dfs, how="diagonal relaxed").write_csv(OUTPUT[0])
+
+
 def fmt_prompts():
     header: str = WC["prompt"]
     data: dict = PARAMS["prompt2data"][header]
