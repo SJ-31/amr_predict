@@ -193,6 +193,11 @@ def generate(seq_gen, num: int | None = None) -> tuple[list[str], list[float]]:
 
     llm = llm_utils._vllm_engine
     tokenizer = llm_utils._vllm_tokenizer
+    # Required because genome ocean isn't a character-level model and uses BPE tokenization
+    avg_token_len = np.mean(list(len(t) for t in tokenizer.vocab))
+    max_tokens = int(round(seq_gen.max_seq_len / avg_token_len))
+    min_tokens = int(round(seq_gen.min_seq_len / avg_token_len))
+
     prompts = ["[CLS]" + p for p in prompts]
 
     prompt_inputs = [
@@ -206,8 +211,8 @@ def generate(seq_gen, num: int | None = None) -> tuple[list[str], list[float]]:
         top_k=seq_gen.top_k,
         top_p=seq_gen.top_p,
         stop_token_ids=[2],
-        max_tokens=seq_gen.max_seq_len,
-        min_tokens=seq_gen.min_seq_len,
+        max_tokens=max_tokens,
+        min_tokens=min_tokens,
         detokenize=False,
         presence_penalty=seq_gen.presence_penalty,
         frequency_penalty=seq_gen.frequency_penalty,
