@@ -10,6 +10,17 @@ from Bio.Align import Alignment
 from Bio.Seq import Seq
 from Bio.SeqIO import SeqRecord
 
+"""
+Insert new sequences into an MSA without changing the existing alignment i.e. gaps are only added to the new query sequences.
+The resulting MSA is guaranteed to have the same number of columns as the input
+
+Steps
+1. Given a query sequence and msa, loop over lines of msa and remove padding to get natural sequence.
+2. Perform semi-global alignment with the msa sequence and the query. Repeat for every seq in msa and identify the top-scoring sequence by seq identity.
+3. Retain the top alignment, insert gaps in the query according to how the sequence was gapped in the MSA.
+4. Repeat for every query sequence
+"""
+
 
 def insert_msa_gaps(query: str, degapped: str, msa_seq: str) -> str:
     tmp = ["-"] * len(msa_seq)
@@ -86,6 +97,7 @@ def realign_one(
     scores: list[tuple[tuple[str, str], int, float]] = []
     best: tuple[str, str] | None = None
     best_index: int = -1
+    target_length = len(msa[0])
     for i, seq in enumerate(msa):
         degapped = seq.seq.replace("-", "")
         t_a, q_a, score = align_and_pad(target=degapped, query=query, aligner=aligner)
@@ -100,7 +112,9 @@ def realign_one(
     target_a, query_a = best
     msa_str = str(msa[best_index].seq)
     realigned = insert_msa_gaps(query=query_a, degapped=target_a, msa_seq=msa_str)
-    return SeqRecord(Seq(realigned), id=query.id, description=query.description or "")
+    res = SeqRecord(Seq(realigned), id=query.id, description=query.description or "")
+    assert len(res) == target_length
+    return res
 
 
 def validate_queries(queries: Iterable[SeqRecord], max_len: int) -> list[SeqRecord]:
