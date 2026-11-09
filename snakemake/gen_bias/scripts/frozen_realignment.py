@@ -9,11 +9,6 @@ from Bio import Align, SeqIO
 from Bio.Align import Alignment
 from Bio.Seq import Seq
 from Bio.SeqIO import SeqRecord
-from pyhere import here
-
-test_dir = here("data", "remote", "tests", "test_realignment")
-test_msa = test_dir / "aligned.fasta"
-test_query = test_dir / "to_align.fasta"
 
 
 def insert_msa_gaps(query: str, degapped: str, msa_seq: str) -> str:
@@ -88,26 +83,24 @@ def realign_one(
     query: SeqRecord, msa: list[SeqRecord], threshold: float = 0.99
 ) -> SeqRecord:
     aligner = semi_global_aligner()
-    scores: list[tuple[tuple[str, str], int]] = []
+    scores: list[tuple[tuple[str, str], int, float]] = []
     best: tuple[str, str] | None = None
     best_index: int = -1
     for i, seq in enumerate(msa):
         degapped = seq.seq.replace("-", "")
-        target_a, query_a, score = align_and_pad(
-            target=degapped, query=query, aligner=aligner
-        )
+        t_a, q_a, score = align_and_pad(target=degapped, query=query, aligner=aligner)
         if not score:
             continue
         if (score / len(query)) >= threshold:
-            best, best_index = (target_a, query_a), i
+            best, best_index = (t_a, q_a), i
             break
-        scores.append(((target_a, query_a), i))
+        scores.append(((t_a, q_a), i, score))
     if not best:
-        best, best_index = max(scores, key=lambda x: x[0].score)
-    degapped, query = best
+        best, best_index, _ = max(scores, key=lambda x: x[2])
+    target_a, query_a = best
     msa_str = str(msa[best_index].seq)
-    realigned = insert_msa_gaps(query=query, degapped=degapped, msa_seq=msa_str)
-    return SeqRecord(Seq(realigned), id=query.id)
+    realigned = insert_msa_gaps(query=query_a, degapped=target_a, msa_seq=msa_str)
+    return SeqRecord(Seq(realigned), id=query.id, description=query.description or "")
 
 
 def validate_queries(queries: Iterable[SeqRecord], max_len: int) -> list[SeqRecord]:
@@ -166,22 +159,27 @@ def parse_args():
     return args
 
 
-def main(args):
-    msa = [s.upper() for s in SeqIO.parse(args["msa"], format="fasta")]
-    queries = validate_queries(SeqIO.parse(args["query"], "fasta"))
+def main(args, msa: list[SeqRecord]) -> list[SeqRecord]:
+    queries = validate_queries(SeqIO.parse(args["query"], "fasta"), max_len=len(msa[0]))
     if args["threads"] > 1:
         with Pool(args["threads"]) as pool:
-            result = pool.imap(
+            mapped = pool.imap(
                 lambda q: realign_one(q, msa, args["threshold"]),
                 queries,
                 chunksize=args["batch_size"],
             )
+            result = list(mapped)
     else:
         result = [realign_one(q, msa, args["threshold"]) for q in queries]
+    return result
 
 
 if __name__ == "__main__":
     args = parse_args()
+    msa = [s.upper() for s in SeqIO.parse(args["msa"], format="fasta")]
+    realigned = main(args, msa)
+    combined = msa + realigned
+    SeqIO.write(combined, args["output"], "fasta")
 
 
 @pytest.mark.parametrize(
@@ -222,3 +220,15 @@ def test_align_pad(q, t, padded):
     t_a, q_a, _ = align_and_pad(t, q, aligner)
     assert t_a == t
     assert q_a == padded
+
+
+@pytest.mark.parametrize("threads", [2, 1])
+def test_main(threads):
+    from pyhere import here
+
+    test_dir = here("data", "remote", "tests", "test_realignment")
+    test_msa = test_dir / "aligned.fasta"
+    test_query = test_dir / "to_align.fasta"
+    msa = [s.upper() for s in SeqIO.parse(test_msa, format="fasta")]
+    args = {"query": test_query, "threads": threads, "threshold": 0.99, "batch_size": 5}
+    result = main(args, msa)
