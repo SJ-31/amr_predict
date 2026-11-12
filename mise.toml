@@ -133,7 +133,7 @@ srun --qos=cpu24h --mem=20G --cpus-per-task=4 kraken2-build \
   --add-to-library ${usage_name}.fasta \
   --db ${usage_name} \
   --threads 4
-kraken2-build --download-taxonomy --db ${usage_name} 
+kraken2-build --download-taxonomy --db ${usage_name} --use-ftp 
 srun --qos=cpu24h --mem=30G --cpus-per-task=4 kraken2-build \
      --build \
      --db ${usage_name} \
