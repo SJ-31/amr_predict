@@ -40,11 +40,11 @@ rule all:
         *OUTPUTS["motifs"],
         # BUG: [2026-10-15 Thu] OOM issues, need to make the database
         # smaller
-        # *OUTPUTS["taxonomy_mmseqs"],
+        *OUTPUTS["taxonomy_mmseqs"],
         # *OUTPUTS["taxonomy_k2"],
         # BUG: [2026-10-13 Tue] need to fix this to be faster
-        # *OUTPUTS["nuc_similarity"],
-        # *OUTPUTS["aa_similarity"],
+        *OUTPUTS["nuc_similarity"],
+        *OUTPUTS["aa_similarity"],
         *OUTPUTS["protein_descriptors"],
 
 
@@ -173,16 +173,15 @@ rule classify_k2:
     params:
         db=lambda wc: ENV.k2_dbs[wc.get("db")],
         threads=ENV.get_threads("classify_k2"),
-        out=f"{OUTDIR}/taxonomy_k2",
     threads: ENV.get_threads("classify_k2")
     resources:
         **ENV.get_resources("classify_k2"),
     singularity:
         ENV.singularity.get("classify_k2")
     output:
-        tsv="{params.out}/{model}/.{prompt}/{db}/k2_classification.tsv",
-        tmp="{params.out}/{model}/.{prompt}/{db}/report.tmp",
-        tax_report="{params.out}/taxonomy/{model}/.{prompt}/{db}/k2_report.tsv",
+        tsv=f"{OUTDIR}/taxonomy_k2/{{model}}/.{{prompt}}/{{db}}/k2_classification.tsv",
+        tmp=f"{OUTDIR}/taxonomy_k2/{{model}}/.{{prompt}}/{{db}}/report.tmp",
+        tax_report=f"{OUTDIR}/taxonomy_k2/taxonomy/{{model}}/.{{prompt}}/{{db}}/k2_report.tsv",
     shell:
         """
         k2 classify {input.generated} {prompt_full} {prompt_trimmed} \
@@ -227,20 +226,20 @@ rule classify_mmseqs2:
     singularity:
         ENV.singularity.get("classify_mmseqs2")
     output:
-        "{params.out}/{model}/.{prompt}/{db}/mmseqs_tophit_aln",
-        "{params.out}/{model}/.{prompt}/{db}/mmseqs_report",
-        "{params.out}/{model}/.{prompt}/{db}/mmseqs_lca.tsv",
-        "{params.out}/{model}/.{prompt}/{db}/mmseqs_tophit_report",
+        f"{OUTDIR}/taxonomy_mmseqs/{{model}}/.{{prompt}}/{{db}}/mmseqs_tophit_aln",
+        f"{OUTDIR}/taxonomy_mmseqs/{{model}}/.{{prompt}}/{{db}}/mmseqs_report",
+        f"{OUTDIR}/taxonomy_mmseqs/{{model}}/.{{prompt}}/{{db}}/mmseqs_lca.tsv",
+        f"{OUTDIR}/taxonomy_mmseqs/{{model}}/.{{prompt}}/{{db}}/mmseqs_tophit_report",
     shell:
         """
         mmseqs easy-taxonomy {input.generated} {input.prompt_full} {input.prompt_trimmed} \
-                {params.db} \
-                {params.out}/{wildcards.model}/.{wildcards.prompt}/{db}/mmseqs \
-                {params.out}/{wildcards.model}/.{wildcards.prompt}_{db}_tmp \
-                --threads {params.threads} \
-                --tax-lineage 1 \
-                --format-mode 4 \
-                --search-type 3
+            {params.db} \
+            {params.out}/{wildcards.model}/.{wildcards.prompt}/{wildcards.db}/mmseqs \
+            {params.out}/{wildcards.model}/.{wildcards.prompt}_{wildcards.db}_tmp \
+            --threads {params.threads} \
+            --tax-lineage 1 \
+            --format-mode 4 \
+            --search-type 3
         """
 
 
