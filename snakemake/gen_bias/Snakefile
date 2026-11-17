@@ -33,15 +33,15 @@ CUDA_VISIBLE_DEVICES = os.environ.get("CUDA_VISIBLE_DEVICES", 0)
 # Pass the correct visible devices into the container
 # Is an issue when using the `--cleanenv` flag
 
+# TODO: add a `hyperparam_blacklist` to SnakeEnv to ignore named hyperparameters
+
 
 rule all:
     input:
         *OUTPUTS["generated"],
         *OUTPUTS["motifs"],
-        # BUG: [2026-10-15 Thu] OOM issues, need to make the database
-        # smaller
-        *OUTPUTS["taxonomy_mmseqs"],
-        # *OUTPUTS["taxonomy_k2"],
+        # *OUTPUTS["taxonomy_mmseqs"],
+        *OUTPUTS["taxonomy_k2"],
         # BUG: [2026-10-13 Tue] need to fix this to be faster
         *OUTPUTS["nuc_similarity"],
         *OUTPUTS["aa_similarity"],
@@ -180,21 +180,33 @@ rule classify_k2:
         ENV.singularity.get("classify_k2")
     output:
         tsv=f"{OUTDIR}/taxonomy_k2/{{model}}/.{{prompt}}/{{db}}/k2_classification.tsv",
-        tmp=f"{OUTDIR}/taxonomy_k2/{{model}}/.{{prompt}}/{{db}}/report.tmp",
-        tax_report=f"{OUTDIR}/taxonomy_k2/taxonomy/{{model}}/.{{prompt}}/{{db}}/k2_report.tsv",
+        tmp1=temp(
+            f"{OUTDIR}/taxonomy_k2/{{model}}/.{{prompt}}/{{db}}/classification.tmp"
+        ),
+        tmp2=temp(f"{OUTDIR}/taxonomy_k2/{{model}}/.{{prompt}}/{{db}}/report.tmp"),
+        tax_report=f"{OUTDIR}/taxonomy_k2/{{model}}/.{{prompt}}/{{db}}/k2_report.tsv",
     shell:
         """
-        k2 classify {input.generated} {prompt_full} {prompt_trimmed} \
+        k2 classify {input.generated} {input.prompt_full} {input.prompt_trimmed} \
                 --db {params.db} \
                 --threads {params.threads} \
                 --memory-mapping \
-                --report {output.tmp} | \
-                xan rename status,id,taxid,length,lca > {output.tsv}
-        
-        xan rename coverage,n_assigned_clade,n_assigned_direct,rank,taxid,name \
-                {output.tmp} \
-                --no-headers \
-                -d '\t' > {output.tax_report}
+                --report {output.tmp2} > {output.tmp1}
+
+        if [[ -s {output.tmp1} ]]; then
+            xan rename --no-headers -d '\t' status,id,taxid,length,lca {output.tmp1} > {output.tsv}
+        else
+            echo status,id,taxid,length,lca > {output.tsv}
+        fi
+
+        if [[ -s {output.tmp2} ]]; then
+            xan rename --no-headers \
+                    -d '\t' \
+                    coverage,n_assigned_clade,n_assigned_direct,rank,taxid,name \
+                    {output.tmp2} > {output.tax_report}
+        else
+            echo coverage,n_assigned_clade,n_assigned_direct,rank,taxid,name > {output.tax_report} 
+        fi
         """
 
 
