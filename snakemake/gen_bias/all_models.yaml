@@ -39,12 +39,13 @@ models:
         top_k: 4
         device: "cuda:0"
         model_name: evo2_7b
-    ?f"genome_ocean_t{i}":
-      script: scripts/genome_ocean.py
-      resources: "gpu40g"
-      kws:
-        temperature: ?str(max(temp.item(), 0.00001))
-        model_name: GenomeOcean-4B
-        top_p: 0.9
-        top_k: 4
-        # min_seq_len: 512
+    # [2026-11-03 Tue] BUG: disable until you fix the length issue
+    # ?f"genome_ocean_t{i}":
+    #   script: scripts/genome_ocean.py
+    #   resources: "gpu40g"
+    #   kws:
+    #     temperature: ?str(max(temp.item(), 0.00001))
+    #     model_name: GenomeOcean-4B
+    #     top_p: 0.9
+    #     top_k: 4
+    # min_seq_len: 512

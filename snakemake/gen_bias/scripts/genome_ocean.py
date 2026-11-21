@@ -141,7 +141,7 @@ def parse_args() -> dict:
 
     args: dict = vars(parser.parse_args())
     if not args["min_seq_len"]:
-        args["min_seq_len"] = 10
+        args["min_seq_len"] = args["seq_len"]
     model_name = f"pGenomeOcean/{args['model_name']}"
     if not args.get("model_dir"):
         args["model_dir"] = model_name
@@ -194,9 +194,9 @@ def generate(seq_gen, num: int | None = None) -> tuple[list[str], list[float]]:
     llm = llm_utils._vllm_engine
     tokenizer = llm_utils._vllm_tokenizer
     # Required because genome ocean isn't a character-level model and uses BPE tokenization
-    avg_token_len = np.mean(list(len(t) for t in tokenizer.vocab))
-    max_tokens = int(round(seq_gen.max_seq_len / avg_token_len))
-    min_tokens = int(round(seq_gen.min_seq_len / avg_token_len))
+    # [2026-11-05 Thu] Try out 5 from author's recommendations
+    max_tokens = int(round(seq_gen.max_seq_len / 5))
+    min_tokens = int(round(seq_gen.min_seq_len / 5))
 
     prompts = ["[CLS]" + p for p in prompts]
 
