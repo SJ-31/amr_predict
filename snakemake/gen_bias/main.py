@@ -25,6 +25,8 @@ WC = snakemake.wildcards
 def translate(seq: SeqRecord | Seq) -> Peptide:
     if " " in seq:
         seq = seq.replace(" ", "")
+    if "_" in seq:
+        seq = seq.replace("_", "")
     if (remainder := len(seq) % 3) != 0:
         add = 3 - remainder
         seq = seq + ("N" * add)
@@ -197,9 +199,9 @@ def describe_protein_seqs() -> None:
 def sort_k2_hits():
     dfs = []
     with open(PARAMS["digraph"], "rb") as f:
-        G: nx.DiGraph = pickle.loads(f)
+        G: nx.DiGraph = pickle.load(f)
     for i in INPUT:
-        db = Path(input).parent.stem
+        db = Path(i).parent.stem
         df = pl.read_csv(
             i,
             separator="\t",
