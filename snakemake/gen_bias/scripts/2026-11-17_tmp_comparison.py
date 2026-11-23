@@ -8,6 +8,7 @@ import networkx as nx
 import numpy as np
 import plotnine as gg
 import polars as pl
+import scipy.spatial.distance as spd
 import scipy.stats as stats
 from pyhere import here
 
@@ -137,9 +138,9 @@ def compare_descriptors(
     for df, n in zip(dfs, names):
         descriptors |= set(df.columns) - {"id"}
         orig = df.filter(pl.col("id").str.ends_with("TRIMMED"))
-        assert (
-            orig.height == 1
-        ), "There should only be one measure for the original prompt."
+        assert orig.height == 1, (
+            "There should only be one measure for the original prompt."
+        )
         vals = orig.drop("id").row(0, named=True)
         oris[n] = vals
         df = df.with_columns(pl.lit(n).alias("name"))
@@ -218,12 +219,28 @@ def compare_descriptors(
     #     + gg.geom_density()
     #     + gg.facet_wrap("variable", scales="free_x")
     # )
-    return (
-        novelty_long,
-        test_novelty_df,
-        pl.DataFrame(test_pr_tmp),
-        pl.DataFrame(tmp_ordering),
+    pr_df = pl.DataFrame(test_pr_tmp)
+    joined = novelty_long.join(
+        pr_df.rename({"descriptor": "variable"}),
+        on=["name", "variable"],
+    ).join(
+        pl.DataFrame(tmp_ordering)
+        .rename({"descriptor": "variable"})
+        .with_columns(pl.col("rank").cast(pl.String)),
+        on=["name", "variable"],
     )
+    plot = (
+        gg.ggplot(joined, gg.aes(x="name", y="value", fill="rank"))
+        + gg.geom_violin(position="identity", style="right")
+        + gg.coord_flip()
+        + gg.facet_wrap("variable", scales="free_x", nrow=2)
+        + gg.theme(
+            axis_ticks_minor=gg.element_blank(),
+            axis_ticks_length_major=gg.element_blank(),
+            figure_size=(12, 12),
+        )
+    )
+    return novelty_long, test_novelty_df, pr_df, joined, plot
 
 
 gdir = here("data", "remote", "2026-09-16_gen_bias")
@@ -244,25 +261,44 @@ names = ["t1", "t0", "t2", "t3", "t4", "t5"]
 
 long = compare_descriptors([pl.read_csv(d) for d in dfs], names)
 
-tmp = (
-    long[0]
-    .join(long[2].rename({"descriptor": "variable"}), on=["name", "variable"])
-    .join(
-        long[3]
-        .rename({"descriptor": "variable"})
-        .with_columns(pl.col("rank").cast(pl.String)),
-        on=["name", "variable"],
-    )
-)
 
 # color with p-value, and rank by statistical significance
 
-# TODO: want to also show the ranks of each group
 
-plot = (
-    gg.ggplot(tmp, gg.aes(x="value", color="name"))
-    + gg.geom_density()
-    + gg.facet_wrap("variable", scales="free_x")
-    + gg.geom_text(gg.aes(label="rank"))
-)
-plot.show()
+# * Motifs
+
+motif_dir = gdir / "motifs"
+
+sm1 = pl.read_csv(motif_dir / "evo_t3" / "d_yakuba_coi_forward.tsv", separator="\t")
+sm2 = pl.read_csv(motif_dir / "evo_t0" / "d_yakuba_coi_forward.tsv", separator="\t")
+
+
+def motif_stats(df: pl.DataFrame, name: str) -> dict:
+    result = {"name": name}
+    df.group_by("sequence_name").agg("motif_id").with_columns(
+        pl.col("motif_id").list.len().alias("n"),
+        pl.col("motif_id").list.n_unique().alias("n_unique"),
+    )
+    count_mat = (
+        df.select("motif_id", "sequence_name")
+        .with_columns(pl.lit(1).alias("count"))
+        .pivot("motif_id", values="count", aggregate_function="sum")
+    )
+    bc_dist_within = spd.pdist(
+        count_mat.filter(~pl.col("sequence_name").str.ends_with("-TRIMMED")).drop(
+            "sequence_name"
+        ),
+        "braycurtis",
+    )
+    orig = count_mat.filter(pl.col("sequence_name").str.ends_with("-TRIMMED"))
+    assert orig.height == 0 or orig.height == 1, (
+        "There should only be one non-generated sequence in the set"
+    )
+    if orig.height == 1:
+        orig_vec = orig.drop("sequence_name")
+        result["prompt_has_motifs"] = True
+    else:
+        orig_vec = np.array([0] * count_mat.shape[1])
+        result["prompt_has_motifs"] = False
+    bc_dist_to_orig = spd.cdist(count_mat.drop("sequence_name"), orig_vec, "braycurtis")
+    return result
