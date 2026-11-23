@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import networkx as nx
 import numpy as np
 import polars as pl
+import scipy.stats as stats
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -24,14 +25,18 @@ WC = snakemake.wildcards
 
 
 def translate(seq: SeqRecord | Seq) -> Peptide:
-    if " " in seq:
+    if " " in seq and isinstance(seq, SeqRecord):
+        seq.seq = seq.seq.replace(" ", "")
+    elif " " in seq:
         seq = seq.replace(" ", "")
-    if "_" in seq:
+    if "_" in seq and isinstance(seq, SeqRecord):
+        seq.seq = seq.seq.replace("_", "")
+    elif "_" in seq:
         seq = seq.replace("_", "")
     if (remainder := len(seq) % 3) != 0:
         add = 3 - remainder
         seq = seq + ("N" * add)
-    translated = seq.translate(id=True, name=True, description=True)
+    translated = seq.translate()
     return Peptide(str(translated.seq))
 
 
@@ -251,7 +256,13 @@ def sort_k2_hits():
         df = pl.read_csv(
             i,
             separator="\t",
-            schema={"status": str, "id": str, "taxid": int, "length": int, "lca": str},
+            schema={
+                "status": pl.String,
+                "id": pl.String,
+                "taxid": pl.Int64,
+                "length": pl.Int64,
+                "lca": pl.String,
+            },
         ).with_columns(pl.lit(db).alias("query_db"))
         df = df.with_columns(
             pl.Series(
@@ -305,9 +316,9 @@ def fmt_prompts():
     full_seq = SeqIO.read(prompt_full, "fasta")
     trimmed = SeqRecord(Seq(str(full_seq.seq).removeprefix(prompt_seq)))
     if data.get("prompt_from_full", True):
-        assert (
-            str(trimmed.seq) != str(full_seq.seq)
-        ), "ERROR: could not trim full sequence. Ensure prompt is 100% derived from full sequence"
+        assert str(trimmed.seq) != str(full_seq.seq), (
+            "ERROR: could not trim full sequence. Ensure prompt is 100% derived from full sequence"
+        )
 
     for seq, suffix in zip((full_seq, trimmed), ("", "_trimmed")):
         translated = translate(seq).sequence
