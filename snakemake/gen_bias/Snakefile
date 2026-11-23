@@ -217,6 +217,8 @@ rule sort_k2_hits:
             o=[OUTDIR],
             db=ENV.k2_dbs.keys(),
         ),
+    params:
+        digraph=ENV.taxonomy_pkl,
     output:
         f"{OUTDIR}/taxonomy_k2/{{model}}/{{prompt}}.csv",
     script:
@@ -232,6 +234,7 @@ rule classify_mmseqs2:
         db=lambda wc: ENV.mmseqs_dbs[wc.get("db")],
         threads=ENV.get_threads("classify_mmseqs2"),
         out=f"{OUTDIR}/taxonomy_mmseqs",
+        mem_split=ENV.get_resources("classify_mmseqs2").get("mem", "0"),
     threads: ENV.get_threads("classify_mmseqs2")
     resources:
         **ENV.get_resources("classify_mmseqs2"),
@@ -251,7 +254,10 @@ rule classify_mmseqs2:
             --threads {params.threads} \
             --tax-lineage 1 \
             --format-mode 4 \
-            --search-type 3
+            --search-type 3 \
+            --dbtype 2 \
+            --split-mode 0 \
+            --split-memory-limit {params.mem_split}
         """
 
 
