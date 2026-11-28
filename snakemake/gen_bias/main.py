@@ -147,51 +147,6 @@ def get_props(
     return df
 
 
-def model_relations(models: dict) -> dict:
-    """
-    Organize a `models` dictionary to group models by different hyperparameters of the
-    same model and different models with the same hyperparameters
-
-    Returns
-    -------
-    A dictionary with two entries
-      - model_groups : dictionary mapping model name to a dictionary of hyperparameters
-            list of models with any hyperparameters
-      - param_groups : dictionary mapping (variable) hyperparameters to their different values
-            which in turn map to models with those values
-    val = {
-        "model_groups": {
-            "evo2_7b": {"temperature": {1: "evo2_t1", 0: "evo2_t0", 3: "evo2_t3"}},
-            "GenomeOcean-4B": {"temperature": {0: "genome_ocean_t0", 1: "genome_ocean_t1"}},
-        },
-        "param_groups": {
-            "temperature": {
-                "0": {"evo2_7b": "evo2_t0", "GenomeOcean-4B": "genome_ocean_t0"}
-            }
-        },
-    }
-    """
-    model_groups = defaultdict(lambda: defaultdict(dict))
-    param_groups = defaultdict(lambda: defaultdict(dict))
-    for mname, v in models.items():
-        kws: dict = v.get("kws", {})
-        if not kws:
-            continue
-        model = kws.pop("model_name")
-        if not model:
-            continue
-        for hparam, val in kws.items():
-            model_groups[model][hparam][val] = mname
-            param_groups[hparam][val][model] = mname
-    result = {"model_groups": defaultdict(dict), "param_groups": defaultdict(dict)}
-    for key, dct in (("model_groups", model_groups), ("param_groups", param_groups)):
-        for outer, inner in dct.items():
-            for k, vals in inner.items():
-                if len(vals) > 1:
-                    result[key][outer][k] = vals
-    return result
-
-
 def repetition_score(seq: str) -> dict:
     """ """
     pass
