@@ -1,6 +1,10 @@
 #!/usr/bin/env ipython
 
 import itertools
+from collections import defaultdict
+
+# [2026-11-17 Tue] TODO: move this into the main script when finished
+from importlib import util
 from math import log
 from typing import Literal
 
@@ -10,9 +14,55 @@ import plotnine as gg
 import polars as pl
 import scipy.spatial.distance as spd
 import scipy.stats as stats
+import yte
 from pyhere import here
 
-# [2026-11-17 Tue] TODO: move this into the main script when finished
+gdir = here("data", "remote", "2026-09-16_gen_bias")
+
+
+def load_file_as_module(name, location):
+    spec = util.spec_from_file_location(name, location)
+    module = util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# * Sorting out the comparisons
+
+
+mod = load_file_as_module("snakemake", here("snakemake", "gen_bias", "env.py"))
+
+with open(here("snakemake", "gen_bias", "all_models.yaml")) as f:
+    model_relations = mod.model_relations(yte.process_yaml(f)["models"])
+
+# Example for gathering files to compare effect of hyperparams
+prompt = "e_coli_16s_no_v"
+model = "evo-1-131k-base"
+param = "temperature"
+gendir = here(gdir, "generated")
+files_read = {
+    k: gendir / v / f"{prompt}.csv"
+    for k, v in model_relations["model_groups"][model][param].items()
+}
+
+# Example for gathering files to compare effect of model across hyperparams
+temp_value = "0.4"
+files_read = {
+    k: gendir / v / f"{prompt}.csv"
+    for k, v in model_relations["param_groups"][param][temp_value].items()
+}
+
+# Example of gathering files to compare prompts
+prompts_compare = [  # TODO: make this a parameter in env yaml
+    prompt,
+    "e_coli_16s_v1_v3",
+    "e_coli_16s_v1_v6",
+    "d_yakuba_coi_forward",
+]
+files_read = {
+    p: gendir / model_relations["model_groups"][model][param][temp_value] / f"{p}.csv"
+    for p in prompts_compare
+}
 
 
 def order_comparisons(
@@ -102,6 +152,9 @@ def order_comparisons(
         else:
             result[n] = np.nan
     return result
+
+
+# * Protein descriptors
 
 
 def compare_descriptors(
@@ -243,8 +296,6 @@ def compare_descriptors(
     return novelty_long, test_novelty_df, pr_df, joined, plot
 
 
-gdir = here("data", "remote", "2026-09-16_gen_bias")
-
 descriptor_dir = gdir / "protein_descriptors"
 
 dfs = [
@@ -273,8 +324,10 @@ sm1 = pl.read_csv(motif_dir / "evo_t3" / "d_yakuba_coi_forward.tsv", separator="
 sm2 = pl.read_csv(motif_dir / "evo_t0" / "d_yakuba_coi_forward.tsv", separator="\t")
 
 
-def motif_stats(df: pl.DataFrame, name: str) -> dict:
-    result = {"name": name}
+def motif_stats(
+    df: pl.DataFrame, name: str
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    summaries = defaultdict(list)
     df.group_by("sequence_name").agg("motif_id").with_columns(
         pl.col("motif_id").list.len().alias("n"),
         pl.col("motif_id").list.n_unique().alias("n_unique"),
@@ -296,9 +349,30 @@ def motif_stats(df: pl.DataFrame, name: str) -> dict:
     )
     if orig.height == 1:
         orig_vec = orig.drop("sequence_name")
-        result["prompt_has_motifs"] = True
     else:
         orig_vec = np.array([0] * count_mat.shape[1])
-        result["prompt_has_motifs"] = False
     bc_dist_to_orig = spd.cdist(count_mat.drop("sequence_name"), orig_vec, "braycurtis")
-    return result
+    for metric, fn in zip(
+        ("mean", "median", "std", "range"),
+        (
+            lambda x: np.mean(x),
+            lambda x: np.median(x),
+            lambda x: np.std(x),
+            lambda x: np.max(x) - np.min(x),
+        ),
+    ):
+        summaries["metric"].extend([metric] * 2)
+        summaries["distance_category"].extend(["within", "to_orig"])
+        summaries["value"].append(fn(bc_dist_within))
+        summaries["value"].append(fn(bc_dist_to_orig))
+    distribution_within = pl.DataFrame({"value": bc_dist_within.flatten()})
+    distribution_ref_comparison = pl.DataFrame({"value": bc_dist_to_orig[:, 0]})
+    return (
+        pl.DataFrame(summaries).with_columns(pl.lit(name).alias("name")),
+        distribution_within.with_columns(pl.lit(name).alias("name")),
+        distribution_ref_comparison.with_columns(pl.lit(name).alias("name")),
+    )
+
+
+# TODO: [2026-11-28 Sat] compute these and store in parquet file for plotting later.
+# You can retrieve in R either with arrow or duckdb
